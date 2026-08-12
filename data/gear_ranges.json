@@ -1,0 +1,15 @@
+{
+    "Vehicles": [
+        {
+            "vehicleClass": "ExpansionBus",
+            "hysteresis": 0.8,
+            "comment": "Medido en sesion 2026-05-21 por Sonom4n con NUMPAD 3/0. Marchas reales: 1ra/2da/3ra/4ta (gear=2..5 en enum). 4ta no tiene techo medido (sin marcha siguiente).",
+            "shiftPoints": [
+                {"gear": 2, "shiftSpeed": 33.3, "maxSpeed": 41.6, "name": "FIRST"},
+                {"gear": 3, "shiftSpeed": 54.7, "maxSpeed": 62.1, "name": "SECOND"},
+                {"gear": 4, "shiftSpeed": 67.6, "maxSpeed": 75.8, "name": "THIRD"},
+                {"gear": 5, "shiftSpeed": 0,    "maxSpeed": 0,    "name": "FOURTH (last)"}
+            ]
+        }
+    ]
+}

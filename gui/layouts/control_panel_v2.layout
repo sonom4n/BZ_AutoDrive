@@ -1,0 +1,1247 @@
+// ============================================================================
+//  BZ_AutoDrive - Control Panel v2 (reproductor) — esqueleto fiel al mockup.
+//  Panel 800x500 (16:10) centrado. Tema oscuro + acento cyan. Solido por ahora;
+//  el gradiente/glow/logo entran como texturas (Etapa 3). Nombres de widget pensados
+//  para que el script (Etapa 4) los tome con GetWidget: RouteRow0..N, Runner0_*, Hk0..N.
+//  Formato CPP-style (PanelWidgetClass) — XML/library crashea CreateWidgets.
+// ============================================================================
+
+PanelWidgetClass Root {
+ ignorepointer 0
+ color 0 0 0 0.55
+ position 0 0
+ size 1 1
+ hexactpos 0 vexactpos 0 hexactsize 0 vexactsize 0
+ priority 999
+ {
+  PanelWidgetClass Panel {
+   ignorepointer 0
+   color 0.055 0.07 0.09 0.97
+   position 0.5 0.5
+   halign center valign center
+   size 1350 744
+   hexactpos 0 vexactpos 0 hexactsize 1 vexactsize 1
+   {
+    // FONDO del panel: PanelWidget.color NO se renderiza en DayZ -> textura via ImageWidget.
+    // Va PRIMERO (capa de atras). ignorepointer 1 para no bloquear los clicks de arriba.
+    ImageWidgetClass PanelBg {
+     ignorepointer 1
+     color 1 1 1 1
+     imageTexture "BZ_AutoDrive/gui/textures/bz_metal_panel.paa"
+     position 0 0
+     size 1350 744
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     mode blend
+     "src alpha" 1
+     stretch 1
+     filter 1
+    }
+
+    // ===================== HEADER =====================
+    // Logo texturizado (wordmark con gradiente+glow). PAA 1024x256 (4:1), aspecto fijo
+    // -> no sufre distorsion de stretch. Reemplaza al texto "BZ_AutoDrive".
+    ImageWidgetClass Logo {
+     ignorepointer 1
+     color 1 1 1 1
+     imageTexture "BZ_AutoDrive/gui/textures/bz_metal_logo.paa"
+     position 14 2
+     size 340 80
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     mode blend
+     "src alpha" 1
+     stretch 1
+     filter 1
+    }
+    // Subtitle removido (el logo BZ_AutoDrive ya es la marca; se agrando y ocupa este espacio).
+    ButtonWidgetClass HelpBtn {
+     ignorepointer 0
+     color 0.12 0.45 0.6 0.95
+     position 1104 18 size 34 26
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     text "?"
+     font "gui/fonts/sdf_RobotoBold18"
+     "text halign" center "text valign" center
+     style DayZDefaultButton
+    }
+    ButtonWidgetClass StopAllBtn {
+     ignorepointer 0
+     color 0.42 0.2 0.16 0.95
+     position 1146 18 size 96 26
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     text "STOP ALL"
+     font "gui/fonts/sdf_RobotoRegular12"
+     "text halign" center "text valign" center
+     style DayZDefaultButton
+    }
+    ButtonWidgetClass DbgBtn {
+     ignorepointer 0
+     color 0.10 0.30 0.40 0.95
+     position 1250 18 size 44 26
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     text "DBG"
+     font "gui/fonts/sdf_RobotoRegular12"
+     "text halign" center "text valign" center
+     style DayZDefaultButton
+    }
+    ButtonWidgetClass CloseBtn {
+     ignorepointer 0
+     color 0.12 0.45 0.6 0.95
+     position 1302 14
+     size 34 34
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     text "X"
+     font "gui/fonts/sdf_RobotoBold18"
+     "text halign" center
+     "text valign" center
+     style DayZDefaultButton
+    }
+
+    // ===================== PANEL ROUTES (izquierda) =====================
+    PanelWidgetClass RoutesPanel {
+     ignorepointer 0
+     color 0.085 0.10 0.13 0.95
+     position 16 74
+     size 420 494
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     {
+      ImageWidgetClass RoutesBg {
+       ignorepointer 1
+       color 1 1 1 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_card.paa"
+       position 0 0 size 420 494
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass RoutesHdr {
+       ignorepointer 1
+       color 0.85 0.9 0.95 1
+       position 14 10
+       size 396 22
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "ROUTES"
+       font "gui/fonts/sdf_RobotoBold18"
+       "text halign" left "text valign" center
+      }
+      // Resaltado de la fila SELECCIONADA (persistente hasta LOAD). ButtonWidget.SetColor() lo pisa el
+      // engine -> no sirve para colorear el boton. Workaround: esta barra azul claro (look HOVER) va DETRAS
+      // de los RouteRow (declarada ANTES = capa de fondo). RenderRoutes la reposiciona leyendo la pos/size
+      // REAL del boton seleccionado (GetPos/GetSize, sin magic numbers). Los RouteRow tienen fondo
+      // semi-transparente (alpha ~0.5) -> la barra de atras ASOMA como tint, y el NOMBRE (texto del boton,
+      // capa de arriba) queda LEGIBLE encima. ignorepointer 1: no bloquea el click. Posicion/visibilidad
+      // las setea el script (oculto por defecto).
+      ImageWidgetClass RouteSelBg {
+       ignorepointer 1
+       color 0.22 0.55 0.78 0.9
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 12 42 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      ButtonWidgetClass RouteRow0 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 42 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow1 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 80 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow2 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 118 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow3 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 156 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow4 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 194 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow5 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 232 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow6 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 270 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass RouteRow7 {
+       ignorepointer 0 color 0.13 0.16 0.20 0.55
+       position 12 308 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "  -" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+      }
+      // Checks de logger (opt-in por corrida): arman boris_native / ai_run en sincro con el play.
+      ButtonWidgetClass LogNativeChk {
+       ignorepointer 0 color 0.16 0.20 0.26 0.95
+       position 12 418 size 198 24
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text " [ ] boris_native"
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+       style DayZDefaultButton
+      }
+      ButtonWidgetClass LogAiChk {
+       ignorepointer 0 color 0.16 0.20 0.26 0.95
+       position 218 418 size 198 24
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text " [ ] ai_run"
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+       style DayZDefaultButton
+      }
+      ButtonWidgetClass LoadSpawnBtn {
+       ignorepointer 0
+       color 0.15 0.55 0.82 0.97
+       position 12 448 size 404 34
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "LOAD & SPAWN"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" center "text valign" center
+       style DayZDefaultButton
+      }
+     }
+    }
+
+    // ===================== PANEL ACTIVE RUNNERS (derecha-arriba) =====================
+    PanelWidgetClass RunnersPanel {
+     ignorepointer 0
+     color 0.085 0.10 0.13 0.95
+     position 452 74
+     size 882 494
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     {
+      ImageWidgetClass RunnersBg {
+       ignorepointer 1
+       color 1 1 1 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_card.paa"
+       position 0 0 size 882 494
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass RunnersHdr {
+       ignorepointer 1
+       color 0.85 0.9 0.95 1
+       position 14 10 size 240 22
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "ACTIVE RUNNERS"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" left "text valign" center
+      }
+      TextWidgetClass RunnersCount {
+       ignorepointer 1
+       color 0.85 0.65 0.2 1
+       position 440 10 size 420 22
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "RUNNERS: 2   watch server load"
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" right "text valign" center
+      }
+
+      // --- Runner rows compactas (Runner0..7): name+wp | status | TP II [] (multi-linea) ---
+      PanelWidgetClass Runner0 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 38 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner0_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner0_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner0_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner0_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner0_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner0_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner0_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner0_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner1 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 93 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner1_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner1_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner1_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner1_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner1_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner1_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner1_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner1_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner2 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 148 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner2_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner2_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner2_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner2_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner2_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner2_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner2_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner2_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner3 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 203 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner3_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner3_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner3_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner3_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner3_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner3_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner3_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner3_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner4 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 258 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner4_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner4_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner4_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner4_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner4_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner4_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner4_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner4_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner5 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 313 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner5_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner5_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner5_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner5_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner5_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner5_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner5_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner5_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner6 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 368 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner6_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner6_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner6_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner6_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner6_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner6_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner6_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner6_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Runner7 {
+       ignorepointer 0
+       color 0.11 0.14 0.17 0.95
+       position 12 423 size 858 52
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Runner7_Border {
+         ignorepointer 1 color 0.30 0.62 0.82 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 52
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        ImageWidgetClass Runner7_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 3 3 size 852 46
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Runner7_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 5 size 672 22
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        TextWidgetClass Runner7_Status {
+         ignorepointer 1 color 0.3 0.75 0.4 1
+         position 8 28 size 600 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text ""
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Runner7_Reset {
+         ignorepointer 0 color 0.20 0.40 0.30 0.95
+         position 686 17 size 38 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "RST"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner7_Teleport {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 728 17 size 34 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner7_Pause {
+         ignorepointer 0 color 0.16 0.34 0.42 0.95
+         position 766 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "II"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Runner7_Stop {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 800 17 size 30 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "[]"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+
+      // ===== SPLIT 60/40: sub-panel de VEHICULOS SPAWNEADOS VACIOS (Fase 2) =====
+      // Runner0..4 (arriba, 60%) = corridas de Boris. Divisor + este bloque (abajo, 40%) = vehiculos
+      // vacios spawneados con START/HERE/END. Filas finas (26px) con TP (llevar al player) + ELIMINAR.
+      // Runner5/6/7 quedan en el layout pero el script (MAXR=5) los oculta -> no chocan con esta zona.
+      ImageWidgetClass SpawnDivider {
+       ignorepointer 1 color 0.30 0.62 0.82 0.5
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 12 314 size 858 2
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass SpawnRunHdr {
+       ignorepointer 1 color 0.85 0.9 0.95 1
+       position 14 320 size 400 20
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "ACTIVE SPAWN VEHICLE"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" left "text valign" center
+      }
+      TextWidgetClass SpawnRunCount {
+       ignorepointer 1 color 0.85 0.65 0.2 1
+       position 440 320 size 420 20
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text ""
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" right "text valign" center
+      }
+      PanelWidgetClass Empty0 {
+       ignorepointer 0 color 0.11 0.14 0.17 0.95
+       position 12 346 size 858 26
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Empty0_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 26
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Empty0_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 3 size 660 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Empty0_Tp {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 676 4 size 44 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Empty0_Del {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 726 4 size 104 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "ELIMINAR"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Empty1 {
+       ignorepointer 0 color 0.11 0.14 0.17 0.95
+       position 12 375 size 858 26
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Empty1_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 26
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Empty1_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 3 size 660 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Empty1_Tp {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 676 4 size 44 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Empty1_Del {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 726 4 size 104 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "ELIMINAR"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Empty2 {
+       ignorepointer 0 color 0.11 0.14 0.17 0.95
+       position 12 404 size 858 26
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Empty2_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 26
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Empty2_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 3 size 660 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Empty2_Tp {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 676 4 size 44 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Empty2_Del {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 726 4 size 104 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "ELIMINAR"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Empty3 {
+       ignorepointer 0 color 0.11 0.14 0.17 0.95
+       position 12 433 size 858 26
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Empty3_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 26
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Empty3_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 3 size 660 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Empty3_Tp {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 676 4 size 44 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Empty3_Del {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 726 4 size 104 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "ELIMINAR"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+      PanelWidgetClass Empty4 {
+       ignorepointer 0 color 0.11 0.14 0.17 0.95
+       position 12 462 size 858 26
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       {
+        ImageWidgetClass Empty4_Bg {
+         ignorepointer 1 color 0.13 0.17 0.22 1
+         imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+         position 0 0 size 858 26
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         mode blend "src alpha" 1 stretch 1 filter 1
+        }
+        TextWidgetClass Empty4_Name {
+         ignorepointer 1 color 0.92 0.95 1 1
+         position 8 3 size 660 20
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "-"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+        }
+        ButtonWidgetClass Empty4_Tp {
+         ignorepointer 0 color 0.16 0.30 0.42 0.95
+         position 676 4 size 44 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "TP"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+        ButtonWidgetClass Empty4_Del {
+         ignorepointer 0 color 0.42 0.2 0.16 0.95
+         position 726 4 size 104 18
+         hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+         text "ELIMINAR"
+         font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+         style DayZDefaultButton
+        }
+       }
+      }
+     }
+    }
+
+    // ===================== PREVIEW de la toma (franja full-width, debajo) =====================
+    // Paso 1 del scrubber: al seleccionar una ruta el script pide la info al server (RequestRouteInfo)
+    // y llena PreviewText con vehiculo / N wps / distancia / vel max. Paso 2 sumara aca el slider +
+    // los botones INICIO/FINAL (spawn del vehiculo vacio en cualquier wp).
+    PanelWidgetClass PreviewPanel {
+     ignorepointer 0
+     color 0.085 0.10 0.13 0.95
+     position 16 578 size 1318 130
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     {
+      ImageWidgetClass PreviewBg {
+       ignorepointer 1
+       color 1 1 1 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_card.paa"
+       position 0 0 size 1318 130
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass PreviewText {
+       ignorepointer 1
+       color 0.72 0.80 0.88 1
+       position 16 10 size 900 46
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "Select a route to see its info"
+       font "gui/fonts/sdf_RobotoRegular12"
+       "text halign" left "text valign" top
+       multiline 1
+      }
+      // SCRUBBER PROPIO (el SliderWidget nativo necesita skin que no tenemos -> no arrastraba).
+      // Track = base clickeable; Fill = progreso (el script le setea el ancho); Thumb = manija (SetPos).
+      // El arrastre se maneja en el script: OnMouseButtonDown(Track) + polling de GetMousePos en Update.
+      ImageWidgetClass ScrubTrack {
+       ignorepointer 0
+       color 0.06 0.08 0.11 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 16 68 size 980 16
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      ImageWidgetClass ScrubFill {
+       ignorepointer 1
+       color 0.30 0.66 0.92 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 16 68 size 2 16
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass SliderLabel {
+       ignorepointer 1
+       color 0.60 0.70 0.80 1
+       position 16 94 size 700 24
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text ""
+       font "gui/fonts/sdf_RobotoRegular12"
+       "text halign" left "text valign" center
+      }
+      // ---- Cluster de spawn del vehiculo vacio (paso 2). Jerarquia: SPAWN ACA = primario (verde,
+      // mas ancho, marco brillante); INICIO / FINAL = secundarios (slate, gemelos). Cada boton =
+      // marco de acento (ImageWidget bz_card tintado, detras) + ButtonWidget inset encima (hover nativo).
+      TextWidgetClass SpawnHdr {
+       ignorepointer 1
+       color 0.50 0.58 0.66 1
+       position 1012 18 size 304 16
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "SPAWN EMPTY VEHICLE AT:"
+       font "gui/fonts/sdf_RobotoRegular12"
+       "text halign" left "text valign" center
+      }
+      ImageWidgetClass GoStartFrame {
+       ignorepointer 1
+       color 0.30 0.45 0.60 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 1012 42 size 90 64
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      ImageWidgetClass GoStartFace {
+       ignorepointer 0
+       color 0.82 0.82 0.82 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_btn.paa"
+       position 1014 44 size 86 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass GoStartLabel {
+       ignorepointer 1
+       color 0.90 0.94 0.98 1
+       position 1014 44 size 86 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "START"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" center "text valign" center
+      }
+      ImageWidgetClass SpawnHereFrame {
+       ignorepointer 1
+       color 0.34 0.86 0.58 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 1110 42 size 108 64
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      ImageWidgetClass SpawnHereFace {
+       ignorepointer 0
+       color 0.82 0.82 0.82 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_btn.paa"
+       position 1112 44 size 104 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass SpawnHereLabel {
+       ignorepointer 1
+       color 0.80 0.98 0.86 1
+       position 1112 44 size 104 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "HERE"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" center "text valign" center
+      }
+      ImageWidgetClass GoEndFrame {
+       ignorepointer 1
+       color 0.30 0.45 0.60 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 1226 42 size 90 64
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      ImageWidgetClass GoEndFace {
+       ignorepointer 0
+       color 0.82 0.82 0.82 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_btn.paa"
+       position 1228 44 size 86 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass GoEndLabel {
+       ignorepointer 1
+       color 0.90 0.94 0.98 1
+       position 1228 44 size 86 60
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "END"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" center "text valign" center
+      }
+     }
+    }
+
+    // HotkeysPanel REMOVIDO (2026-06-26): el espacio derecha-abajo lo ocupa ahora
+    // RunnersPanel (extendido a alto 410, full-height). El script no bindeaba widgets
+    // Hotkey*/Hk* (eran solo legenda visual), asi que la remocion no afecta logica.
+
+    // ===================== FOOTER =====================
+    TextWidgetClass Footer {
+     ignorepointer 1 color 0.70 0.78 0.85 1
+     position 20 720 size 1310 16
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     text "BZ_AutoDrive v1.0  ·  server 30 fps"
+     font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center
+    }
+
+    // ===================== OVERLAY DE AYUDA (boton "?") =====================
+    // Modal DENTRO del panel: cubre el cuerpo (deja el header con el "?" clickeable). El script
+    // (BZReproductorUI) lo arranca oculto y lo togglea con el "?" / CERRAR. Bilingue ES|EN (boton).
+    // Reusa el mismo fondo metalico del panel (bz_metal_panel) para que se vea consistente.
+    PanelWidgetClass HelpOverlay {
+     ignorepointer 0
+     color 0.055 0.07 0.09 1
+     position 16 74 size 1318 640
+     hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+     {
+      ImageWidgetClass HelpBg {
+       ignorepointer 1 color 1 1 1 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_metal_panel.paa"
+       position 0 0 size 1318 640
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      TextWidgetClass HelpTitle {
+       ignorepointer 1 color 0.85 0.9 0.95 1
+       position 24 12 size 900 28
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "AYUDA"
+       font "gui/fonts/sdf_RobotoBold18" "text halign" left "text valign" center
+      }
+      ButtonWidgetClass HelpLangBtn {
+       ignorepointer 0 color 0.15 0.35 0.5 0.97
+       position 1116 12 size 96 28
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "ES | EN"
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+       style DayZDefaultButton
+      }
+      ButtonWidgetClass HelpCloseBtn {
+       ignorepointer 0 color 0.42 0.2 0.16 0.97
+       position 1220 12 size 82 28
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       text "CERRAR"
+       font "gui/fonts/sdf_RobotoRegular12" "text halign" center "text valign" center
+       style DayZDefaultButton
+      }
+      // Caja de texto DELIMITADA (inset oscuro) + SCROLL. Va MultilineTextWidget (no TextWidget):
+      // el ScrollWidget lo scrollea si el contenido supera el viewport (patron del chat de Boris).
+      ImageWidgetClass HelpBoxBg {
+       ignorepointer 1 color 0.05 0.065 0.09 1
+       imageTexture "BZ_AutoDrive/gui/textures/bz_card.paa"
+       position 18 46 size 1282 588
+       hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1
+       mode blend "src alpha" 1 stretch 1 filter 1
+      }
+      // FILAS DE LINEA (HelpLine0..24) — patron de la lista de runners: el script pagina las ~51 lineas
+      // del texto en esta ventana de 25 filas (rueda = scroll) y colorea por fila (titulos en cyan via
+      // TextWidget.SetColor, que SI existe). Asi hay scroll Y color, sin depender de ScrollWidget/SetLineColor.
+      TextWidgetClass HelpLine0  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 54  size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine1  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 76  size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine2  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 98  size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine3  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 120 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine4  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 142 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine5  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 164 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine6  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 186 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine7  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 208 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine8  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 230 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine9  { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 252 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine10 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 274 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine11 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 296 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine12 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 318 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine13 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 340 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine14 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 362 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine15 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 384 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine16 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 406 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine17 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 428 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine18 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 450 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine19 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 472 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine20 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 494 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine21 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 516 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine22 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 538 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine23 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 560 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+      TextWidgetClass HelpLine24 { ignorepointer 1 color 0.80 0.86 0.92 1 position 30 582 size 1240 20 hexactpos 1 vexactpos 1 hexactsize 1 vexactsize 1 text "" font "gui/fonts/sdf_RobotoRegular12" "text halign" left "text valign" center }
+     }
+    }
+   }
+  }
+ }
+}

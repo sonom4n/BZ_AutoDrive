@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BZ_RouteEditor — Livonia</title>
+<!-- ============================================================================
+  EDITOR DE LIVONIA (enoch).
+  Es un LANZADOR, no una copia: abre el mismo editor con el perfil de mapa de Livonia.
+  Asi hay UN SOLO codigo que mantener — si fuera un duplicado del HTML, cada arreglo
+  (grilla, carril, opacidad...) habria que hacerlo dos veces y en algun momento se
+  desincronizan. Los DATOS si son propios de Livonia:
+     road_pieces.enoch.js · obstacles.enoch.js · polylines2.enoch.js
+     water.enoch.js · rail.enoch.js · bridges.enoch.js · sat_tiles/enoch/
+  Mapa 12800 m · satelital 0.8333 m/px (MEDIDO, no es 1 m/px como Chernarus).
+============================================================================= -->
+<body style="margin:0;background:#0e1116;color:#cdd9e3;font:14px system-ui;display:grid;place-items:center;height:100vh">
+  <div style="text-align:center">
+    <div style="font:600 15px ui-monospace,monospace;color:#6ee7a8">Livonia · 12800 m</div>
+    <div style="margin-top:8px;color:#7b8794">abriendo el editor…</div>
+    <div style="margin-top:14px"><a href="trajectory_editor.html?map=enoch" style="color:#22d3ee">entrar</a></div>
+  </div>
+<script>location.replace('trajectory_editor.html?map=enoch');</script>
+</body>

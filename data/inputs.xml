@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<modded_inputs>
+	<inputs>
+		<actions>
+			<!-- Menu "BZ AutoDrive" — SOLO el core loop (3 teclas). El INTERCAMBIO ya NO es tecla: se
+			     AUTO-DETECTA del cambio de sentido (gear forward<->reverse) al convertir la toma. El resto
+			     de las acciones (largar/parar/pausar un vehiculo, spawnear vacios, loggers) se hacen desde
+			     la UI (el Reproductor). NOTA: DayZ le muestra esta categoria a TODOS los jugadores (registra
+			     los inputs global), pero las teclas solo FUNCIONAN para el admin (gate server-side).
+			     Por eso el menu se deja minimo: el jugador comun ve 3 teclas inertes, no un tablero. -->
+			<input name="UABZAutoDrivePanel" loc="Open Control Panel"/>
+			<input name="UABZRecord"         loc="Record (start/stop)"/>
+			<input name="UABZMarkStop"       loc="Mark Event / Stop"/>
+		</actions>
+
+		<sorting name="BZ_AutoDrive" loc="BZ AutoDrive">
+			<input name="UABZAutoDrivePanel"/>
+			<input name="UABZRecord"/>
+			<input name="UABZMarkStop"/>
+		</sorting>
+	</inputs>
+
+	<!-- Defaults del core loop: Panel (INICIO), Grabar (NUMPAD 5), Evento/Parada (NUMPAD 4).
+	     El INTERCAMBIO se auto-detecta del gear -> ya no es tecla. Las 3 vienen asignadas. -->
+	<preset>
+		<input name="UABZAutoDrivePanel"><btn name="kHome"/></input>
+		<input name="UABZRecord"><btn name="kNumpad5"/></input>
+		<input name="UABZMarkStop"><btn name="kNumpad4"/></input>
+	</preset>
+</modded_inputs>

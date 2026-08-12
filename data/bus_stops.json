@@ -1,0 +1,19 @@
+{
+    "Stops": [
+        { "name": "Kamenka",        "x":  1853.727, "y":  6.161, "z":  2220.507, "orient": -110.76, "uiRadius": 5.0 },
+        { "name": "Komarovo",       "x":  3653.074, "y":  6.915, "z":  2468.497, "orient":   72.00, "uiRadius": 5.0 },
+        { "name": "Balota",         "x":  4478.376, "y":  5.870, "z":  2453.496, "orient":  -74.73, "uiRadius": 5.0 },
+        { "name": "Vysotovo",       "x":  5864.443, "y":  9.029, "z":  2170.911, "orient": -107.02, "uiRadius": 5.0 },
+        { "name": "Chernogorsk",    "x":  6282.044, "y":  8.408, "z":  2599.511, "orient":  179.80, "uiRadius": 5.0 },
+        { "name": "Prigorodki",     "x":  7964.645, "y":  6.734, "z":  3168.465, "orient":  -81.85, "uiRadius": 5.0 },
+        { "name": "Golova",         "x":  9386.204, "y":  6.819, "z":  2052.801, "orient":   90.00, "uiRadius": 5.0 },
+        { "name": "Elektrozavodsk", "x": 10316.652, "y":  5.981, "z":  2142.380, "orient":    0.00, "uiRadius": 5.0 },
+        { "name": "Kamyshovo",      "x": 12024.200, "y":  6.322, "z":  3476.698, "orient":  -96.58, "uiRadius": 5.0 },
+        { "name": "Doliny",         "x": 13394.013, "y":  5.850, "z":  5404.577, "orient": -179.28, "uiRadius": 5.0 },
+        { "name": "Solnechny",      "x": 13472.149, "y":  5.833, "z":  6251.400, "orient":    9.00, "uiRadius": 5.0 },
+        { "name": "Nizhnoe",        "x": 12986.639, "y":  5.970, "z":  8366.626, "orient":  162.85, "uiRadius": 5.0 },
+        { "name": "Berezino",       "x": 13115.863, "y":  6.131, "z": 10361.719, "orient":   18.00, "uiRadius": 5.0 },
+        { "name": "Rify",           "x": 13509.802, "y": 13.733, "z": 11223.773, "orient": -160.06, "uiRadius": 5.0 },
+        { "name": "Svetloyarsk",    "x": 14118.923, "y":  4.169, "z": 13085.526, "orient":    0.00, "uiRadius": 5.0 }
+    ]
+}

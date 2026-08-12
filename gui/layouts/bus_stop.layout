@@ -1,0 +1,157 @@
+// ============================================================================
+//  BZ_AutoDrive - bus_stop layout (px absolutos, mismo enfoque que BrigadaZRadio)
+//  Panel 520x420 px centrado.
+// ============================================================================
+
+PanelWidgetClass Root {
+ ignorepointer 0
+ color 0 0 0 0.55
+ position 0 0
+ size 1 1
+ hexactpos 0
+ vexactpos 0
+ hexactsize 0
+ vexactsize 0
+ priority 999
+ {
+  PanelWidgetClass Panel {
+   ignorepointer 0
+   color 0.05 0.05 0.05 0.92
+   position 0.5 0.5
+   halign center
+   valign center
+   size 820 540
+   hexactpos 0
+   vexactpos 0
+   hexactsize 1
+   vexactsize 1
+   {
+    TextWidgetClass Title {
+     ignorepointer 1
+     color 0.9 0.75 0.2 1
+     position 16 12
+     size 680 28
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     text "Bus Costero BrigadaZ"
+     font "gui/fonts/sdf_RobotoBold18"
+     "text halign" left
+     "text valign" center
+    }
+
+    ButtonWidgetClass CloseBtn {
+     ignorepointer 0
+     color 0.7 0.15 0.15 0.9
+     position 760 8
+     size 48 30
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     text "X"
+     font "gui/fonts/sdf_RobotoBold18"
+     "text halign" center
+     "text valign" center
+     style DayZDefaultButton
+    }
+
+    ButtonWidgetClass Tab0 {
+     ignorepointer 0
+     color 0.2 0.45 0.2 0.9
+     position 16 52
+     size 256 32
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     text "Estado"
+     font "gui/fonts/sdf_RobotoBold14"
+     "text halign" center
+     "text valign" center
+     style DayZDefaultButton
+    }
+
+    ButtonWidgetClass Tab1 {
+     ignorepointer 0
+     color 0.15 0.3 0.15 0.9
+     position 280 52
+     size 256 32
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     text "Ruta"
+     font "gui/fonts/sdf_RobotoBold14"
+     "text halign" center
+     "text valign" center
+     style DayZDefaultButton
+    }
+
+    ButtonWidgetClass Tab2 {
+     ignorepointer 0
+     color 0.45 0.3 0.15 0.9
+     position 544 52
+     size 256 32
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     text "Avisos"
+     font "gui/fonts/sdf_RobotoBold14"
+     "text halign" center
+     "text valign" center
+     style DayZDefaultButton
+    }
+
+    ImageWidgetClass Tab0_Overlay {
+     ignorepointer 1
+     color 0.5 0.9 0.5 1
+     position 16 84
+     size 256 3
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+    }
+
+    ImageWidgetClass Tab1_Overlay {
+     ignorepointer 1
+     color 0.5 0.9 0.5 1
+     position 280 84
+     size 256 3
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+    }
+
+    ImageWidgetClass Tab2_Overlay {
+     ignorepointer 1
+     color 0.95 0.7 0.3 1
+     position 544 84
+     size 256 3
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+    }
+
+    TextWidgetClass BodyText {
+     ignorepointer 1
+     color 0.88 0.88 0.88 1
+     position 16 100
+     size 788 420
+     hexactpos 1
+     vexactpos 1
+     hexactsize 1
+     vexactsize 1
+     font "gui/fonts/sdf_RobotoBold18"
+     "text halign" left
+     "text valign" top
+    }
+   }
+  }
+ }
+}

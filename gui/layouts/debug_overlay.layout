@@ -1,0 +1,39 @@
+// ============================================================================
+//  debug_overlay.layout — HUD no-modal del debugger (capa 2).
+//  Muestra el estado vivo de cada runner en pantalla SIN robar foco (ignorepointer).
+//  Se crea con CreateWidgets + Show(true/false), se actualiza desde MissionGameplay.
+//  Posicion: borde izquierdo, media altura. Tamaño fraccional (resolucion-independiente).
+// ============================================================================
+
+PanelWidgetClass BZDebugOverlayRoot {
+ ignorepointer 1
+ color 0.02 0.05 0.07 0.62
+ position 0.008 0.28
+ size 0.26 0.34
+ hexactpos 0 vexactpos 0 hexactsize 0 vexactsize 0
+ {
+  TextWidgetClass DbgTitle {
+   ignorepointer 1
+   color 0.16 0.83 1.0 1
+   position 0.03 0.02
+   size 0.94 0.06
+   hexactpos 0 vexactpos 0 hexactsize 0 vexactsize 0
+   text "BZ DEBUG  ·  RUNNERS"
+   font "gui/fonts/sdf_RobotoBold18"
+   "text halign" left
+   "text valign" center
+  }
+  TextWidgetClass DbgText {
+   ignorepointer 1
+   color 0.85 0.92 0.97 1
+   position 0.03 0.10
+   size 0.94 0.88
+   hexactpos 0 vexactpos 0 hexactsize 0 vexactsize 0
+   text ""
+   font "gui/fonts/sdf_RobotoRegular12"
+   "text halign" left
+   "text valign" top
+   multiline 1
+  }
+ }
+}

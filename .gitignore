@@ -1,0 +1,54 @@
+# Build artifacts
+*.pbo
+*.pbo.*
+*.bisign
+*.bikey
+*.log
+*.tmp
+
+# AddonBuilder temp
+temp/
+.temp/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local state / no publicar
+profile/
+profiles/
+local/
+*.local.*
+
+# CSVs de grabacion crudos (los procesados van como JSON)
+recordings/*.csv
+!recordings/.gitkeep
+
+# Backups y dumps grandes
+*.bak
+*.backup
+*.dump
+
+# Config per-user del wizard (tiene paths del dev; se regenera portable en la 1ra corrida)
+tools/wizard_config.json
+
+# Build/deploy propio del autor (cableado a nuestros servers + llave de firma; cada modder empaqueta a su manera)
+build.ps1
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Artefactos de research/dev (dumps de deep-research)
+docs/RESEARCH_*.json
+
+# Paper: no se publica (queda local)
+PAPER_BZ_AutoDrive.md
+PAPER_BZ_AutoDrive.en.md
