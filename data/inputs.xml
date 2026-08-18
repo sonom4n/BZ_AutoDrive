@@ -11,12 +11,14 @@
 			<input name="UABZAutoDrivePanel" loc="Open Control Panel"/>
 			<input name="UABZRecord"         loc="Record (start/stop)"/>
 			<input name="UABZMarkStop"       loc="Mark Event / Stop"/>
+			<input name="UABZDriveTest"      loc="Drive Routed (test)"/>
 		</actions>
 
 		<sorting name="BZ_AutoDrive" loc="BZ AutoDrive">
 			<input name="UABZAutoDrivePanel"/>
 			<input name="UABZRecord"/>
 			<input name="UABZMarkStop"/>
+			<input name="UABZDriveTest"/>
 		</sorting>
 	</inputs>
 
@@ -26,5 +28,6 @@
 		<input name="UABZAutoDrivePanel"><btn name="kHome"/></input>
 		<input name="UABZRecord"><btn name="kNumpad5"/></input>
 		<input name="UABZMarkStop"><btn name="kNumpad4"/></input>
+		<input name="UABZDriveTest"><btn name="kNumpad0"/></input>  <!-- NUMPAD 6 lo usa HeliDrive -->
 	</preset>
 </modded_inputs>

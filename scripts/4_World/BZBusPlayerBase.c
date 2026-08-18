@@ -95,8 +95,9 @@ modded class PlayerBase {
                 break;
 
             case BZBusRPC.REQUEST_RESPAWN_TEST:
-                if (GetGame().IsServer())
-                    BZBusService.GetInstance().RespawnAs("Hatchback_02_Grey");
+                // v1.1 paso 3: repurposado como TEST DE RUTEO (rutea desde la posicion del jugador, arma la traza y maneja).
+                if (GetGame().IsServer() && BZ_CanControl(sender))
+                    BZBusService.GetInstance().DriveRouteFromPlayer(GetPosition());
                 break;
 
             case BZBusRPC.REQUEST_CONTINUAR:

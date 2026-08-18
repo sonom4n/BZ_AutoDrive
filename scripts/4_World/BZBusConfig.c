@@ -415,6 +415,11 @@ class BZBusRouteConfig {
     // throttle=0 (coast -> el FRENO UNIVERSAL clava); des-clavando (<MaxKmh) capeado al EndpointKick. Solo el
     // endpoint final; no toca cusp/checkpoints/arranque.
     bool  EndpointThrottleCapEnabled = true;
+    // PARADA PRECISA EN LOS INTERCAMBIOS (2026-08-16, Sonom4n): extiende el zone de parada del endpoint (freno
+    // autoadaptativo + corte de gas) a las piernas FORWARD que terminan en un legBreak/intercambio -> Boris CLAVA
+    // la pose del intercambio en vez de sobrepasarla (antes cerraba flojo por min-aprox y arrancaba la reversa
+    // 7-11m desplazada -> embrollo/AR). true = reusa la precision del endpoint en cada intercambio. false = viejo.
+    bool  EndpointStopAtIntercambio = true;
     // DECEL EFECTIVO DE PARADA DEL ENDPOINT FINAL (2026-08-05, Sonom4n: "el knob que empareja a todos esta en los
     // vehiculos"). El freno del cap usa brake = v^2/(2*d*decel). 0 = DERIVAR AUTOMATICO del EndpointBrakeDecel
     // del fingerprint (que el framework MIDE del recording de CADA vehiculo -> generaliza a cualquier mod de
@@ -502,7 +507,7 @@ class BZBusRouteConfig {
     // CHECKPOINT (intercambio/endpoint): no cerrar el tramo hasta que el creep clave el ORIGEN a <esto del
     // punto (2026-07-22, Sonom4n: "tenemos que llegar a menos de 0.5"). Sin esto el tramo cerraba a 1.4-2.5m
     // (LegDoneTolM) ANTES de que el creep terminara -> el intercambio no clavaba como el endpoint.
-    float CheckpointCloseTolM  = 0.4;
+    float CheckpointCloseTolM  = 0.2;    // el iman del intercambio reptea+centra hasta esta dist antes de avanzar (era 0.4 -> se cortaba a 0.66m; el endpoint va a 0.05 y clava 0.083). Bajado para que el intercambio clave como el endpoint (Sonom4n: "el intercambio ES un checkpoint donde mi vel grabada es 0, igual que el endpoint")
     // CHECKPOINT SNAP (2026-07-22, Sonom4n): la fisica llega al vecindario del punto (piso de ruido ~0.15-0.42m
     // MEDIDO: 2 runs del mismo build difieren eso -> el motor es estocastico). Para las poses que necesitan
     // PRECISION (puerta angosta, arbol del pickup) un deslizamiento CINEMATICO frame-by-frame completa el
@@ -605,9 +610,78 @@ class BZBusRouteConfig {
     int   CalibBreakawaySamples = 3;      // repeticiones para promediar
     float CalibBreakawayStep    = 0.03;   // cuanto sube el gas por tick (500 ms) durante la rampa
     int   CalibBreakawayWaitTicks = 26;   // esperar (~13 s) a que pase el hold de spawn y arranque el motor
-    bool  SpeedDecisionDebug   = true;   // log [SPD]: muestra que fuente decide la velocidad en cada tick lento
+    bool  SpeedDecisionDebug   = false;  // log [SPD] (OFF en release; on para debug de fuente de velocidad)
+    bool  DriveDiagLog         = false;  // 2026-08-18: gate GENERAL de diagnostico por-frame ([Tick]/[EpZone]/[LAUNCHDBG]/[MANIOBRA]) - OFF en release, on solo para debug
     bool  BreakawayRampEnabled = true;
     float StopResidualTolM     = 1.0;    // un stop no se da por cumplido hasta estar A ESTA DISTANCIA del punto
+    // FASE 1 SUB-CONTROLADOR REVERSA: DESPEGUE FIRME (2026-08-16). El bus pesado no despega en reversa desde
+    // parado con el breakaway aprendido -> AR. El humano FLOOREA (throttle=1.0 medido). Mientras la pierna sea
+    // reversa, parado y lejos del endpoint, mete este throttle para romper la inercia; suelta al moverse.
+    bool  RevLaunchBoostEnabled = true;
+    float RevLaunchThrottle     = 1.0;   // como el humano (a fondo). Bajar si lurchea al despegar.
+    float RevLaunchExitKmh      = 2.0;   // apenas supera esta vel, suelta el boost -> control normal de la reversa
+    // FASE 2: VOLANTE DE REVERSA DESDE TU FRONT WHEEL GRABADO (2026-08-16). El conversor descarta targetSteering
+    // (=0) -> la reversa quedaba con puro Stanley que saturaba (thrash, full lock al reves). Con esto el feedforward
+    // sale de targetFrontWheel/plant-gain (reproduce tu rueda ejecutada) -> traza tu arco. Generaliza por plant-gain.
+    bool  RevUseRecordedWheel = true;
+    float RevWheelLeadM       = 0.0;    // lead posicional del volante grabado (0 = en el punto exacto; la reversa es densa/localizada, no anticipar)
+    // SUB-CONTROLADOR DE MANIOBRA (2026-08-16, Sonom4n): DUEÑO de las piernas que terminan en intercambio (legBreak).
+    // Secuencia predictiva por fuera del cruise/endpoint: marcha fija (mata flip-flop) + volante = tu front-wheel
+    // grabado (traza tu arco) + freno predictivo autoadaptativo -> clava <0.5m sobre tu pose. Reproduce tu movimiento
+    // con fisicas y generaliza (decel/gain por-vehiculo). Ver ManeuverControl en BZBusService.c.
+    bool  ManeuverControllerEnabled = true;
+    float ManeuverStopTolM       = 0.4;   // clava a esta distancia de la pose del intercambio (objetivo <0.5m)
+    float ManeuverStopKmh        = 1.0;   // <= esto + dentro de StopTol -> CLAVADO (latch + cierra pierna)
+    float ManeuverLaunchThrottle = 1.0;   // despegue firme desde parado (bus). TODO: ramp closed-loop para agnostico sedan
+    float ManeuverCruiseKmh      = 4.0;   // velocidad de crucero de la maniobra (paso de hombre)
+    float ManeuverCruiseThrottle = 0.55;  // throttle firme para mover el bus en la maniobra (el 0.4 era debil)
+    float ManeuverSteerSign      = 1.0;   // signo del volante grabado (probar en reversa; -1.0 si sale al reves)
+    float ManeuverZoneM          = 15.0;  // dist del intercambio para enganchar. El tramo-completo (999) zigzagueaba en las RECTAS (replay open-loop + cross-track oscila a velocidad); el cruise normal es mas suave ahi. 15 = cubre el approach al intercambio (llegar on-line) sin manejar la recta larga
+    float ManeuverLaunchStraightKmh   = 1.5;  // clamp anti-scrub SOLO FORWARD: hasta esta vel se acota el volante para romper inercia (un pesado parado con la rueda cruzada NO despega). En reversa NO aplica (el pre-steer despega bien)
+    float ManeuverLaunchStraightSteer = 0.15; // tope de volante mientras despega forward (gentil, sin full-lock que traba el arranque por scrub)
+    // VELOCIDAD FIEL (2026-08-16, Sonom4n "velocidad+trayectoria -> los endpoints caen solos"): objetivo = tu vel
+    // GRABADA, acotada por el freno universal para parar en la pose. Baja velocidad, alta precision.
+    float ManeuverSpeedLeadM      = 0.5;  // (legacy) lead de lectura de velocidad; ahora se usa el lookahead anticipatorio
+    float ManeuverSpeedLookaheadM = 8.0;  // PURE-PURSUIT DE VELOCIDAD: mira este tramo adelante en tu perfil y toma la vel que permite decelerar a lo que viene (se anticipa al giro lento; el ojo del cruise)
+    float ManeuverTurnWheelThresh = 2.0;  // (legacy, sin uso) reemplazado por el cap SUAVE proporcional al volante
+    float ManeuverTurnKmh         = 30.0; // DESACTIVADO (=CapMax): el cap por giro oscilaba con el volante grabado (que varia en la maniobra) -> vTgt saltaba 4.5<->12 -> pasitos. El understeer de los giros se ataca de otra forma
+    float ManeuverTurnCapMaxKmh   = 30.0; // =ManeuverTurnKmh -> vCap constante -> sin cap efectivo
+    float ManeuverTurnCoastFrac   = 0.5;  // si |tu volante grabado| supera esta fraccion de full-lock (giro cerrado), Boris NO acelera (coast) -> no understeerea
+    float ManeuverTurnCoastThr    = 0.25; // throttle max en el giro cerrado. 0.12 frenaba DE MAS -> radio mas cerrado que el tuyo -> residuo lateral ~0.8m. 0.25 sostiene ~tu velocidad del giro -> radio igual -> cae centrado (sin acelerar = sin understeer)
+    float ManeuverCoastZoneM      = 8.0;  // el coast solo se aplica a menos de esta dist de la pose (el giro brusco del approach); en el patio (mas lejos) el volante variable lo toggleaba = pasitos
+    float ManeuverLaunchMinGapM   = 0.8;  // si esta parado y a mas de StopTol+esto de la pose, despega (arranque de tramo) sin importar la vel grabada
+    float ManeuverLaunchKmh       = 0.5;  // el DESPEGUE (thr=1) solo dispara bajo esta vel = parado REAL. Antes 1.0 -> gateaba (cada bajon a <1 en maniobra lenta tiraba thr=1); los 0.5-1 los maneja el chase-vTgt suave
+    // HILL-START (2026-08-17, Sonom4n): en subida el thr=1 solo no despega desde parado -> revolucionar contra el handbrake y soltar (pico de torque)
+    float ManeuverHillStartSlope  = 0.06; // sin(pitch) minimo para activar el hill-start (0.06 ~ 3.4 grados de subida)
+    float ManeuverHillHoldTicks   = 8.0;  // (legacy, sin uso) el hold ahora es por RPM (rpmClutch), no por tiempo
+    float ManeuverHillReleaseRpm  = 3000.0; // piso de RPM para soltar el handbrake en el hill-start (Sonom4n soltaba a ~3600). Se usa max(rpmClutch, esto) -> per-vehiculo con piso
+    float ManeuverHillGraceTicks  = 40.0; // ticks (@2Hz = 20s) de margen: el AR NO dispara durante el hill-start; despues es la red
+    float ManeuverStopDecelFactor = 0.85; // margen del freno universal para el cap de velocidad (MISMO que el endpoint, que frenaba bien)
+    float ManeuverSpeedGain       = 0.12; // throttle por km/h de deficit al perseguir la velocidad objetivo
+    float ManeuverBrakeGain       = 0.20; // freno por km/h de exceso sobre la velocidad objetivo (0.4 sobre-frenaba -> pasitos; el pure-pursuit de velocidad ya anticipa el frenado suave)
+    float ManeuverSlopeThrottleGain = 1.0; // feedforward de gravedad al acelerar en SUBIDA (trepar fiel; el freno slope-aware ya usa la pendiente)
+    float ManeuverCreepKmh          = 1.5; // vel minima de reptado hasta la pose mientras signed>StopTol (acotada por vAllow); evita pararse corto cuando vRec lee 0
+    float ManeuverCreepHoldM        = 2.5; // a menos de esta dist de la pose, ManeuverControl le pide a UpdateLegBounds que NO cierre por min-aprox (deja que EL clave preciso). Solo cerca -> no traba el arranque
+    // CROSS-TRACK (2026-08-16, Sonom4n "velocidad Y trayectoria"): pega a Boris a la linea grabada (no solo copia el volante).
+    float ManeuverCrossTrackGain = 0.50; // correccion por metro de offset lateral (0.65 no ayudo claro el residuo lateral; el lateral se ataca mejor de otra forma la proxima)
+    float ManeuverCrossTrackMax  = 0.60; // tope de la correccion
+    float ManeuverCrossTrackSign = 1.0;  // signo de la correccion (flip a -1.0 si empuja para el lado equivocado)
+    float ManeuverCrossTrackFullKmh = 3.0; // vel a la que el cross-track llega a full; a v~0 se anula (pre-steer/despegue limpio, sin over-steer)
+    // ARCO LATERAL EN EL CREEP-IN (2026-08-17, Sonom4n "el iman con arco lateral"): centra el residuo lateral de los stops
+    float ManeuverLateralArcM     = 2.5;  // zona del arco lateral. OJO: a creep-speed el volante ROTA mas que TRASLADA, y con full-lock en 2.5m Boris solo traslada ~0.34m -> el boost fuerte SOBRE-ROTA (wp52 2.43m/11.9deg). Centrar el lateral necesita mas distancia (approach), no el creep-in
+    float ManeuverLateralArcBoost = 1.0;  // 1.0 = arco DESACTIVADO (sobre-rotaba). El lateral se ataca sobre el approach, no aca
+    float ManeuverLateralArcMax   = 0.60; // = CrossTrackMax -> sin efecto
+    float ManeuverCrossTrackRevScale = 0.60; // en REVERSA el cross-track. Ahora el arco viene del RUMBO (no del volante), asi que el cross-track puede corregir POSICION sin romper la forma -> subido para centrar la reversa (era 0.30 = arco ancho ~1.2m off)
+    // DIRECCION POR RUMBO (2026-08-16, Sonom4n "interpretar tu grabacion tal cual = seguir tu POSE, no copiar el volante"):
+    // steer para igualar tu heading grabado (estable a v~0 como el cruise sigue el camino), en vez del front-wheel FF.
+    bool  ManeuverUseHeading    = true;  // true = seguir tu RUMBO grabado; false = copiar tu front_wheel (fallback)
+    float ManeuverHeadingSteerK = 0.033; // ganancia de volante por grado de error de rumbo (30 deg -> ~full lock)
+    float ManeuverHeadingLeadM  = 2.0;   // (legacy) reemplazado por el dual-lookahead corto+largo
+    // DUAL LOOKAHEAD DE RUMBO (2026-08-16, Sonom4n "uno largo y uno corto, que calcule entre uno y otro y le de tiempo a ejecutar"):
+    float ManeuverHeadingLeadShortM = 1.0; // lead CORTO = precision (no deriva)
+    float ManeuverHeadingLeadLongM  = 5.0; // lead LARGO = anticipa el giro (Boris arranca a girar antes, tiene TIEMPO de completarlo alineado)
+    float ManeuverHeadingLongWeight = 0.5; // blend entre el corto y el largo (0=solo corto, 1=solo largo)
+    float ManeuverHeadingFFScale = 1.0;  // FF+FB: cuanto de tu volante grabado se SUMA al heading (giros bruscos donde el heading proporcional under-turnea; recta FF~0)
     float BreakawayRampStart   = 0.15;   // desde donde arranca la rampa
     float BreakawayRampStep    = 0.06;   // cuanto sube por tick (500 ms) hasta que se mueve
     float BreakawayRampMax     = 0.95;   // tope: si con esto no se mueve, esta trabado de verdad -> AR

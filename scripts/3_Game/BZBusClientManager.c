@@ -12,6 +12,8 @@ class BZRunnerInfo {
     int    wpIdx;
     int    wpTotal;
     float  kmh;
+    float  posX;   // 2026-08-17: coordenadas del vehiculo (para ubicarlo en el mapa)
+    float  posZ;
 }
 
 // Fase 2: snapshot client-side de un vehiculo spawneado VACIO (panel ACTIVE SPAWN VEHICLE).
@@ -137,6 +139,8 @@ class BZBusClientManager {
     static float  s_RIDist = 0;
     static float  s_RIMaxkmh = 0;
     static int    s_RIVer = 0;   // se incrementa en cada recepcion -> el reproductor detecta el cambio en su Update
+    static ref array<float> s_RIPosX;   // 2026-08-18: x,z de cada wp de la toma seleccionada (para las coords del scrubber)
+    static ref array<float> s_RIPosZ;
 
     static void RequestRouteInfo(string fname) {
         Man player = GetGame().GetPlayer();
@@ -162,6 +166,19 @@ class BZBusClientManager {
         s_RINwp = nwp;
         s_RIDist = dist;
         s_RIMaxkmh = maxkmh;
+        // POSICIONES (2026-08-18): nwp pares x,z despues de maxkmh (protocolo simetrico con HandleRouteInfoRequest).
+        if (!s_RIPosX) s_RIPosX = new array<float>;
+        if (!s_RIPosZ) s_RIPosZ = new array<float>;
+        s_RIPosX.Clear();
+        s_RIPosZ.Clear();
+        for (int wi = 0; wi < nwp; wi++) {
+            float rx;
+            float rz;
+            if (!ctx.Read(rx)) break;
+            if (!ctx.Read(rz)) break;
+            s_RIPosX.Insert(rx);
+            s_RIPosZ.Insert(rz);
+        }
         s_RIVer++;
     }
 
@@ -231,6 +248,8 @@ class BZBusClientManager {
             if (!ctx.Read(ri.wpIdx))   break;
             if (!ctx.Read(ri.wpTotal)) break;
             if (!ctx.Read(ri.kmh))     break;
+            if (!ctx.Read(ri.posX))    break;   // 2026-08-17: coordenadas (al final del bloque, protocolo simetrico)
+            if (!ctx.Read(ri.posZ))    break;
             s_RunnersInfo.Insert(ri);
         }
         s_RunnersReceived = true;

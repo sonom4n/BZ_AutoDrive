@@ -56,6 +56,7 @@ class BZReproductorUI extends UIScriptedMenu {
     // Fase 2: la ventana baja a MAXR=5 (60% del panel); el 40% de abajo es el sub-panel de VACIOS.
     private const int MAXR = 5;     // filas VISIBLES (ventana); la lista de runners puede ser mayor -> scroll
     private int m_RunScroll;        // indice del runner en la fila de arriba (scroll de la ventana)
+    private ref array<int> m_RowRunnerIdx;  // 2026-08-18: fila visible (compactada) -> indice real en s_RunnersInfo (para los botones)
     private TextWidget   m_RunnersCount;
     private ref array<Widget>       m_RunCard;
     private ref array<Widget>       m_RunBg;     // relleno de cada tarjeta (target del hover)
@@ -243,7 +244,15 @@ class BZReproductorUI extends UIScriptedMenu {
         string tag = "";
         if (wp <= 0) tag = "   (start)";
         else if (wp >= last) tag = "   (end)";
-        m_SliderLabel.SetText("wp " + wp + " / " + last + "   ·   " + (int)Math.Round(distAt) + " m   ·   " + pct + "%" + tag);
+        // COORDS del wp del scrubber (2026-08-18, pedido de Sonom4n): las posiciones llegaron con el route-info.
+        // Asi el jugador ve DONDE en el mapa cae el scrubber (y donde spawnearia con "SPAWN ACA").
+        string coord = "";
+        array<float> pxs = BZBusClientManager.s_RIPosX;
+        array<float> pzs = BZBusClientManager.s_RIPosZ;
+        if (pxs && pzs && wp >= 0 && wp < pxs.Count() && wp < pzs.Count()) {
+            coord = "   ·   " + (int)Math.Round(pxs.Get(wp)) + " " + (int)Math.Round(pzs.Get(wp));
+        }
+        m_SliderLabel.SetText("wp " + wp + " / " + last + "   ·   " + (int)Math.Round(distAt) + " m   ·   " + pct + "%" + tag + coord);
     }
 
     // Traduce la posicion del mouse a un wp (por la posicion/ancho REAL del track en pantalla) y lo fija.
@@ -331,33 +340,40 @@ class BZReproductorUI extends UIScriptedMenu {
         array<ref BZRunnerInfo> rs = BZBusClientManager.s_RunnersInfo;
         int n = 0;
         if (rs) n = rs.Count();
-        // ACTIVE count para el header: rs incluye el primary INACTIVO (nunca se desregistra del
-        // multiton) -> contar rs.Count() dejaba "RUNNERS: 1" con la lista vacia. Contamos solo .active.
-        int activeN = 0;
-        if (rs) {
-            for (int ai = 0; ai < n; ai++) {
-                if (rs.Get(ai) && rs.Get(ai).active) activeN++;
-            }
+        // COMPACTAR (2026-08-18, pedido de Sonom4n): mostrar SOLO los activos, siempre pegados arriba, sin
+        // huecos. Antes se mapeaba fila = indice crudo -> si terminaba el runner del medio (o el primary
+        // inactivo, que nunca se desregistra del multiton) quedaba un agujero. Construimos la lista de
+        // INDICES activos en orden; las filas se llenan de esa lista. m_RowRunnerIdx recuerda el indice
+        // REAL de cada fila para que los botones (RST/TP/II/[]) actuen sobre el runner correcto.
+        array<int> actIdx = new array<int>;
+        for (int ci = 0; ci < n; ci++) {
+            if (rs.Get(ci) && rs.Get(ci).active) actIdx.Insert(ci);
         }
-        // ventana: clamp del scroll a [0, n-MAXR]
-        int maxScroll = n - MAXR;
+        int nAct = actIdx.Count();
+        // ventana: clamp del scroll a [0, nAct-MAXR]
+        int maxScroll = nAct - MAXR;
         if (maxScroll < 0) maxScroll = 0;
         if (m_RunScroll > maxScroll) m_RunScroll = maxScroll;
         if (m_RunScroll < 0) m_RunScroll = 0;
+        if (!m_RowRunnerIdx) m_RowRunnerIdx = new array<int>;
+        m_RowRunnerIdx.Clear();
         for (int i = 0; i < MAXR; i++) {
-            int ri = m_RunScroll + i;
-            bool has = (ri < n && rs.Get(ri) && rs.Get(ri).active);
+            int slot = m_RunScroll + i;
+            bool has = (slot < nAct);
+            int origIdx = -1;
+            if (has) origIdx = actIdx.Get(slot);
+            m_RowRunnerIdx.Insert(origIdx);   // fila i -> indice real (o -1 si vacia)
             if (m_RunCard.Get(i)) m_RunCard.Get(i).Show(has);
-            if (has) FillRow(i, rs.Get(ri));
+            if (has) FillRow(i, rs.Get(origIdx));
         }
         if (m_RunnersCount) {
             string suf = "   watch server load";
-            if (n > MAXR) {
+            if (nAct > MAXR) {
                 int hi = m_RunScroll + MAXR;
-                if (hi > n) hi = n;
-                suf = "   " + (m_RunScroll + 1) + "-" + hi + " de " + n + "  (rueda = scroll)";
+                if (hi > nAct) hi = nAct;
+                suf = "   " + (m_RunScroll + 1) + "-" + hi + " de " + nAct + "  (rueda = scroll)";
             }
-            m_RunnersCount.SetText("RUNNERS: " + activeN + suf);   // activeN: 0 con la lista vacia (no el primary stale)
+            m_RunnersCount.SetText("RUNNERS: " + nAct + suf);
         }
     }
 
@@ -365,11 +381,17 @@ class BZReproductorUI extends UIScriptedMenu {
     private void FillRow(int i, BZRunnerInfo info) {
         TextWidget nameW   = m_RunName.Get(i);
         TextWidget statusW = m_RunStatus.Get(i);
-        if (nameW) nameW.SetText(Pretty(info.name) + "  [" + info.origin + "]  wp " + info.wpIdx + "/" + info.wpTotal);
+        // km/h EN VIVO (2026-08-17): la velocidad viaja en el struct, va en la linea 1 junto al wp.
+        string rowTxt = Pretty(info.name) + "  [" + info.origin + "]  wp " + info.wpIdx + "/" + info.wpTotal;
+        rowTxt = rowTxt + "  ·  " + Math.Round(info.kmh).ToString() + " km/h";
+        if (nameW) nameW.SetText(rowTxt);
         string st; int col;
         if (info.paused)         { st = "PAUSED";  col = ARGB(255, 217, 166, 51); }
         else if (info.kmh > 1.0) { st = "DRIVING"; col = ARGB(255, 77, 191, 102); }
         else                     { st = "STOPPED"; col = ARGB(255, 150, 150, 150); }
+        // COORDENADAS (2026-08-18, pedido de Sonom4n): no entraban en la linea 1 (nombre+wp+kmh saturaban los 672px)
+        // -> a la linea de ESTADO, que tiene 600px y solo el estado. Formato "ESTADO   ·   X Z".
+        st = st + "    ·    " + Math.Round(info.posX).ToString() + " " + Math.Round(info.posZ).ToString();
         if (statusW) { statusW.SetText(st); statusW.SetColor(col); }
         // El boton de pausa es un toggle: muestra ">" cuando esta pausado (para reanudar), "II" cuando corre.
         ButtonWidget pauseW = m_RunPause.Get(i);
@@ -685,7 +707,11 @@ class BZReproductorUI extends UIScriptedMenu {
         // RESET (RST) re-arranca ESE runner desde wp 0 de su ruta YA CARGADA: el server hace
         // RespawnBus() (config en memoria, NO recarga JSON). Sirve para re-ver un tramo rapido.
         for (int rr = 0; rr < MAXR; rr++) {
-            int ri = m_RunScroll + rr;   // fila visible -> indice real del runner (la ventana puede estar scrolleada)
+            // fila visible COMPACTADA -> indice REAL del runner (mapeado en RefreshRunner). Antes era
+            // m_RunScroll+rr (indice crudo), que con la lista compactada apuntaba al runner equivocado.
+            int ri = -1;
+            if (m_RowRunnerIdx && rr < m_RowRunnerIdx.Count()) ri = m_RowRunnerIdx.Get(rr);
+            if (ri < 0) continue;   // fila vacia -> el click no controla ningun runner
             if (w == m_RunReset.Get(rr)) { BZBusClientManager.RequestRunnerCtl(ri, 3); return true; }
             if (w == m_RunTp.Get(rr))    { BZBusClientManager.RequestRunnerCtl(ri, 2); return true; }
             if (w == m_RunPause.Get(rr)) { BZBusClientManager.RequestRunnerCtl(ri, 1); return true; }

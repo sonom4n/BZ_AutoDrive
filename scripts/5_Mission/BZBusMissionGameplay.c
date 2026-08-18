@@ -102,6 +102,7 @@ modded class MissionGameplay {
             if (BZIn("UABZMarkMax"))     BZPathLogService.GetInstance().MarkMaxSustained();
             if (BZIn("UABZSysIDStep"))   BZBusClientManager.RequestSysIDStep();
             if (BZIn("UABZSysIDCurve"))  BZBusClientManager.RequestSysIDCurve();
+            if (BZIn("UABZDriveTest"))   BZBusClientManager.RequestRespawnTest();   // v1.1 paso 3: rutea+maneja (NUMPAD 0)
             if (BZIn("UABZSlot1"))       BZBusClientManager.RequestRespawnSlot(1);
             if (BZIn("UABZSlot2"))       BZBusClientManager.RequestRespawnSlot(2);
             if (BZIn("UABZSlot3"))       BZBusClientManager.RequestRespawnSlot(3);

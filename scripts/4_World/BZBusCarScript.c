@@ -266,6 +266,11 @@ modded class CarScript {
             }
         }
 
+        // Freno predictivo del endpoint PER-FRAME (2026-08-17): en los ultimos 5m antes de un stop, recomputa
+        // el freno cada frame (~35Hz) en vez de cada 500ms -> Boris para EN el punto en vez de cruzarlo con
+        // envion. Gate barato (corta al toque salvo m_AtStop && <5m); solo aritmetica, sin queries de terreno.
+        srv.EndpointFrameBrake(this);
+
         // Aplicar throttle/steering/brake cacheado (sobreescribe lo que eAI puso)
         srv.ApplyBusInput(this, dt);
 

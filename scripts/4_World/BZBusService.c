@@ -441,6 +441,8 @@ class BZBusService {
     private float m_CachedSteering;
     private float m_CachedBrake;
     private float m_CachedHandbrake;   // 2026-06-08: anti-rollback en pendientes (parking/maniobra)
+    private int   m_HbSafetyTicks;     // 2026-08-17: contador anti-deadlock de handbrake (free-rev por hb trabado)
+    private bool  m_LaunchHbSuppress;  // 2026-08-17: negar handbrake SOLO en el arranque (hasta despegar) - pedido de Sonom4n
     private float m_CachedRpmClutch;   // cached al SpawnBus desde config del vehiculo
     // TRACER DEL CONTROLADOR (2026-07-21, idea de Sonom4n: "que Boris diga en log que lineas esta tocando").
     // Cada seccion del pipeline llama CtlSnap(tag, thr, brk, steer). Comparando snapshots consecutivos
@@ -467,6 +469,10 @@ class BZBusService {
     private float m_YawEMA;             // 2026-07-07: yaw-rate real suavizado (EMA) para el feedback de yaw
     private bool  m_SpawnHoldActive;   // 2026-06-09: handbrake on al spawn, suelta cuando Boris arranca
     private float m_SpawnHoldTime;     // tickTime cuando arranco el spawn hold
+    private int   m_FreeRevTicks;      // 2026-08-17: ticks consecutivos de free-rev (motor a fondo, ruedas sin girar) = drivetrain desconectado en respawn
+    private float m_LastReengageTime;  // 2026-08-17: tickTime del ultimo re-enganche, para el cooldown
+    private bool  m_ReengageActive;    // 2026-08-17: secuencia de re-enganche del embrague en curso (soltar gas + neutral->primera al ralenti)
+    private float m_ReengageStart;     // 2026-08-17: tickTime del inicio de la secuencia de re-enganche
     private bool  m_EndHoldActive;     // 2026-06-27: handbrake on al fin de ruta, sostiene N seg antes de despawn/respawn (espejo del spawn-hold)
     private float m_EndHoldTime;       // tickTime cuando arranco el end hold
     private bool  m_LightsOn;          // 2026-06-27: estado de luces del vehiculo (verbos lights_on/lights_off)
@@ -1533,7 +1539,7 @@ class BZBusService {
         }
         // DIAGNOSTICO one-shot (2026-07-25): el cap de LaunchStraight no aplicaba en el arranque de la reversa
         // (volante -11deg con cap 0.03). Logueo los primeros N ticks de cada tramo para ver m_LegLaunch real.
-        if (m_LaunchDbg < 22) {
+        if (m_Config && m_Config.DriveDiagLog && m_LaunchDbg < 22) {
             BZBusLog.Info("[LAUNCHDBG] leg=" + m_LegStart + ".." + m_LegEnd + " launch=" + m_LegLaunch + " vel=" + bus.GetSpeedometerAbsolute() + " cmd=" + m_CachedSteering + " out=" + steerOut);
             m_LaunchDbg++;
         }
@@ -1543,7 +1549,34 @@ class BZBusService {
         // 2026-06-08: handbrake aplicado para anti-rollback en pendientes.
         // En DayZ altera la friccion del eje trasero en SimulationModule,
         // bloqueando el micro-deslizamiento que SetBrake solo no captura.
-        bus.SetHandbrake(m_CachedHandbrake);
+        // SAFETY ANTI-DEADLOCK (2026-08-17): el free-rev del arranque = handbrake que NO solto.
+        // Medido en boris_native: hb=1 con thr>0.7, rpm=4000+, sp=0, por ~25s -> motor a redline,
+        // auto quieto (Boris acelera contra el freno de mano). Si Boris pide throttle fuerte, el auto
+        // NO se mueve, y NO estamos en un hold legitimo (spawn-hold/endpoint/frozen/at-stop), es un
+        // deadlock -> forzar handbrake OFF. Gracia de ~0.8s (28 ticks @35Hz) para NO romper el
+        // anti-rollback legitimo en subida (parking/maniobra suelta en <1s al cruzar rpmClutch).
+        float hbApply = m_CachedHandbrake;
+        // ARRANQUE DE LA TOMA (2026-08-17, pedido de Sonom4n): negar handbrake SOLO en la ventana de arranque,
+        // desde que suelta el spawn-hold hasta que el auto DESPEGA (>3 km/h). Ahi es donde el 1.0 pegajoso
+        // del spawn-hold se filtra al manejo normal -> free-rev (medido en boris_native). NO es por-tick ni
+        // remocion total: el endpoint, el frenado de precision y los holds declarados usan handbrake DESPUES
+        // del despegue (flag ya OFF) -> no se pierde precision.
+        if (m_LaunchHbSuppress && !m_SpawnHoldActive) {
+            if (bus.GetSpeedometerAbsolute() > 3.0) m_LaunchHbSuppress = false;   // despego -> logica normal retoma
+            else hbApply = 0;                                                     // arranque de la toma: handbrake negado
+        }
+        // SAFETY ANTI-DEADLOCK (backstop, mid-ruta): por si un handbrake se traba fuera del arranque.
+        bool hbDeadlock = (hbApply > 0.5 && m_CachedThrottle > 0.5 && bus.GetSpeedometerAbsolute() < 1.0 && !m_SpawnHoldActive && !m_EndpointLatched && !m_Frozen && !m_AtStop);
+        if (hbDeadlock) {
+            m_HbSafetyTicks = m_HbSafetyTicks + 1;
+        } else {
+            m_HbSafetyTicks = 0;
+        }
+        if (m_HbSafetyTicks >= 28) {
+            hbApply = 0;
+            if (m_HbSafetyTicks == 28) BZBusLog.Info("[HbSafety] deadlock handbrake+throttle -> forzando handbrake OFF (free-rev roto)");
+        }
+        bus.SetHandbrake(hbApply);
     }
 
     void Init() {
@@ -2491,6 +2524,10 @@ class BZBusService {
         float px = 0;
         float pz = 0;
         bool first = true;
+        // POSICIONES x,z de cada wp (2026-08-18, pedido de Sonom4n): para que el scrubber de la barra inferior
+        // muestre las coords del wp elegido. Ya leemos x,z aca -> solo las acumulamos y las mandamos.
+        array<float> posX = new array<float>;
+        array<float> posZ = new array<float>;
         FileHandle fh = OpenFile(wpPath, FileMode.READ);
         if (fh) {
             string ln;
@@ -2504,6 +2541,7 @@ class BZBusService {
                 float sp = parts[6].ToFloat();
                 if (sp > maxkmh) maxkmh = sp;
                 if (!first) dist += Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
+                posX.Insert(x); posZ.Insert(z);
                 px = x; pz = z; first = false;
                 nwp++;
             }
@@ -2516,6 +2554,8 @@ class BZBusService {
         rpc.Write(nwp);
         rpc.Write(dist);
         rpc.Write(maxkmh);
+        // luego de maxkmh van las nwp posiciones (x,z) para el scrubber. El cliente ya tiene nwp -> las lee en orden.
+        for (int wi = 0; wi < nwp; wi++) { rpc.Write(posX.Get(wi)); rpc.Write(posZ.Get(wi)); }
         rpc.Send(recipient, BZBusRPC.RECEIVE_ROUTE_INFO, true, sender);
         BZBusLog.Info("[RouteInfo] " + fname + ": " + vehicle + " " + nwp + "wp dist=" + dist + " max=" + maxkmh);
     }
@@ -2745,7 +2785,7 @@ class BZBusService {
         if (!IsControlPanelAdmin(sender.GetPlainId())) return;
         if (!RunnerIsActive()) { BZBusLog.Info("[Teleport] runner sin vehiculo activo"); return; }
         vector bpos = RunnerPos();
-        vector dest = bpos + "8 0 8";   // ~8m al costado: cerca para interceptar, sin caer encima
+        vector dest = bpos + "3 0 3";   // ~4m al costado: al lado del vehiculo, sin caer encima
         Man recipient = GetGame().GetPlayerByIdentity(sender);
         PlayerBase pb = PlayerBase.Cast(recipient);
         if (pb) {
@@ -2760,9 +2800,15 @@ class BZBusService {
     static void UnregisterRunner(BZBusService r) {
         if (!s_Runners || !r) return;
         if (r == s_Instance) return;
+        // LIMPIAR ANTES DE DESREGISTRAR (2026-08-17, fix del RUNNER FANTASMA): sacar el runner de s_Runners suelta la
+        // UNICA referencia fuerte al objeto (los secundarios solo los tiene s_Runners) -> se recolecta y ya NO queda
+        // handle para borrar su bus/Boris. Si el bus todavia esta vivo, queda MANEJANDO fuera del registro (fantasma,
+        // invisible al panel y a STOP ALL). Forzamos StopBus() (=CleanupEntities: borra bus+Boris, saca waypoint) ANTES
+        // del RemoveOrdered -> el invariante pasa a ser "desregistrado => entidades borradas", pase lo que pase.
+        r.StopBus();
         int idx = s_Runners.Find(r);
         if (idx >= 0) s_Runners.RemoveOrdered(idx);
-        BZBusLog.Info("[Multiton] runner desregistrado (toma terminada). Quedan: " + s_Runners.Count());
+        BZBusLog.Info("[Multiton] runner desregistrado (toma terminada, entidades limpiadas). Quedan: " + s_Runners.Count());
     }
 
     void HandleRunnersRequest(PlayerIdentity sender) {
@@ -2784,6 +2830,9 @@ class BZBusService {
             rpc.Write(r.RunnerWpIdx());
             rpc.Write(r.RunnerWpTotal());
             rpc.Write(r.RunnerSpeedKmh());
+            vector rposR = r.RunnerPos();          // 2026-08-17: coordenadas (X,Z) para ubicar el vehiculo en el mapa
+            rpc.Write(rposR[0]);
+            rpc.Write(rposR[2]);
         }
         rpc.Send(recipient, BZBusRPC.RECEIVE_RUNNERS, true, sender);
     }
@@ -3121,6 +3170,72 @@ class BZBusService {
         SpawnBus();
     }
 
+    // ============================================================================
+    //  PASO 3 (v1.1): rutear A->B con el grafo vial, generar la TRAZA y MANEJARLA.
+    //  Rutea from->to (BZRoadGraph: Dijkstra + geometria real de los caminos), mete la
+    //  traza como waypoints (geometria pura = Modo 2 FollowPath, hasInputData=false),
+    //  CONSERVA vehiculo/attachments/tuning de la config ya cargada, graba el JSON y lo
+    //  recarga por el pipeline normal (velocidad por curvatura + smoothing) -> spawnea.
+    //  Trigger de test: NUMPAD 0 (UABZDriveTest) -> parate en cualquier camino y apreta; rutea desde ahi.
+    // ============================================================================
+    void DriveRouteFromPlayer(vector from) {
+        BZRoadGraph g = BZRoadGraph.GetInstance();
+        if (!g.IsLoaded() || !g.IsGeomLoaded()) { BZBusLog.Err("[DriveRoute] grafo/geom NO cargado"); return; }
+        int srcN = g.NearestNode(from[0], from[2]);
+        int dstN = g.NodeAtRoadDistance(srcN, 3000.0);   // destino ~3km por camino desde donde estas parado
+        if (dstN < 0 || dstN == srcN) { BZBusLog.Err("[DriveRoute] no encontre destino a ~3km desde nodo " + srcN); return; }
+        BZBusLog.Info("[DriveRoute] desde jugador " + from + " -> src=" + srcN + " dst=" + dstN);
+        DriveRoute(from, g.NodePos(dstN));
+    }
+
+    void DriveRoute(vector from, vector to) {
+        BZRoadGraph g = BZRoadGraph.GetInstance();
+        if (!g.IsLoaded() || !g.IsGeomLoaded()) { BZBusLog.Err("[DriveRoute] grafo/geom NO cargado"); return; }
+        if (!m_Config) { BZBusLog.Err("[DriveRoute] sin config base (vehiculo/attachments) cargada"); return; }
+        int srcN = g.NearestNode(from[0], from[2]);
+        int dstN = g.NearestNode(to[0], to[2]);
+        float cost;
+        array<int> nodePath = g.Route(srcN, dstN, cost);
+        if (!nodePath || nodePath.Count() < 2) { BZBusLog.Err("[DriveRoute] sin ruta " + srcN + " -> " + dstN); return; }
+        array<vector> tz = g.BuildTraza(nodePath);
+        if (tz.Count() < 2) { BZBusLog.Err("[DriveRoute] traza vacia"); return; }
+
+        // reemplazar los waypoints en memoria por la traza; conservar vehiculo/attachments/tuning.
+        m_Config.Waypoints = new array<ref BZWaypoint>();
+        m_Config.Events    = new array<ref BZMarkerEvent>();
+        int n = tz.Count();
+        int i;
+        for (i = 0; i < n; i++) {
+            vector p = tz.Get(i);
+            BZWaypoint wp = new BZWaypoint();
+            wp.pos[0] = p[0];
+            wp.pos[1] = GetGame().SurfaceY(p[0], p[2]);
+            wp.pos[2] = p[2];
+            wp.isStop = false;
+            wp.mode = "normal";
+            wp.hasInputData = false;
+            wp.targetSpeed = 0;
+            m_Config.Waypoints.Insert(wp);
+        }
+        m_Config.FollowPath = true;                 // Modo 2: geometria pura + velocidad por curvatura
+        m_Config.FollowPathCapByRecording = false;  // sin grabacion que capee -> geometria libre
+        m_Config.UseInverseModel = true;            // throttle/gear vehicle-agnostic
+        // TUNING urbano para la traza generada: curvas mas lentas -> pure-pursuit traza pegado y NO corta el
+        // vertice (cordon/poste/arbol). aLat 4->2.5 (entra mas lento a la curva); maxKmh 100->42 (tope urbano).
+        m_Config.FollowPathLatAccel = 2.5;
+        m_Config.FollowPathMaxKmh   = 42.0;
+        int nAtt = 0;
+        if (m_Config.Attachments) nAtt = m_Config.Attachments.Count();
+        BZBusLog.Info("[DriveRoute] veh=" + m_Config.VehicleClass + " attach=" + nAtt + " | ruta " + nodePath.Count() + " nodos / traza " + n + " pts / " + (cost / 1000.0) + " km");
+
+        // grabar + recargar por el pipeline normal (corre el pase FollowPath: vel por curvatura + smoothing).
+        string routedPath = "$profile:BZ_AutoDrive\\_routed_test.json";
+        JsonFileLoader<BZBusRouteConfig>.JsonSaveFile(routedPath, m_Config);
+        if (!LoadConfigFromPath(routedPath)) { BZBusLog.Err("[DriveRoute] LoadConfigFromPath fallo"); return; }
+        RespawnBus();
+        BZBusLog.Info("[DriveRoute] spawn+drive disparado (Boris arranca en tu nodo mas cercano).");
+    }
+
     // Respawn con vehiculo distinto (debug del problema de shift con eAI driver)
     void RespawnAs(string vehicleClass) {
         BZBusLog.Info("RespawnAs: " + vehicleClass);
@@ -3182,6 +3297,21 @@ class BZBusService {
             trpc.Write("Vehiculo vacio spawneado -> panel ACTIVE SPAWN VEHICLE (TP para ir)");
             trpc.Send(player, BZBusRPC.RECEIVE_TOAST, true, player.GetIdentity());
         }
+    }
+
+    // SPAWN-OVERLAP: hay otro vehiculo (CarScript) dentro del radio del punto de spawn?
+    // Se usa para no spawnear el bus encimado a otro (varias rutas-opcion desde el mismo hub,
+    // o el bus anterior aun sin limpiar en el respawn) -> ruedas sin traccion -> free-rev.
+    // Misma API que ScanObstacleAhead / BZRouteCleanup (GetObjectsAtPosition3D + CarScript.Cast).
+    private bool SpawnSpotOccupied(vector pos, float radius) {
+        array<Object> objs = new array<Object>;
+        array<CargoBase> prox = new array<CargoBase>;
+        GetGame().GetObjectsAtPosition3D(pos, radius, objs, prox);
+        foreach (Object o : objs) {
+            if (!o) continue;
+            if (CarScript.Cast(o)) return true;   // vehiculo en el radio -> ocupado
+        }
+        return false;
     }
 
     private void SpawnBus() {
@@ -3253,6 +3383,8 @@ class BZBusService {
         m_CachedSteering = 0;
         m_LegLaunch = false;   // el spawn ya alinea por OrientBusToNext; lo prende SetLegFrom
         m_CachedBrake    = 1.0; // pre-roll: brake aplicado desde el primer frame
+        m_HbSafetyTicks  = 0;   // reset contador anti-deadlock de handbrake
+        m_LaunchHbSuppress = true;  // arranque de la toma: negar handbrake hasta que despegue (se apaga a >3km/h)
 
         // Entrar al input SPAWN. La transicion a PLAY ocurre en Tick cuando
         // pase SpawnHoldSeconds. Durante SPAWN: brake aplicado, bus quieto.
@@ -3325,6 +3457,41 @@ class BZBusService {
         float surfY = GetGame().SurfaceY(startPos[0], startPos[2]);
         startPos[1] = surfY + 0.5;
         m_SpawnInitialPos = startPos; // guardado para ValidateSpawn
+
+        // SPAWN-OVERLAP GUARD (2026-08-17): varias rutas pueden compartir el arranque — caso real:
+        // un hub/terminal con varios viajes-opcion que salen del mismo lugar, o tomas encadenadas
+        // grabadas desde el final de otra. Si el spot (wp0) ya tiene un vehiculo (otra corrida activa,
+        // o el bus anterior aun sin limpiar en el respawn), el nuevo spawnea ENCIMADO -> ruedas sin
+        // traccion -> free-rev (rpm redline a 0 km/h). Desplazamos lateral hasta encontrar hueco.
+        // Iterativo: cada spawn ve a los anteriores y se corre mas -> se auto-esparcen. El controlador
+        // re-engancha la linea al salir (offset chico, se corrige en los primeros metros).
+        float occR = 3.5;   // radio de footprint (mismo orden que el scan de obstaculos)
+        if (SpawnSpotOccupied(startPos, occR)) {
+            vector fdir = "0 0 1";
+            if (m_Config.Waypoints.Count() > 1) {
+                vector wd = m_Config.Waypoints[1].GetVector() - startPos;
+                wd[1] = 0;
+                if (wd.Length() > 0.1) fdir = wd.Normalized();
+            }
+            vector latv = Vector(-fdir[2], 0, fdir[0]);   // perpendicular horizontal a la salida
+            bool spotFound = false;
+            for (int soff = 1; soff <= 8 && !spotFound; soff++) {
+                float sd = soff * 4.0;   // 4m por paso (footprint camion ~6m -> se despeja rapido)
+                for (int ssgn = 0; ssgn < 2 && !spotFound; ssgn++) {
+                    float sgn = 1.0;
+                    if (ssgn == 1) sgn = -1.0;
+                    vector scand = startPos + latv * (sd * sgn);
+                    scand[1] = GetGame().SurfaceY(scand[0], scand[2]) + 0.5;
+                    if (!SpawnSpotOccupied(scand, occR)) {
+                        BZBusLog.Info("[SpawnGuard] wp0 ocupado -> desplazado " + sd + "m lateral a " + scand.ToString());
+                        startPos = scand;
+                        m_SpawnInitialPos = startPos;
+                        spotFound = true;
+                    }
+                }
+            }
+            if (!spotFound) BZBusLog.Info("[SpawnGuard] wp0 ocupado y sin hueco libre cerca; spawn en el punto original");
+        }
 
         string vc = m_Config.VehicleClass;
         if (m_VehicleClassOverride != "") vc = m_VehicleClassOverride;
@@ -4821,7 +4988,13 @@ class BZBusService {
                         //   - overspeed 1-5 km/h: cap 0.2 (suave, no slam) Ã¢â‚¬â€ micro ajustes
                         //     normales dentro de la maniobra.
                         float overspeedPk = -speedErrPk;
-                        if (overspeedPk > 5.0) {
+                        if (overspeedPk > 10.0) {
+                            // OVER-SPEED GRANDE (2026-08-17): entrar a un endpoint/stop en BAJADA -> la gravedad
+                            // lo acelera 10+ km/h sobre el target y el cap 0.6 no le gana -> tocaba 5cm pero se
+                            // pasaba a 1.46m. Cap 0.9 -> frena fuerte, sangra el exceso, sigue tu deceleracion.
+                            brake = overspeedPk * 0.08;
+                            if (brake > 0.9) brake = 0.9;
+                        } else if (overspeedPk > 5.0) {
                             brake = overspeedPk * 0.08;
                             if (brake > 0.6) brake = 0.6;
                         } else {
@@ -4941,14 +5114,13 @@ class BZBusService {
             if (brake > 1.0)     brake = 1.0;
             if (brake < 0.0)     brake = 0.0;
     }
-    private void DriveTowards(Car bus, BZWaypoint target) {
-        m_FastSteerActive = false;   // default OFF cada tick; solo el bloque pure-pursuit forward lo prende
-        vector targetPos = target.GetVector();
-        vector busPos = bus.GetPosition();
-        vector toTarget = targetPos - busPos;
-        float dist = toTarget.Length();
-        if (dist < 0.01) return;
-
+    // === Stage GUARDS (refactor v1.1 paso 1 'pasa-manos', 2026-08-15) ===
+    // Extraido VERBATIM de DriveTowards para bajar del limite de instrucciones de Enforce.
+    // Cero cambio de comportamiento: mismo codigo, mismo orden. true = tick manejado
+    // (spawn-hold / honor-handbrake / auto-recovery hicieron return) -> DriveTowards retorna.
+    // busPos/targetPos/dist = SNAPSHOT pre-teleport (mode-snap teleporta, pero DriveTowards
+    // sigue usando el busPos de arriba, identico a antes).
+    private bool DriveGuards(Car bus, BZWaypoint target, vector busPos, vector targetPos, float dist) {
         // === SPAWN HANDBRAKE HOLD (2026-06-09) ===
         // Al spawn, handbrake on por 1.5s para estabilizar el vehiculo en pendiente
         // (gravedad pre-Boris-input). Despues del timer, el resto de la logica
@@ -4959,7 +5131,7 @@ class BZBusService {
             if (spawnElapsed < 1.5) {
                 SetCachedHandbrake(1.0);
                 SetCachedInput(0, 0, 1.0);
-                return;
+                return true;
             }
             m_SpawnHoldActive = false;
             BZBusLog.Info("[SpawnHold] Released after " + spawnElapsed + "s");
@@ -4993,7 +5165,7 @@ class BZBusService {
                     BZBusLog.Info("[Handbrake] Detenido -> resume a wp " + jr + " (mode=" + m_Config.Waypoints[jr].mode + ")");
                 }
             }
-            return;
+            return true;
         }
 
         // === MODE ENTRY/EXIT SNAP ===
@@ -5083,10 +5255,10 @@ class BZBusService {
             // Triggers para teleport
             bool triggerTeleport = false;
             string triggerReason = "";
-            if (isLowSpeed && noProgress) {
+            if (isLowSpeed && noProgress && !m_ManeuverHillStart) {   // !m_ManeuverHillStart: margen al hill-start en subida (el pico de torque tarda; el AR es la red despues de HillGraceTicks)
                 triggerTeleport = true;
                 triggerReason = "stuck_lowspeed_noprogress";
-            } else if (arKmh < 3.0 && noProgress && noProgressTime > m_Config.AutoRecoveryStuckTimeS * 1.5) {
+            } else if (arKmh < 3.0 && noProgress && noProgressTime > m_Config.AutoRecoveryStuckTimeS * 1.5 && !m_ManeuverHillStart) {
                 // Inclusive si velocidad > 0 pero no avanza wps (bus girando en circulo, off-path lejano)
                 // 2026-06-07 fix: agregada condicion arKmh < 3 para NO disparar cuando Boris
                 // esta avanzando fisicamente pero el wp_idx no progresa por cluster de wps
@@ -5192,9 +5364,421 @@ class BZBusService {
                 m_DR_InRecovery = false;
 
                 BZBusLog.Info("[AUTO-RECOVERY #" + m_AR_Count + "] reason=" + triggerReason + " wp " + currentWp + " Ã¢â€ â€™ " + targetWp + " (pos=" + teleportPos.ToString() + " heading=" + teleHeadingDeg + "Ã‚Â°)");
-                return;  // skip this tick
+                return true;  // skip this tick
             }
         }
+
+        return false;
+    }
+
+    // === Stage PLAN - velocidad objetivo (refactor v1.1 paso 2 'pasa-manos', 2026-08-15) ===
+    // Extraido VERBATIM de DriveTowards. Computa effApproachSpeed (el target de velocidad):
+    // SpeedSourceNearest + 'el ojo' (ComputeLookaheadSpeed) + rampa approach (manual/auto) +
+    // cap recorded en zonas de precision. Intermedias (wpiSpd/isM3approach/approachRamp/
+    // vLookaheadKmh/precZone) internas; unica salida = effApproachSpeed (inout). Escribe
+    // m_LastISpeed/m_ApproachActive. Cero cambio de comportamiento.
+    // >>> COSTURA DEL PATHFINDING: aca entrara la velocidad derivada de la traza generada. <<<
+    private void DrivePlanSpeed(BZWaypoint target, vector busPos, float kmh, inout float effApproachSpeed) {
+        // === MODO APROXIMACION (SOLO Modo 3): velocidad objetivo efectiva ===
+        // Approach es la herramienta especifica de Modo 3: el 3 ignora la velocidad grabada
+        // y va al limite geometrico en el run-up recto -> entra caliente a la maniobra. La
+        // rampa lo baja desde su velocidad de ENTRADA hasta ApproachExitKmh. En Modo 1 (replay)
+        // y Modo 2 (geometria CAPEADA por grabacion) es INERTE: ahi la grabacion ya desacelera,
+        // no hace falta. Gate = UseInverseModel (M2/M3) && !FollowPathCapByRecording (excluye M2) = M3 puro.
+        // POSICION-SYNC DE LA VELOCIDAD (2026-07-16): gemelo de PlantSteerSourceNearest. m_WaypointIndex
+        // corre ~15m adelante -> leer target.targetSpeed = leer el perfil 15-20m antes de estar ahi ->
+        // frena temprano (medido: ruta pedia 26.7 en el 90Ã‚Â°, Boris entro a 15.3). El brake-ahead YA hornea
+        // la anticipacion EN el perfil -> leerlo adelantado anticipa DOS VECES. El volante quiere lookahead,
+        // la velocidad quiere el wp donde Boris ESTA. NO toca el indice ni el aim del pure-pursuit.
+        int wpiSpd = m_WaypointIndex;
+        if (m_Config.SpeedSourceNearest && m_Config.Waypoints && m_Config.Waypoints.Count() > 0) {
+            float bestDsqSpd = 1000000000.0;
+            int loSpd = m_WaypointIndex - 40;
+            if (loSpd < 0) loSpd = 0;
+            int hiSpd = m_WaypointIndex + 2;
+            if (hiSpd > m_Config.Waypoints.Count() - 1) hiSpd = m_Config.Waypoints.Count() - 1;
+            // ACOTAR AL TRAMO ACTIVO: 40 wps hacia atras cruzan de pierna (la reversa de ESQ son 33) y las
+            // trazas estan superpuestas a centimetros -> agarraba la velocidad de OTRO tramo.
+            if (loSpd < m_LegStart) loSpd = m_LegStart;
+            if (hiSpd > m_LegEnd && m_LegEnd >= m_LegStart) hiSpd = m_LegEnd;
+            for (int siSpd = loSpd; siSpd <= hiSpd; siSpd++) {
+                vector wpvSpd = m_Config.Waypoints[siSpd].GetVector();
+                float dxSpd = busPos[0] - wpvSpd[0];
+                float dzSpd = busPos[2] - wpvSpd[2];
+                float dsqSpd = dxSpd * dxSpd + dzSpd * dzSpd;
+                if (dsqSpd < bestDsqSpd) {
+                    bestDsqSpd = dsqSpd;
+                    wpiSpd = siSpd;
+                }
+            }
+        }
+        effApproachSpeed = target.targetSpeed;
+        if (m_Config.SpeedSourceNearest) effApproachSpeed = m_Config.Waypoints[wpiSpd].targetSpeed;
+        // TARGET POR LOOKAHEAD: la vel que Boris puede tener AHORA y aun frenar comodo a lo que viene.
+        // vAllow(wp) = sqrt(vWp^2 + 2*a*d) en m/s. El MINIMO de la ventana manda. Incluye el wp mas cercano
+        // (d~0 -> vAllow~vWp) asi que nunca sube el target, solo lo BAJA anticipando la curva de adelante.
+        // EL OJO TAMBIEN EN MANIOBRA (2026-07-20, MEDIDO). Estaba limitado a mode=="normal": en reverse /
+        // parking / maniobra ni se llamaba, y el log lo mostro crudo -> "ojo=-1" en TODAS las lineas de
+        // reversa mientras Boris iba a 22 km/h sin nada que le anticipara el final del tramo. Justo donde
+        // mas falta hace anticipar, iba ciego: no sabia que el tramo terminaba, no planificaba la frenada,
+        // se pasaba de largo y quedaba desorientado. La ley del ojo es la misma en cualquier modo: mira la
+        // traza que viene y toma el minimo de vAllow = sqrt(vWp^2 + 2*a*d).
+        float vLookaheadKmh = -1.0;
+        if (m_Config.UseSpeedLookahead) {
+            vLookaheadKmh = ComputeLookaheadSpeed(wpiSpd, kmh, busPos);
+            if (vLookaheadKmh > 0 && vLookaheadKmh < effApproachSpeed) effApproachSpeed = vLookaheadKmh;
+        }
+        bool isM3approach = (m_Config && m_Config.UseInverseModel && !m_Config.FollowPathCapByRecording); // Modo 3 puro
+        bool approachRamp = (target.mode == "approach" && isM3approach);
+        if (approachRamp) {
+            effApproachSpeed = ComputeApproachTargetSpeed(kmh, target.targetSpeed);
+            m_LastISpeed     = effApproachSpeed; // que el AI logger refleje la rampa
+        } else {
+            m_ApproachActive = false; // fuera de approach (o Modo 1) -> rearmar para el proximo bloque
+            // APPROACH AUTOMATICA: sin zona marcada a mano, freno predictivo a la maniobra que viene.
+            // Solo Modo 3 + ApproachAuto + wp normal. La grabada (tag) tiene prioridad (rama de arriba).
+            if (isM3approach && m_Config.ApproachAuto && (target.mode == "normal" || target.mode == "")) {
+                float autoSpd = ComputeAutoApproachSpeed(kmh, busPos);
+                if (autoSpd > 0) {
+                    effApproachSpeed = autoSpd;
+                    m_LastISpeed     = effApproachSpeed;
+                }
+            }
+        }
+
+        // === GARANTIA UNIVERSAL DE VELOCIDAD GRABADA en zonas de PRECISION (Sonom4n 2026-07-01) ===
+        // El humano PROBO que ESTE vehiculo hace la maniobra/parking/reverse a la velocidad que grabo
+        // -> es una PRUEBA DE FACTIBILIDAD para ESE auto (si el la ejecuto, Boris debe poder reproducirla).
+        // M3 pisa targetSpeed con GEOMETRIA (rapido en la recta) y entra CALIENTE: un auto de giro ancho
+        // (CivilianSedan R_min 4.19m) derrapa el 90Ã‚Â°; uno agil (Nissan 3.44m) perdona. Capeando
+        // effApproachSpeed (= target real del InverseModel) a la recordedSpeed POR-WP en las zonas de
+        // precision, Boris sigue el PERFIL EXACTO del humano y entra a SU velocidad -> misma capacidad,
+        // para CUALQUIER vehiculo (no solo el grabado). Es el PISO; corre bajo approach MANUAL y AUTO por
+        // igual (el approach define la FORMA de la desaceleracion, el cap el techo). Solo M3 (M1 replica,
+        // M2 ya capea por grabacion). El crucero/normal sigue generalizando libre por geometria.
+        bool precZone = (target.mode == "approach" || target.mode == "maniobra" || target.mode == "parking" || target.mode == "reverse");
+        if (isM3approach && precZone && target.recordedSpeed > 0.5 && target.recordedSpeed < effApproachSpeed) {
+            effApproachSpeed = target.recordedSpeed;
+            m_LastISpeed     = effApproachSpeed;
+        }
+
+        // DIAGNOSTICO (2026-07-20, Sonom4n: "no se si el lookahead esta funcionando"). Medido: el ojo permitia
+        // 22.7 km/h a 10 m del endpoint y Boris iba a 7.8 -> ALGUIEN le pisa la salida al ojo. En vez de
+        // seguir adivinando cual, mostramos las fuentes y cual gana, en cada tick lento.
+        if (m_Config && m_Config.SpeedDecisionDebug && kmh < 30.0 && m_TickCount % 4 == 0) {
+            string sdDbg = "[SPD] v=" + (int)kmh + " wp=" + target.targetSpeed;
+            sdDbg = sdDbg + " near=" + m_Config.Waypoints[wpiSpd].targetSpeed;
+            sdDbg = sdDbg + " ojo=" + vLookaheadKmh + " -> eff=" + effApproachSpeed + " " + target.mode;
+            BZBusLog.Info(sdDbg);
+        }
+
+    }
+
+    // ============================================================================
+    //  SUB-CONTROLADOR DE MANIOBRA (2026-08-16, Sonom4n). DUEÑO de las piernas que terminan en un INTERCAMBIO
+    //  (legBreak). Secuencia predictiva, POR FUERA del cruise/endpoint/cusp/leg (que en reversas cortas saturaba
+    //  el volante a full lock + flip-flopeaba el gear + sobrepasaba el punto = thrash 30s sin avanzar). Hace:
+    //    - MARCHA fija por sentido del tramo (mata el flip-flop).
+    //    - VOLANTE = tu front-wheel GRABADO (GetRecordedWheelCmd = targetFrontWheel/plant-gain) -> traza TU arco.
+    //    - Maquina de fases throttle/brake: LAND (freno predictivo v^2/2d autoadaptativo) -> clava <0.5m sobre la
+    //      pose; LAUNCH (despegue firme desde parado); ARC/CRUISE a paso de hombre; CLAVADO (latch + cierra pierna).
+    //  Reproduce tu movimiento con FISICAS y generaliza (decel/gain por-vehiculo, no hardcode). Devuelve true si
+    //  TOMA el control (DriveTowards hace return). Gate ManeuverControllerEnabled.
+    // ============================================================================
+    private bool ManeuverControl(Car bus, BZWaypoint target) {
+        m_ManeuverCreepHold = false;   // se resetea cada tick: solo se prende cuando EL repta CERCA de la pose (abajo) -> nunca queda pegado -> no traba el arranque
+        m_ManeuverHillStart = false;   // idem: solo se prende durante el hill-start en subida (abajo)
+        if (!m_Config || !m_Config.ManeuverControllerEnabled) return false;
+        if (!m_Config.Waypoints) return false;
+        int lastWpMc = m_Config.Waypoints.Count() - 1;
+        if (m_LegEnd < 0 || m_LegEnd >= lastWpMc) return false;            // el ultimo tramo (endpoint final) NO
+        if (!m_Config.Waypoints[m_LegEnd].legBreak) return false;          // solo piernas que TERMINAN en intercambio
+
+        vector busPosMc = bus.GetPosition();
+        float kmhMc = bus.GetSpeedometerAbsolute();
+        if (kmhMc >= m_Config.ManeuverLaunchKmh) m_ManeuverLaunchTicks = 0;   // ya rueda -> no esta en DESPEGUE -> resetea el contador del hill-start
+        bool revMc = ActiveLegIsReverse();
+        vector legEndMc = m_Config.Waypoints[m_LegEnd].GetVector();
+
+        // ZONA DE MANIOBRA a AMBOS LADOS del intercambio (2026-08-16): el sub-controlador es de BAJA VELOCIDAD
+        // para el intercambio, no para el approach largo. Toma EL en:
+        //   - el tramo FINAL del approach (ultimos ManeuverZoneM) -> clavar la pose;
+        //   - el tramo INICIAL al SALIR del intercambio anterior (primeros ManeuverZoneM) -> ACOMODAR y ENTRAR
+        //     bien por lugares estrechos (ej la puerta al patio) siguiendo TU volante grabado, en vez del
+        //     pure-pursuit del cruise que corta la curva a full-lock y pega contra el poste (MEDIDO: latdev
+        //     salto a 2.14m -> AR).
+        // En el medio del tramo largo maneja el cruise normal (mejor tracking en ruta abierta).
+        float dEndGateMc = vector.Distance(busPosMc, legEndMc);
+        vector legStartMc = m_Config.Waypoints[m_LegStart].GetVector();
+        float dStartGateMc = vector.Distance(busPosMc, legStartMc);
+        if (dEndGateMc > m_Config.ManeuverZoneM && dStartGateMc > m_Config.ManeuverZoneM) return false;
+
+        // MARCHA FIJA por sentido del tramo -> mata el flip-flop de gear
+        int gearMc = 2;
+        if (revMc) gearMc = 0;
+        SetDesiredGear(gearMc);
+        bus.ShiftTo(gearMc);
+
+        // VOLANTE - dos modos (Sonom4n: "interpretar tu grabacion tal cual" = seguir tu POSE, no COPIAR tu volante).
+        //  (A) RUMBO grabado (ManeuverUseHeading): steer para IGUALAR tu heading -> `steer = -HeadingErrTo·K`
+        //      (misma ley que el endpoint). Estable a v~0 (donde el pure-pursuit satura y el volante-copiado
+        //      deriva) -> reproduce tu maniobra como el cruise reproduce el camino. En reversa el tren delantero
+        //      rota el vehiculo AL REVES -> invertir el signo.
+        //  (B) front-wheel grabado (feedforward): copia tu volante. Deriva/zigzaguea (open-loop). Fallback.
+        float steerMc = 0;
+        if (m_Config.ManeuverUseHeading) {
+            // DUAL LOOKAHEAD (Sonom4n "uno largo y uno corto, que calcule ENTRE uno y otro y le de TIEMPO a Boris de
+            // ejecutar"): el LARGO anticipa el giro (Boris arranca a girar ANTES -> tiene tiempo de completarlo
+            // alineado, no llega torcido); el CORTO da precision (no deriva). Se calcula el error de rumbo a cada
+            // uno y se BLENDEA por ManeuverHeadingLongWeight. Es un pure-pursuit de rumbo de dos puntos.
+            float recHdgShortMc = GetRecordedHeadingDeg(busPosMc, m_Config.ManeuverHeadingLeadShortM);
+            if (recHdgShortMc > -998.0 && recHdgShortMc != 0) {
+                float hErrMc = HeadingErrTo(recHdgShortMc);
+                float recHdgLongMc = GetRecordedHeadingDeg(busPosMc, m_Config.ManeuverHeadingLeadLongM);
+                if (recHdgLongMc > -998.0 && recHdgLongMc != 0) {
+                    float hErrLongMc = HeadingErrTo(recHdgLongMc);
+                    hErrMc = hErrMc * (1.0 - m_Config.ManeuverHeadingLongWeight) + hErrLongMc * m_Config.ManeuverHeadingLongWeight;
+                }
+                steerMc = -hErrMc * m_Config.ManeuverHeadingSteerK;
+                if (revMc) steerMc = -steerMc;
+            }
+            // + FEEDFORWARD del volante grabado SOLO EN FORWARD (2026-08-16, FF+FB): en los giros BRUSCOS forward
+            // (el humano a full-lock, ej fw+30 entrando a IC-190) el heading proporcional UNDER-TURNEA (Boris
+            // llegaba -12deg corto = 2.1m off) -> el FF aporta TU comando real (full lock) y lo arregla (wp190
+            // 2.15->1.05m, rumbo -12->+1.6). En REVERSA el heading-only ya traza PERFECTO (latdev 0.24); sumarle
+            // el FF lo descentra (no se invierte en reversa, pelea con el heading FB invertido) -> reversa sin FF.
+            if (!revMc) {
+                float ffHdgMc = GetRecordedWheelCmd(busPosMc, m_Config.RevWheelLeadM);
+                if (ffHdgMc > -998.0) steerMc = steerMc + ffHdgMc * m_Config.ManeuverHeadingFFScale;
+            }
+        } else {
+            steerMc = GetRecordedWheelCmd(busPosMc, m_Config.RevWheelLeadM);
+            if (steerMc <= -998.0) steerMc = 0;
+            steerMc = steerMc * m_Config.ManeuverSteerSign;
+        }
+        if (steerMc > 1.0)  steerMc = 1.0;
+        if (steerMc < -1.0) steerMc = -1.0;
+        // PRE-STEER: replicar TU tecnica (Sonom4n, MEDIDO): en el intercambio, estando DETENIDO ya direccionas las
+        // ruedas y ahi arrancas. Tu volante grabado (targetFrontWheel) YA trae ese pre-steer -> lo aplicamos desde
+        // el vamos (incluido parado) y el gas firme rompe la inercia, como haces vos. El clamp de "rueda derecha"
+        // queda DESACTIVADO por default (ManeuverLaunchStraightKmh=0); solo re-activarlo si un vehiculo scrubbea
+        // y no despega con full-lock. Ver [[project_intercambio_declarado]].
+        // CLAMP ANTI-SCRUB al despegar, SOLO FORWARD (2026-08-16): un pesado PARADO con la rueda cruzada NO
+        // despega (scrub estatico -> thr=1, kmh~0, AR loop = "no arranca"). Con la direccion heading+FF, cualquier
+        // error de rumbo tuerce la rueda al despegar -> scrub. Se acota el volante hasta romper inercia (kmh<Kmh),
+        // despues manda el heading+FF. SOLO forward: en reversa el pre-steer (rueda ya girada) despega bien sin clamp.
+        if (m_Config.ManeuverLaunchStraightKmh > 0.0 && !revMc && kmhMc < m_Config.ManeuverLaunchStraightKmh) {
+            if (steerMc >  m_Config.ManeuverLaunchStraightSteer) steerMc =  m_Config.ManeuverLaunchStraightSteer;
+            if (steerMc < -m_Config.ManeuverLaunchStraightSteer) steerMc = -m_Config.ManeuverLaunchStraightSteer;
+        }
+
+        // CROSS-TRACK (2026-08-16, Sonom4n "velocidad Y trayectoria"): PEGAR a Boris a TU linea grabada, no solo
+        // replicar el comando de volante. Sin esto Boris entra al porton 1.8m corrido (casi clipea el poste) y
+        // clava los forward descentrados ~1.2-1.9m. Offset perpendicular firmado al segmento mas cercano del
+        // tramo; correccion proporcional ACOTADA (directa, NO Stanley atan2(K*e,v) que explota a v~0). En reversa
+        // el volante corrige INVERTIDO -> flip. El volante grabado lleva el ARCO; esto solo lo centra en la linea.
+        float ctPerpMc = SignedCrossTrackMc(busPosMc);
+        // ARCO LATERAL EN EL CREEP-IN (2026-08-17, idea de Sonom4n "el iman con arco lateral"): en los ultimos metros
+        // (reptando, EN MOVIMIENTO) el cross-track tira MAS fuerte para ARQUEAR a Boris sobre tu linea antes de
+        // parar (a 0 km/h no se puede corregir lateral). Centra el residuo lateral de los stops (~0.8m -> <0.5m).
+        // Boris repta lento -> steer fuerte lo arquea sin inestabilidad. Usa dEndGateMc (dist a la pose, ya calculada).
+        float ctGainMc = m_Config.ManeuverCrossTrackGain;
+        float ctMaxMc  = m_Config.ManeuverCrossTrackMax;
+        if (dEndGateMc < m_Config.ManeuverLateralArcM) {
+            ctGainMc = ctGainMc * m_Config.ManeuverLateralArcBoost;
+            ctMaxMc  = m_Config.ManeuverLateralArcMax;
+        }
+        float ctCorrMc = ctPerpMc * ctGainMc;
+        if (ctCorrMc >  ctMaxMc) ctCorrMc =  ctMaxMc;
+        if (ctCorrMc < -ctMaxMc) ctCorrMc = -ctMaxMc;
+        // TAPER SOLO DEL LADO DEL DESPEGUE (2026-08-16): arrancando (cerca del legStart, v~0) el cross-track
+        // over-steerea ('entra a la fuerza', steer=0.75). Pero en la APROXIMACION (cerca del legEnd) hay que
+        // MANTENERLO para CENTRAR el clavado -> si ahi tambien tapereaba, el latdev crecia al frenar (0.64->0.79)
+        // y Boris clavaba descentrado -> el reverse de acomodar salia mal (gateaba). Solucion: taper por velocidad
+        // solo cuando Boris esta mas cerca del INICIO del tramo que del final; llegando a la pose, cross-track full.
+        float ctSpdMc = 1.0;
+        if (dStartGateMc < dEndGateMc) {
+            ctSpdMc = kmhMc / m_Config.ManeuverCrossTrackFullKmh;
+            if (ctSpdMc > 1.0) ctSpdMc = 1.0;
+        }
+        ctCorrMc = ctCorrMc * ctSpdMc;
+        if (revMc) ctCorrMc = -ctCorrMc;
+        // EN REVERSA TU VOLANTE GRABADO ES LA TRAYECTORIA (tu arco exacto, ej fw -30->0). El cross-track fuerte
+        // lo SOBRESCRIBIA (flipeaba el volante a +0.31 vs tu -30->0) -> Boris no trazaba tu curva -> reverse corto
+        // (1m vs 3m) y descentrado. Se acota fuerte en reversa: solo un nudge, el arco grabado manda.
+        if (revMc) ctCorrMc = ctCorrMc * m_Config.ManeuverCrossTrackRevScale;
+        steerMc = steerMc + ctCorrMc * m_Config.ManeuverCrossTrackSign;
+        if (steerMc > 1.0)  steerMc = 1.0;
+        if (steerMc < -1.0) steerMc = -1.0;
+
+        // DISTANCIA SIGNADA al endpoint (proyeccion sobre el avance grabado; >0 falta, <=0 paso)
+        float dEndMc = vector.Distance(busPosMc, legEndMc);
+        float signedMc = dEndMc;
+        int pMc = m_LegEnd - 1;
+        if (pMc < m_LegStart) pMc = m_LegStart;
+        if (pMc >= 0 && pMc < m_LegEnd) {
+            vector prevMc = m_Config.Waypoints[pMc].GetVector();
+            float fdxMc = legEndMc[0] - prevMc[0];
+            float fdzMc = legEndMc[2] - prevMc[2];
+            float fnMc = Math.Sqrt(fdxMc * fdxMc + fdzMc * fdzMc);
+            if (fnMc > 0.01) {
+                fdxMc = fdxMc / fnMc;
+                fdzMc = fdzMc / fnMc;
+                signedMc = (legEndMc[0] - busPosMc[0]) * fdxMc + (legEndMc[2] - busPosMc[2]) * fdzMc;
+            }
+        }
+
+        // DECEL AUTOADAPTATIVO del vehiculo+piso (generaliza; el mismo que el endpoint)
+        float decMc = 4.0;
+        if (m_InverseModel) {
+            string surfMc = "";
+            GetGame().SurfaceGetType3D(busPosMc[0], busPosMc[1], busPosMc[2], surfMc);
+            float ddMc = m_InverseModel.GetMaxBrakeDecel(surfMc);
+            if (ddMc > 0.5) decMc = ddMc;
+        }
+
+        float thrMc = 0;
+        float brkMc = 0;
+        float hbMc = 0;
+        float stopTolMc = m_Config.ManeuverStopTolM;
+
+        // VELOCIDAD OBJETIVO = tu velocidad GRABADA, ACOTADA por el frenado necesario para PARAR en la pose
+        // ("el ojo": vAllow = sqrt(2*decel*dParada)). Lejos Boris sigue tu perfil de velocidad; cerca de la pose
+        // vAllow->0 -> para EXACTO en el punto -> el ENDPOINT CAE SOLO. Idea de Sonom4n: "si tenemos velocidad y
+        // trayectoria, los endpoints caen solos". decel autoadaptativo (por vehiculo+piso) = generaliza.
+        float recSpeedMc = GetRecordedSpeedKmh(busPosMc);
+        // FRENADO SLOPE-AWARE (2026-08-16, Sonom4n "el terreno tiene relieve"): la pendiente cambia el frenado.
+        // pitch a lo largo del avance de los wp (= la direccion REAL de Boris, forward o reverse, porque los wp
+        // avanzan en el orden de tu grabacion). Subida: la gravedad ayuda a frenar (+); bajada: empuja (-).
+        // decel efectivo = freno del piso (autoadaptativo, cesped/tierra/asfalto) +/- gravedad longitudinal.
+        int nearMc = NearestRecordedWp(busPosMc);
+        float slopeMc = Math.Sin(GetEffectivePitch(nearMc, 1));
+        float decEffMc = decMc * m_Config.ManeuverStopDecelFactor + 9.81 * slopeMc;
+        if (decEffMc < 1.0) decEffMc = 1.0;   // piso de seguridad (nunca 0/negativo en bajada fuerte)
+        float dStopMc = signedMc - stopTolMc;
+        if (dStopMc < 0) dStopMc = 0;
+        float vAllowKmh = Math.Sqrt(2.0 * decEffMc * dStopMc) * 3.6;
+        float vTgtMc = recSpeedMc;
+        if (vAllowKmh < vTgtMc) vTgtMc = vAllowKmh;
+        // CREEP hasta la pose (2026-08-16): mientras falte camino (signed>stopTol) NO dejar vTgt en 0 aunque vRec
+        // lea 0 (el wp de parada del final) -> Boris reptaba corto y se trababa a ~0.87m -> AR. Reptar a un minimo
+        // ACOTADO por vAllow (que ya cae a 0 EXACTO en la pose) -> llega y CLAVA sin pararse corto ni sobrepasar.
+        if (signedMc > stopTolMc) {
+            float creepMc = m_Config.ManeuverCreepKmh;
+            if (creepMc > vAllowKmh) creepMc = vAllowKmh;
+            if (vTgtMc < creepMc) vTgtMc = creepMc;
+        }
+        // CAP DE VELOCIDAD EN GIRO CERRADO (2026-08-16, Sonom4n "si no puede seguir la traza, incorporarselo por
+        // OTRO LADO, sobre todo en estas maniobras"): MEDIDO en IC-190, a mas velocidad el full-lock UNDERSTEEREA
+        // (radio ancho) -> Boris a 8.79km/h quedaba 13.7deg atras de tu rumbo -> llegaba torcido. Si tu volante
+        // grabado esta cerca de full-lock (giro cerrado), se CAPA la velocidad a paso lento -> radio cerrado ->
+        // traza tu geometria EXACTA. Sacrifica velocidad-fidelidad por PRECISION en la maniobra (el cruise sigue
+        // rapido para A->B; esto es solo el giro apretado). Otra forma de decirle la maniobra: "aca, despacio".
+        float recWhAbsMc = GetRecordedWheelCmd(busPosMc, m_Config.RevWheelLeadM);
+        if (recWhAbsMc < -998.0) recWhAbsMc = 0;
+        if (recWhAbsMc < 0) recWhAbsMc = -recWhAbsMc;
+        // CAP DE VELOCIDAD SUAVE por giro (2026-08-16): MEDIDO wp190, Boris entra lento y ACELERA en el giro
+        // (5.33->7.84) desfasado de tu frenado -> understeer -> torcido. Mas volante grabado = menos velocidad,
+        // pero GRADUAL (el hard threshold saltaba = pasitos): a full-lock cap=ManeuverTurnKmh, recto = sin cap.
+        float turnFracMc = recWhAbsMc / 0.35;   // 0.35 = tu full-lock como comando (30 deg)
+        if (turnFracMc > 1.0) turnFracMc = 1.0;
+        float vCapMc = m_Config.ManeuverTurnKmh + (1.0 - turnFracMc) * (m_Config.ManeuverTurnCapMaxKmh - m_Config.ManeuverTurnKmh);
+        if (vTgtMc > vCapMc) vTgtMc = vCapMc;
+
+        if (signedMc <= stopTolMc && kmhMc < m_Config.ManeuverStopKmh) {
+            // LLEGO a la pose y parado -> latch (freno+handbrake) + pedir cerrar la pierna
+            thrMc = 0;
+            brkMc = 1.0;
+            hbMc = 1.0;
+            m_ForceLegAdvance = true;
+        } else if (kmhMc < m_Config.ManeuverLaunchKmh && signedMc > stopTolMc + m_Config.ManeuverLaunchMinGapM) {
+            // DESPEGUE: parado REAL (kmh<ManeuverLaunchKmh 0.5) y LEJOS de la pose -> romper la inercia firme.
+            // Antes gateaba con kmh<1.0: en maniobras lentas cualquier bajon a <1 disparaba thr=1 de golpe = tiron.
+            // Ahora solo desde parado real; los bajones a 0.5-1 los maneja el chase-vTgt (proporcional, suave).
+            thrMc = m_Config.ManeuverLaunchThrottle;
+            // RAMPA DE DESPEGUE (2026-08-17): clavar throttle=1.0 desde el tick 0 revoluciona el motor a REDLINE
+            // mientras el EMBRAGUE del respawn todavia se inicializa -> free-rev (motor a fondo, ruedas SIN girar =
+            // el bug del arranque que aparecio en los 6 vehiculos RUSForma y el bus). v1.0 NO tenia ManeuverControl:
+            // el despegue rampeaba (InverseModel closed-loop) -> el embrague MORDIA antes de llegar a redline y el
+            // desacople nunca se manifestaba (por eso v1.0 "lo hacia bien"). Rampamos el throttle los primeros ticks
+            // para que el embrague enganche antes de subir a pleno. General, arregla el free-rev DE RAIZ (el config
+            // ya tenia el TODO "ramp closed-loop"). El detector de re-enganche queda como red. En SUBIDA el
+            // hill-start de abajo sigue mandando (revoluciona contra el handbrake hasta rpmClutch).
+            float launchRampMc = 0.35 + m_ManeuverLaunchTicks * 0.2;   // tick0=0.35 -> pleno en ~4 ticks (~2s)
+            if (thrMc > launchRampMc) thrMc = launchRampMc;
+            brkMc = 0;
+            m_ManeuverLaunchTicks++;
+            // HILL-START en SUBIDA (2026-08-17, Sonom4n: "el instante que suelto freno al acelerador lo hace retroceder;
+            // hay que darle un margen a Boris"): en la cuesta el thr=1 solo no despega desde parado (Boris a kmh~0).
+            // Se revoluciona contra el HANDBRAKE los primeros HillHoldTicks (el motor toma RPM), y al soltar el
+            // torque acumulado da un pico que vence la cuesta (como largar con embrague). Mientras, el AR NO dispara
+            // (m_ManeuverHillStart) -> margen. La ventana total es HillGraceTicks; despues el AR es la red.
+            if (slopeMc > m_Config.ManeuverHillStartSlope && m_ManeuverLaunchTicks < m_Config.ManeuverHillGraceTicks) {
+                m_ManeuverHillStart = true;
+                // HILL-START POR RPM (2026-08-17, MEDIDO en tu grabacion: revolucionas a ~3600 con handbrake+primera
+                // y SOLTAS -> despega). Reves contra HANDBRAKE+BRAKE hasta que EngineGetRPM cruce el punto de embrague
+                // (rpmClutch per-vehiculo, con piso ManeuverHillReleaseRpm), y AHI soltas -> el embrague muerde, sale
+                // limpio. El hold por TIEMPO over-revolucionaba a redline (6304) sin despegar. Mismo criterio que el
+                // anti-rollback existente (~4985) -> generaliza (rpmClutch se lee del vehiculo).
+                float rpmHs = bus.EngineGetRPM();
+                float releaseRpmHs = m_CachedRpmClutch;
+                if (releaseRpmHs < m_Config.ManeuverHillReleaseRpm) releaseRpmHs = m_Config.ManeuverHillReleaseRpm;
+                if (rpmHs < releaseRpmHs) { hbMc = 1.0; brkMc = 1.0; }
+            }
+        } else {
+            // PERSEGUIR la velocidad objetivo: acelerar si falta, frenar si sobra (closed-loop simple)
+            float vErrMc = vTgtMc - kmhMc;   // km/h
+            if (vErrMc > 0.3) {
+                thrMc = vErrMc * m_Config.ManeuverSpeedGain;
+                if (slopeMc > 0.0) thrMc = thrMc + (slopeMc * 9.81 / 4.0) * m_Config.ManeuverSlopeThrottleGain;  // gravedad FF: ayuda a trepar (subida) sin esperar a que el error crezca
+                if (thrMc < 0.15) thrMc = 0.15;   // piso para mover un vehiculo pesado
+                // NO ACELERAR en el giro brusco (2026-08-17, PHYSICS no cap de velocidad): MEDIDO Boris aceleraba
+                // 5.33->7.84 en el giro desfasado de tu frenado -> understeer -> 1.9m torcido. Con la rueda grabada
+                // girada (turnFrac alto) se LIMITA el throttle a coast -> Boris no acelera -> baja a tu velocidad ->
+                // radio cerrado -> alineado. Es un TOPE de pedal (la fisica maneja), no un target que oscila = pasitos.
+                // COAST solo FORWARD y solo CERCA de la pose (signed<CoastZoneM): el giro brusco sostenido del approach
+                // (understeer). En el PATIO (signed grande) el volante grabado VARIA maniobrando -> turnFrac cruza 0.5
+                // -> el coast toggleaba el throttle = pasitos. En reversa NO (volante full-lock siempre -> crawleaba).
+                if (!revMc && signedMc < m_Config.ManeuverCoastZoneM && turnFracMc > m_Config.ManeuverTurnCoastFrac && thrMc > m_Config.ManeuverTurnCoastThr) thrMc = m_Config.ManeuverTurnCoastThr;
+                if (thrMc > 1.0) thrMc = 1.0;
+            } else if (vErrMc < -0.3) {
+                brkMc = (-vErrMc) * m_Config.ManeuverBrakeGain;
+                if (brkMc > 1.0) brkMc = 1.0;
+            } else {
+                thrMc = 0.12;   // en target -> sostener
+            }
+        }
+
+        // HOLD del min-aprox SOLO cerca de la pose: mientras EL repta al punto (signed en la zona final), avisa a
+        // UpdateLegBounds que NO cierre por min-aprox -> deja que ManeuverControl clave preciso (signed<=StopTol ->
+        // force-advance) en vez de cerrar ~1m corto. Solo cerca (< ManeuverCreepHoldM) -> lejos/spawn queda false.
+        if (signedMc > stopTolMc && signedMc < m_Config.ManeuverCreepHoldM) m_ManeuverCreepHold = true;
+
+        SetCachedInput(thrMc, steerMc, brkMc);
+        bus.SetHandbrake(hbMc);
+        if (m_Config.DriveDiagLog && (kmhMc < 0.8 || signedMc <= stopTolMc + 1.0)) {
+            string mLogMc = "[MANIOBRA] leg " + m_LegStart + ".." + m_LegEnd + " rev=" + revMc + " signed=" + signedMc;
+            mLogMc = mLogMc + " vRec=" + recSpeedMc + " vTgt=" + vTgtMc + " kmh=" + kmhMc;
+            mLogMc = mLogMc + " steer=" + steerMc + " thr=" + thrMc + " brk=" + brkMc;
+            BZBusLog.Info(mLogMc);
+        }
+        return true;
+    }
+
+    private void DriveTowards(Car bus, BZWaypoint target) {
+        m_FastSteerActive = false;   // default OFF cada tick; solo el bloque pure-pursuit forward lo prende
+        vector targetPos = target.GetVector();
+        vector busPos = bus.GetPosition();
+        vector toTarget = targetPos - busPos;
+        float dist = toTarget.Length();
+        if (dist < 0.01) return;
+
+        // Stage GUARDS (spawn-hold, honor-handbrake, mode-snap, auto-recovery). Ver DriveGuards.
+        if (DriveGuards(bus, target, busPos, targetPos, dist)) return;
+
+        // SUB-CONTROLADOR DE MANIOBRA (2026-08-16, Sonom4n): si el tramo termina en un INTERCAMBIO (legBreak),
+        // lo maneja EL -> return, bypasseando todo el cruise/endpoint/cusp/leg (que thrasheaba en reversas cortas).
+        if (ManeuverControl(bus, target)) return;
 
         // === INTERPOLACION TEMPORAL DE INPUTS (Paso 2) ===
         // El playback con waypoint discreto (cada Tick lee el wp mas cercano)
@@ -5564,98 +6148,9 @@ class BZBusService {
         // CUALQUIER capa posterior cambie se atribuye a esa capa (por variable: t/b/s). Ver CtlSnap.
         CtlReset(throttle, brake, steering);
 
-        // === MODO APROXIMACION (SOLO Modo 3): velocidad objetivo efectiva ===
-        // Approach es la herramienta especifica de Modo 3: el 3 ignora la velocidad grabada
-        // y va al limite geometrico en el run-up recto -> entra caliente a la maniobra. La
-        // rampa lo baja desde su velocidad de ENTRADA hasta ApproachExitKmh. En Modo 1 (replay)
-        // y Modo 2 (geometria CAPEADA por grabacion) es INERTE: ahi la grabacion ya desacelera,
-        // no hace falta. Gate = UseInverseModel (M2/M3) && !FollowPathCapByRecording (excluye M2) = M3 puro.
-        // POSICION-SYNC DE LA VELOCIDAD (2026-07-16): gemelo de PlantSteerSourceNearest. m_WaypointIndex
-        // corre ~15m adelante -> leer target.targetSpeed = leer el perfil 15-20m antes de estar ahi ->
-        // frena temprano (medido: ruta pedia 26.7 en el 90Ã‚Â°, Boris entro a 15.3). El brake-ahead YA hornea
-        // la anticipacion EN el perfil -> leerlo adelantado anticipa DOS VECES. El volante quiere lookahead,
-        // la velocidad quiere el wp donde Boris ESTA. NO toca el indice ni el aim del pure-pursuit.
-        int wpiSpd = m_WaypointIndex;
-        if (m_Config.SpeedSourceNearest && m_Config.Waypoints && m_Config.Waypoints.Count() > 0) {
-            float bestDsqSpd = 1000000000.0;
-            int loSpd = m_WaypointIndex - 40;
-            if (loSpd < 0) loSpd = 0;
-            int hiSpd = m_WaypointIndex + 2;
-            if (hiSpd > m_Config.Waypoints.Count() - 1) hiSpd = m_Config.Waypoints.Count() - 1;
-            // ACOTAR AL TRAMO ACTIVO: 40 wps hacia atras cruzan de pierna (la reversa de ESQ son 33) y las
-            // trazas estan superpuestas a centimetros -> agarraba la velocidad de OTRO tramo.
-            if (loSpd < m_LegStart) loSpd = m_LegStart;
-            if (hiSpd > m_LegEnd && m_LegEnd >= m_LegStart) hiSpd = m_LegEnd;
-            for (int siSpd = loSpd; siSpd <= hiSpd; siSpd++) {
-                vector wpvSpd = m_Config.Waypoints[siSpd].GetVector();
-                float dxSpd = busPos[0] - wpvSpd[0];
-                float dzSpd = busPos[2] - wpvSpd[2];
-                float dsqSpd = dxSpd * dxSpd + dzSpd * dzSpd;
-                if (dsqSpd < bestDsqSpd) {
-                    bestDsqSpd = dsqSpd;
-                    wpiSpd = siSpd;
-                }
-            }
-        }
+        // Stage PLAN: velocidad objetivo effApproachSpeed (ver DrivePlanSpeed). Costura del pathfinding.
         float effApproachSpeed = target.targetSpeed;
-        if (m_Config.SpeedSourceNearest) effApproachSpeed = m_Config.Waypoints[wpiSpd].targetSpeed;
-        // TARGET POR LOOKAHEAD: la vel que Boris puede tener AHORA y aun frenar comodo a lo que viene.
-        // vAllow(wp) = sqrt(vWp^2 + 2*a*d) en m/s. El MINIMO de la ventana manda. Incluye el wp mas cercano
-        // (d~0 -> vAllow~vWp) asi que nunca sube el target, solo lo BAJA anticipando la curva de adelante.
-        // EL OJO TAMBIEN EN MANIOBRA (2026-07-20, MEDIDO). Estaba limitado a mode=="normal": en reverse /
-        // parking / maniobra ni se llamaba, y el log lo mostro crudo -> "ojo=-1" en TODAS las lineas de
-        // reversa mientras Boris iba a 22 km/h sin nada que le anticipara el final del tramo. Justo donde
-        // mas falta hace anticipar, iba ciego: no sabia que el tramo terminaba, no planificaba la frenada,
-        // se pasaba de largo y quedaba desorientado. La ley del ojo es la misma en cualquier modo: mira la
-        // traza que viene y toma el minimo de vAllow = sqrt(vWp^2 + 2*a*d).
-        float vLookaheadKmh = -1.0;
-        if (m_Config.UseSpeedLookahead) {
-            vLookaheadKmh = ComputeLookaheadSpeed(wpiSpd, kmh, busPos);
-            if (vLookaheadKmh > 0 && vLookaheadKmh < effApproachSpeed) effApproachSpeed = vLookaheadKmh;
-        }
-        bool isM3approach = (m_Config && m_Config.UseInverseModel && !m_Config.FollowPathCapByRecording); // Modo 3 puro
-        bool approachRamp = (target.mode == "approach" && isM3approach);
-        if (approachRamp) {
-            effApproachSpeed = ComputeApproachTargetSpeed(kmh, target.targetSpeed);
-            m_LastISpeed     = effApproachSpeed; // que el AI logger refleje la rampa
-        } else {
-            m_ApproachActive = false; // fuera de approach (o Modo 1) -> rearmar para el proximo bloque
-            // APPROACH AUTOMATICA: sin zona marcada a mano, freno predictivo a la maniobra que viene.
-            // Solo Modo 3 + ApproachAuto + wp normal. La grabada (tag) tiene prioridad (rama de arriba).
-            if (isM3approach && m_Config.ApproachAuto && (target.mode == "normal" || target.mode == "")) {
-                float autoSpd = ComputeAutoApproachSpeed(kmh, busPos);
-                if (autoSpd > 0) {
-                    effApproachSpeed = autoSpd;
-                    m_LastISpeed     = effApproachSpeed;
-                }
-            }
-        }
-
-        // === GARANTIA UNIVERSAL DE VELOCIDAD GRABADA en zonas de PRECISION (Sonom4n 2026-07-01) ===
-        // El humano PROBO que ESTE vehiculo hace la maniobra/parking/reverse a la velocidad que grabo
-        // -> es una PRUEBA DE FACTIBILIDAD para ESE auto (si el la ejecuto, Boris debe poder reproducirla).
-        // M3 pisa targetSpeed con GEOMETRIA (rapido en la recta) y entra CALIENTE: un auto de giro ancho
-        // (CivilianSedan R_min 4.19m) derrapa el 90Ã‚Â°; uno agil (Nissan 3.44m) perdona. Capeando
-        // effApproachSpeed (= target real del InverseModel) a la recordedSpeed POR-WP en las zonas de
-        // precision, Boris sigue el PERFIL EXACTO del humano y entra a SU velocidad -> misma capacidad,
-        // para CUALQUIER vehiculo (no solo el grabado). Es el PISO; corre bajo approach MANUAL y AUTO por
-        // igual (el approach define la FORMA de la desaceleracion, el cap el techo). Solo M3 (M1 replica,
-        // M2 ya capea por grabacion). El crucero/normal sigue generalizando libre por geometria.
-        bool precZone = (target.mode == "approach" || target.mode == "maniobra" || target.mode == "parking" || target.mode == "reverse");
-        if (isM3approach && precZone && target.recordedSpeed > 0.5 && target.recordedSpeed < effApproachSpeed) {
-            effApproachSpeed = target.recordedSpeed;
-            m_LastISpeed     = effApproachSpeed;
-        }
-
-        // DIAGNOSTICO (2026-07-20, Sonom4n: "no se si el lookahead esta funcionando"). Medido: el ojo permitia
-        // 22.7 km/h a 10 m del endpoint y Boris iba a 7.8 -> ALGUIEN le pisa la salida al ojo. En vez de
-        // seguir adivinando cual, mostramos las fuentes y cual gana, en cada tick lento.
-        if (m_Config && m_Config.SpeedDecisionDebug && kmh < 30.0 && m_TickCount % 4 == 0) {
-            string sdDbg = "[SPD] v=" + (int)kmh + " wp=" + target.targetSpeed;
-            sdDbg = sdDbg + " near=" + m_Config.Waypoints[wpiSpd].targetSpeed;
-            sdDbg = sdDbg + " ojo=" + vLookaheadKmh + " -> eff=" + effApproachSpeed + " " + target.mode;
-            BZBusLog.Info(sdDbg);
-        }
+        DrivePlanSpeed(target, busPos, kmh, effApproachSpeed);
 
         // === AR_OnWay Ã¢â‚¬â€ ObstacleSlow (fase 1) + ObstacleEscape (fase 2) ===
         // Escudo contra obstruccion EXTERNA (otro vehiculo). Solo M2/M3. NO salva a Boris de Boris.
@@ -5885,6 +6380,23 @@ class BZBusService {
             // como mismo scope Ã¢â‚¬â€ declarar u_ms aca chocaria con el u_ms de
             // PARKING aunque sean ramas distintas).
             float u_msCr = kmh / 3.6;
+
+            // === POSITION-SYNC de iSpeed en la aproximacion al stop (2026-08-17) ===
+            // Las bandas de abajo comparan kmh contra iSpeed = target.targetSpeed del INDICE ADELANTADO
+            // (~15m, que cerca del stop queda "frozen" bajo, p.ej 11.9) mientras Boris esta FISICAMENTE
+            // atras donde la velocidad grabada es 17-24 -> las bandas creen que va rapido, frenan de mas,
+            // y despues re-aceleran = BANG-BANG alrededor del perfil. La fase de esa oscilacion al llegar
+            // al punto (que varia por el jitter de FPS) = la VARIANZA del endpoint (0.013 una corrida,
+            // 0.59 otra). Fix (grabada = verdad): leer la velocidad grabada ANTICIPATORIA en la posicion
+            // REAL de Boris (misma GetRecordedSpeedKmh que usa ManeuverControl y clava los intercambios),
+            // SOLO cerca del stop (<80m). El crucero de ruta abierta (>80m) queda intacto (usa el lookahead).
+            if (m_Config && m_Config.SpeedSourceNearest && distToNextStop < 80.0) {
+                float iSpeedSync = GetRecordedSpeedKmh(busPos);
+                if (iSpeedSync > 0) {
+                    iSpeed = iSpeedSync;
+                    m_LastISpeed = iSpeed;   // que el ai_run (i_speed) refleje la vel sincronizada
+                }
+            }
 
             // === ESCANEO PREDICTIVO ===
             // Recorremos waypoints futuros sumando distancia hasta 100m, o
@@ -6412,7 +6924,16 @@ class BZBusService {
             // "mucho delay, cuando corrige ya es tarde"). En reverse la maniobra es densa y
             // localizada -> el volante debe aplicarse en el punto exacto, no anticipado.
             float recSteerRev = target.targetSteering;
-            if (m_Config.Waypoints && m_WaypointIndex >= 0 && m_WaypointIndex < m_Config.Waypoints.Count()) {
+            // FASE 2 (2026-08-16, Sonom4n): el volante grabado (targetSteering) lo pone el conversor en 0
+            // (hasInputData=0) -> la reversa quedaba SOLO con el Stanley fino -> saturaba a FULL LOCK y thrasheaba
+            // (MEDIDO REACOMODO rev1: steering pinned +1.0, arco al reves, 30s en una caja de 3m sin avanzar). El
+            // feedforward ahora sale de TU FRONT WHEEL grabado (targetFrontWheel/plant-gain via GetRecordedWheelCmd)
+            // = reproduce TU arco exacto; el Stanley fino queda de feedback. Traza tu reversa con fisica y generaliza
+            // (por-vehiculo via el plant-gain). Gate RevUseRecordedWheel. Ver [[project_steer_corrector_vs_take]].
+            if (m_Config.RevUseRecordedWheel) {
+                float rwCmdRev = GetRecordedWheelCmd(bus.GetPosition(), m_Config.RevWheelLeadM);
+                if (rwCmdRev > -998.0) recSteerRev = rwCmdRev;
+            } else if (m_Config.Waypoints && m_WaypointIndex >= 0 && m_WaypointIndex < m_Config.Waypoints.Count()) {
                 recSteerRev = m_Config.Waypoints[m_WaypointIndex].targetSteering;
             }
             steering = recSteerRev - fineStanRev;
@@ -7017,6 +7538,24 @@ class BZBusService {
             }
         }
 
+        // FASE 1 SUB-CONTROLADOR REVERSA: DESPEGUE FIRME (2026-08-16, Sonom4n). El bus pesado NO rompe la inercia
+        // estatica en reversa DESDE PARADO con el breakaway aprendido -> se trababa (AR al despegar; medido en
+        // REACOMODO rev0 wp53 y la reversa corta de 3.8m). El HUMANO FLOOREA (throttle=1.00 medido al despegar la
+        // reversa corta). Mientras la pierna sea REVERSA, este casi parado (kmh<ExitKmh) y falte camino al endpoint
+        // de la pierna (>tol: si esta A ESA distancia del punto NO empuja, ahi manda el stop), mete throttle firme
+        // para romper la inercia; apenas se mueve (>ExitKmh) el gate lo suelta y toma el control normal de la reversa.
+        // OJO: el corte va por StopResidualTolM (1m), NO por EndpointGlideRangeM (3m): con 3m la reversa CORTA (3.8m)
+        // solo recibia empuje 0.8m y no despegaba (el bus pesado). Con 1m recibe 2.8m -> despega. Ver REACOMODO rev1.
+        if (m_Config && m_Config.RevLaunchBoostEnabled && ActiveLegIsReverse() && kmh < m_Config.RevLaunchExitKmh) {
+            float dRevEndLaunch = 99999.0;
+            if (m_Config.Waypoints && m_LegEnd >= 0 && m_LegEnd < m_Config.Waypoints.Count())
+                dRevEndLaunch = vector.Distance(busPos, m_Config.Waypoints[m_LegEnd].GetVector());
+            if (dRevEndLaunch > m_Config.StopResidualTolM) {
+                if (throttle < m_Config.RevLaunchThrottle) throttle = m_Config.RevLaunchThrottle;
+                brake = 0;
+            }
+        }
+
         // CORRECTOR DE VELOCIDAD contra la toma (2026-07-23, Sonom4n): en TODO momento (cruise incluido) monitorea
         // vel vs cota grabada y corrige SUAVE (rampa, sin traqueteo): se pasa -> un poquito de freno; va lento ->
         // un poquito de gas. Va ANTES del StopBrake/checkpoint (que lo pisan en la parada); en cruise queda esto.
@@ -7070,7 +7609,20 @@ class BZBusService {
             lastWpEp0 = m_Config.Waypoints.Count() - 1;
             dToEndEp = vector.Distance(busPos, m_Config.Waypoints[lastWpEp0].GetVector());
         }
-        if (m_Config && m_Config.EndpointThrottleCapEnabled && m_Config.EndpointGlide && lastWpEp0 >= 0 && m_LegEnd == lastWpEp0 && dToEndEp < m_Config.EndpointGlideRangeM) {
+        // ENDPOINT DEL TRAMO (2026-08-16, Sonom4n): el zone de parada PRECISO (freno autoadaptativo + corte de gas)
+        // aplica a CUALQUIER pose de parada de una pierna FORWARD -- el endpoint final Y los INTERCAMBIOS (legBreak)
+        // -- no solo al ultimo wp. Antes el intercambio cerraba flojo por min-aprox y Boris lo SOBREPASABA 7-11m
+        // (medido: reversa de 3.8m arrancaba desplazada -> embrollo/AR#1). Ahora CLAVA la pose del intercambio como
+        // el endpoint final (que ya anda). Distancia = al endpoint de la PIERNA (m_LegEnd), no al ultimo wp. La
+        // reversa NO entra (gate !ActiveLegIsReverse). Opt-out por EndpointStopAtIntercambio.
+        float dToLegEndEp = 99999.0;
+        bool  legEndIsStopPose = false;
+        if (m_Config && m_Config.Waypoints && m_LegEnd >= 0 && m_LegEnd < m_Config.Waypoints.Count()) {
+            dToLegEndEp = vector.Distance(busPos, m_Config.Waypoints[m_LegEnd].GetVector());
+            legEndIsStopPose = (m_LegEnd == lastWpEp0 || m_Config.Waypoints[m_LegEnd].legBreak || m_Config.Waypoints[m_LegEnd].isStop);
+            if (m_LegEnd != lastWpEp0 && !m_Config.EndpointStopAtIntercambio) legEndIsStopPose = false;
+        }
+        if (m_Config && m_Config.EndpointThrottleCapEnabled && m_Config.EndpointGlide && legEndIsStopPose && !ActiveLegIsReverse() && dToLegEndEp < m_Config.EndpointGlideRangeM) {
             m_InFinalEpZone = true;   // FinalizeControl NO aplica DeadZoneInverse aca -> no re-infla el creep a un lanzon
             int nearEp = NearestRecordedWp(busPos);
             float pitchEp = GetEffectivePitch(nearEp, 1);   // pitch LOCAL del path (rad, >0=subida) -> captura el LOMO del galpon; SlopeToPoint al endpoint lo promediaba a ~0 y no lo veia
@@ -7081,7 +7633,7 @@ class BZBusService {
             // frena ni corta gas -> el DeadZoneInverse DES-CLAVA normal (la zona muerta medida por-vehiculo; roto
             // antes por gatearlo -> quedaba corto en la cuesta del galpon -> AR). Corta el gas solo cuando frena de
             // verdad (no empujar y frenar a la vez). NO gatea DeadZoneInverse (el des-clave es del framework).
-            if (dToEndEp > m_Config.EndpointGlideStopM) {
+            if (dToLegEndEp > m_Config.EndpointGlideStopM) {
                 float vMsEp = kmh / 3.6;
                 float decEp = m_Config.EndpointStopDecelMS;
                 if (decEp <= 0.5) {
@@ -7099,7 +7651,7 @@ class BZBusService {
                     }
                     if (decEp <= 0.5) decEp = 4.0;
                 }
-                float aRawEp = (vMsEp * vMsEp) / (2.0 * dToEndEp);   // demanda de parada CRUDA (sin credito de pendiente)
+                float aRawEp = (vMsEp * vMsEp) / (2.0 * dToLegEndEp);   // demanda de parada CRUDA (sin credito de pendiente)
                 float bRawEp = aRawEp / decEp;
                 bool stoppingZoneEp = (bRawEp > 0.05);
                 float aNeedEp = aRawEp - 9.8 * slEp;   // el FRENO si acredita la gravedad en subida (menos freno)
@@ -7112,6 +7664,11 @@ class BZBusService {
                 // si ya hay que empezar a parar cortamos el gas -> sino el throttle (InverseModel/floor FWD) empujaba
                 // PASADO el endpoint EN SUBIDA (Hatchback/E60 +0.7-0.9m). Indep de la pendiente.
                 if (stoppingZoneEp) throttle = 0;
+                // ANTI ACCEL-THROUGH (2026-08-16, Sonom4n): en la zona de parada, si va MAS RAPIDO que el glide y NO
+                // trepa, corta el gas -> no puede acelerar de largo el punto. MEDIDO en IC2: el floor lo llevaba de
+                // 3.37 a 5.64 km/h a 2.2m del intercambio y sobrepasaba 7.86m (min-aprox cerraba el tramo torcido).
+                // Los que llegan lentos (<=glide) ya clavan. Trepando (pitch>0.02) NO corta -> no mata la subida.
+                if (kmh > m_Config.EndpointGlideMaxKmh && pitchEp <= 0.02) throttle = 0;
                 // TREPADA TRACCION-AWARE: el FWD des-clava el lomo con mas piso de throttle -- SOLO fuera de la zona de
                 // parada (sino empuja pasado el endpoint) y solo clavado (kmh<Exit) trepando (pitch>0.02). AWD/RWD igual.
                 // SOSTENER la trepada (no solo des-clavar): mientras hay SUBIDA (pitchEp>0.02) y va lento
@@ -7125,12 +7682,12 @@ class BZBusService {
                 }
                 if (kmh > 2.5) {
                     int szEp = 0; if (stoppingZoneEp) szEp = 1;
-                    BZBusLog.Info("[EpCut] dEnd=" + dToEndEp + " legEnd=" + m_LegEnd + " last=" + lastWpEp0 + " stopZone=" + szEp + " thrPostCut=" + throttle + " kmh=" + kmh);
+                    BZBusLog.Info("[EpCut] dLegEnd=" + dToLegEndEp + " legEnd=" + m_LegEnd + " last=" + lastWpEp0 + " stopZone=" + szEp + " thrPostCut=" + throttle + " kmh=" + kmh);
                 }
             }
         }
-        // DIAG INCONDICIONAL (2026-08-08): por que m_InFinalEpZone muere abajo de 6m? Loguea el gate crudo.
-        if (dToEndEp < 8.0 && kmh > 1.0) {
+        // DIAG (2026-08-08): por que m_InFinalEpZone muere abajo de 6m? Loguea el gate crudo. Gateado - OFF en release.
+        if (m_Config && m_Config.DriveDiagLog && dToEndEp < 8.0 && kmh > 1.0) {
             int inz = 0; if (m_InFinalEpZone) inz = 1;
             int ce = 0; if (m_Config && m_Config.EndpointThrottleCapEnabled) ce = 1;
             int ge = 0; if (m_Config && m_Config.EndpointGlide) ge = 1;
@@ -7464,7 +8021,12 @@ class BZBusService {
         int cntRw = m_Config.Waypoints.Count();
         if (cntRw < 2) return -999.0;
         int loRw = m_WaypointIndex - 40; if (loRw < 0) loRw = 0;
+        // CONFINAR AL TRAMO ACTIVO: al arrancar del intercambio, leer el volante del tramo NUEVO (tu PRE-STEER
+        // al sentido correcto), NO el del wp de parada del tramo anterior (que apunta al reves). Asi Boris
+        // arranca con la rueda ya girada y hace la reversa corta en tu arco cerrado.
+        if (m_LegStart > loRw && m_LegStart <= m_WaypointIndex) loRw = m_LegStart;
         int hiSrchRw = m_WaypointIndex + 2; if (hiSrchRw > cntRw - 1) hiSrchRw = cntRw - 1;
+        if (m_LegEnd >= m_WaypointIndex && m_LegEnd < hiSrchRw) hiSrchRw = m_LegEnd;
         int nearRw = m_WaypointIndex; float bestRw = 1000000000.0;
         for (int i = loRw; i <= hiSrchRw; i++) {
             vector wvRw = m_Config.Waypoints[i].GetVector();
@@ -7484,6 +8046,114 @@ class BZBusService {
             wpRw = jRw;
         }
         return m_Config.Waypoints[wpRw].targetFrontWheel / GetPlantSteerGain();
+    }
+
+    // Velocidad GRABADA cerca de Boris (km/h), leida un pelo ADELANTE (ManeuverSpeedLeadM) -> objetivo de la
+    // maniobra. En la zona los wp son DENSOS (el humano fue lento, 10 muestras/s) => read PRECISO; el lead chico
+    // capta tu aceleracion (evita el 0 del punto de arranque) sin smearear. Capado en la pose (m_LegEnd).
+    private float GetRecordedSpeedKmh(vector busPos) {
+        if (!m_Config || !m_Config.Waypoints) return 0;
+        int cntRs = m_Config.Waypoints.Count();
+        if (cntRs < 1) return 0;
+        // BUSQUEDA CONFINADA AL TRAMO ACTIVO [m_LegStart..m_LegEnd]: la vel no puede sangrar al tramo previo
+        // (su parada) ni cruzar la pose del final antes de tiempo (lo que hacia leer 0 y clavar 2m corto).
+        int loRs = m_LegStart; if (loRs < 0) loRs = 0;
+        int hiSrchRs = m_LegEnd; if (hiSrchRs > cntRs - 1) hiSrchRs = cntRs - 1;
+        if (hiSrchRs < loRs) hiSrchRs = loRs;
+        int nearRs = loRs; float bestRs = 1000000000.0;
+        for (int i = loRs; i <= hiSrchRs; i++) {
+            vector wvRs = m_Config.Waypoints[i].GetVector();
+            float dxRs = busPos[0] - wvRs[0]; float dzRs = busPos[2] - wvRs[2];
+            float dsqRs = dxRs * dxRs + dzRs * dzRs;
+            if (dsqRs < bestRs) { bestRs = dsqRs; nearRs = i; }
+        }
+        // PURE-PURSUIT DE VELOCIDAD (2026-08-16, idea de Sonom4n): mira ADELANTE en tu perfil de velocidad
+        // (ManeuverSpeedLookaheadM) y toma la vel que AHORA permite decelerar a cada vel grabada que viene:
+        // vLimit = sqrt(vRec[j]^2 + 2*decel*d). El MINIMO manda -> Boris se ANTICIPA a los tramos lentos (el
+        // giro cerrado) en vez de reaccionar tarde y entrar con exceso de velocidad (understeer -> torcido).
+        // Igual que "el ojo" del cruise. decel autoadaptativo. Incluye la parada (vRec=0 en m_LegEnd).
+        float decRs = 4.0;
+        if (m_InverseModel) {
+            string surfRs = "";
+            GetGame().SurfaceGetType3D(busPos[0], busPos[1], busPos[2], surfRs);
+            float ddRs = m_InverseModel.GetMaxBrakeDecel(surfRs) * m_Config.ManeuverStopDecelFactor;
+            if (ddRs > 0.5) decRs = ddRs;
+        }
+        float vminRs = 9999.0;
+        float cumRs = 0;
+        int jRs = nearRs;
+        while (jRs <= hiSrchRs) {
+            float vjMs = m_Config.Waypoints[jRs].targetSpeed / 3.6;
+            float vLimMs = Math.Sqrt(vjMs * vjMs + 2.0 * decRs * cumRs);
+            if (vLimMs < vminRs) vminRs = vLimMs;
+            if (jRs >= hiSrchRs) break;
+            cumRs = cumRs + vector.Distance(m_Config.Waypoints[jRs].GetVector(), m_Config.Waypoints[jRs + 1].GetVector());
+            jRs++;
+            if (cumRs > m_Config.ManeuverSpeedLookaheadM) break;
+        }
+        return vminRs * 3.6;
+    }
+
+    // Rumbo GRABADO cerca de Boris (deg), leido un pelo ADELANTE (ManeuverHeadingLeadM) para ANTICIPAR el giro
+    // (como el lookahead del pure-pursuit). Confinado al tramo activo. -999 si no hay wps. Es la POSE que Boris
+    // debe reproducir (seguir tu rumbo, no copiar tu volante).
+    private float GetRecordedHeadingDeg(vector busPos, float leadH) {
+        if (!m_Config || !m_Config.Waypoints) return -999.0;
+        int cntH = m_Config.Waypoints.Count();
+        if (cntH < 1) return -999.0;
+        int loH = m_LegStart; if (loH < 0) loH = 0;
+        int hiSrchH = m_LegEnd; if (hiSrchH > cntH - 1) hiSrchH = cntH - 1;
+        if (hiSrchH < loH) hiSrchH = loH;
+        int nearH = loH; float bestH = 1000000000.0;
+        for (int i = loH; i <= hiSrchH; i++) {
+            vector wvH = m_Config.Waypoints[i].GetVector();
+            float dxH = busPos[0] - wvH[0]; float dzH = busPos[2] - wvH[2];
+            float dsqH = dxH * dxH + dzH * dzH;
+            if (dsqH < bestH) { bestH = dsqH; nearH = i; }
+        }
+        int wpH = nearH;
+        if (leadH > 0) {
+            int hiH = cntH - 1;
+            if (m_LegEnd > nearH && m_LegEnd < hiH) hiH = m_LegEnd;
+            float cumH = 0; int jH = nearH;
+            while (jH < hiH && cumH < leadH) {
+                cumH = cumH + vector.Distance(m_Config.Waypoints[jH].GetVector(), m_Config.Waypoints[jH + 1].GetVector());
+                jH++;
+            }
+            wpH = jH;
+        }
+        return m_Config.Waypoints[wpH].targetHeading;
+    }
+
+    // Offset lateral FIRMADO de Boris respecto a TU linea grabada (m), sobre el segmento mas cercano del tramo
+    // activo [m_LegStart..m_LegEnd]. Signo por convencion (dir x rel), se ajusta con ManeuverCrossTrackSign.
+    // Para pegar a Boris a la linea (trayectoria fiel).
+    private float SignedCrossTrackMc(vector busPos) {
+        if (!m_Config || !m_Config.Waypoints) return 0;
+        int cntCt = m_Config.Waypoints.Count();
+        if (cntCt < 2) return 0;
+        int loCt = m_LegStart; if (loCt < 0) loCt = 0;
+        int hiCt = m_LegEnd; if (hiCt > cntCt - 1) hiCt = cntCt - 1;
+        if (hiCt < loCt) hiCt = loCt;
+        int nearCt = loCt; float bestCt = 1000000000.0;
+        for (int i = loCt; i <= hiCt; i++) {
+            vector wvCt = m_Config.Waypoints[i].GetVector();
+            float dxCt = busPos[0] - wvCt[0]; float dzCt = busPos[2] - wvCt[2];
+            float dsqCt = dxCt * dxCt + dzCt * dzCt;
+            if (dsqCt < bestCt) { bestCt = dsqCt; nearCt = i; }
+        }
+        int aCt = nearCt; int bCt = nearCt + 1;
+        if (bCt > hiCt) { aCt = nearCt - 1; bCt = nearCt; }
+        if (aCt < loCt) { aCt = loCt; bCt = loCt + 1; }
+        if (bCt > cntCt - 1) return 0;
+        vector vaCt = m_Config.Waypoints[aCt].GetVector();
+        vector vbCt = m_Config.Waypoints[bCt].GetVector();
+        float sdxCt = vbCt[0] - vaCt[0]; float sdzCt = vbCt[2] - vaCt[2];
+        float slCt = Math.Sqrt(sdxCt * sdxCt + sdzCt * sdzCt);
+        if (slCt < 0.01) return 0;
+        sdxCt = sdxCt / slCt; sdzCt = sdzCt / slCt;
+        float rxCt = busPos[0] - vaCt[0]; float rzCt = busPos[2] - vaCt[2];
+        return sdxCt * rzCt - sdzCt * rxCt;   // perpendicular firmado a la linea grabada
     }
 
     // BLEND FF COMPLEMENTARIO sobre el pure-pursuit (2026-07-25, Sonom4n). Nudge del steering hacia el volante
@@ -9228,6 +9898,12 @@ class BZBusService {
                 m_WaypointIndex = m_NextStopIndex;
                 m_StopArrivedDeclared = false;   // el "llegue" (notif + countdown) arranca en el LATCH, no aca (2026-07-29):
                 m_AtStopTicks = 0;               // asi el IMAN clava el punto exacto antes de que el despawn lo corte.
+                // RESET del min por-stop (2026-08-17): m_EndpointMinDist arrastraba el minimo de la pierna ANTERIOR
+                // (ej 0.223m del intercambio wp298) -> al llegar al endpoint siguiente a 2.62m el overshoot-check
+                // (min<0.6 && dist>min+0.1) daba TRUE de una y LATCHEABA a Boris 2.62m corto, aun a 9.7 km/h, sin
+                // dejar que el glide lo arrastrara. Arrancar en 9999 por cada stop -> el overshoot recien dispara
+                // cuando ESTE stop estuvo <0.6m de verdad. (El mismo 0.223 aparecia identico en dos latches = stale.)
+                m_EndpointMinDist = 9999;
                 BZBusLog.Info("AtStop activado en " + stopWp.name + ": dist=" + distToStop.ToString() + "m vel=" + stopCheckKmh.ToString() + " km/h wpIdx sync=" + m_WaypointIndex + " (iman aproximando; countdown al clavar)");
                 // REVERSA (re-aplicado 2026-07-30): el countdown arranca ACA (como SIEMPRE) -> el iman es forward-only,
                 // la reversa PARA CORTO (~2m) y NO llega al latch de 0.125m; si esperaramos el latch, la ruta COLGABA
@@ -9507,6 +10183,14 @@ class BZBusService {
             // soltarlo. El cap de movimiento fisico (abajo) evita que el wp_idx race ahead.
             bool advByProj = false;
             bool specialModeAdv = (cur.mode == "reverse" || cur.mode == "parking" || cur.mode == "maniobra");
+            // 2026-08-17: ACERCAMIENTO LENTO al endpoint (mode "normal" + FollowPaintedToStop, radio
+            // achicado a 2m arriba). "normal" NO tenia avance along-track -> si Boris pasaba el wp con
+            // >2m de offset lateral el indice se CONGELABA detras suyo. En un perfil de decel (23->0) el
+            // wp de atras tiene velocidad grabada MAS ALTA -> iSpeed inflado -> las bandas creen que va
+            // lento y meten throttle -> Boris RE-ACELERA a 18m del stop y se pasa (tocaba 0.19m, rodaba a
+            // 2.42m). Le damos el mismo avance por proyeccion que a los special modes SOLO en esa zona
+            // lenta con radio chico -> el indice SIGUE a Boris (que era la intencion del radio 2m).
+            if (cur.mode == "normal" && m_Config && m_Config.FollowPaintedToStop && cur.targetSpeed < 12.0) specialModeAdv = true;
             // 2026-06-25: saco hasInputData -> el avance off-path-freeze corre tambien en
             // Modo 3 (hasInputData=0). Sin esto, en reversa Modo 3 el wp se congela cuando
             // Boris llega off-line y maneja de costado (Nissan shallow stops, latdev 2->5m).
@@ -9689,8 +10373,8 @@ class BZBusService {
 
         DriveTowards(bus, target);
 
-        // Log de estado post-DriveTowards
-        BZBusLog.Info("Tick: gear=" + bus.GetGear() + " kmh=" + bus.GetSpeedometerAbsolute());
+        // Log de estado post-DriveTowards (diagnostico; gateado - OFF en release)
+        if (m_Config && m_Config.DriveDiagLog) BZBusLog.Info("Tick: gear=" + bus.GetGear() + " kmh=" + bus.GetSpeedometerAbsolute());
 
         // Stuck timer: si no avanzamos nada en este tick, incrementar; si pasa
         // el timeout, forzar un advance manual (escape hatch para bug raro).
@@ -9813,6 +10497,64 @@ class BZBusService {
         } else {
             m_StuckDiagTimer = 0;
             m_StuckDiagLastLog = 0;
+        }
+
+        // === RE-ENGANCHE DEL DRIVETRAIN: free-rev en el respawn (2026-08-17) ===
+        // Bug del respawn (STUCK-DIAG confirmado): el motor arranca ON pero el EMBRAGUE no inicializa
+        // (GetClutch = valor basura) -> revoluciona a REDLINE en primera con las 4 ruedas EN EL PISO y
+        // SIN GIRAR (angVel=0, locked=false) -> el torque no llega -> Boris no arranca (6-13s clavado hasta
+        // que el auto-recovery lo saltea, y encima corrido). El PRIMER spawn tras arrancar el server anda;
+        // TODOS los respawn fallan igual (mismo bug que los RUSForma: "andan la primera, despues se quedan").
+        // Fix general (cualquier CarScript): detectar la firma exacta -motor ON + rpm ALTO (>2.5x ralenti,
+        // autoadaptativo) + throttle + kmh~0 + ruedas SIN GIRAR (descarta wheelspin)- y hacer la SECUENCIA DE
+        // ARRANQUE MANUAL: soltar el gas (a redline el embrague no muerde; hay que dejar caer el rpm a ralenti)
+        // + ciclar la marcha NEUTRAL -> PRIMERA al ralenti (el embrague engancha suave desde neutral, como
+        // cuando arrancas un manual). (El ciclo de MOTOR no sirve: el Tick lo re-arranca cada tick, ~L9692+.)
+        // Corre DESPUES de DriveTowards -> pisa el throttle/gear que puso el control. El kmh<1 excluye el
+        // arranque normal (ahi el rpm sube CON la velocidad; el free-rev sube el rpm SIN moverse).
+        float nowReeng = GetGame().GetTickTime();
+        if (m_ReengageActive) {
+            // secuencia en curso: soltar gas + ciclo de marcha al ralenti
+            float elapsedRe = nowReeng - m_ReengageStart;
+            m_CachedThrottle = 0;   // el motor cae a ralenti -> el embrague puede morder
+            m_CachedBrake    = 0;
+            int neutralRe = bus.GetNeutralGear();
+            if (elapsedRe < 1.2) {
+                SetDesiredGear(neutralRe); bus.ShiftTo(neutralRe);   // NEUTRAL: desacoplar y dejar caer el rpm
+            } else if (elapsedRe < 2.0) {
+                SetDesiredGear(2); bus.ShiftTo(2);                    // PRIMERA al ralenti -> el embrague muerde suave
+            } else {
+                m_ReengageActive = false;                             // listo -> el control normal retoma (ya con torque)
+                BZBusLog.Info("[DRIVETRAIN] re-enganche completado (neutral->primera al ralenti) -> control normal");
+            }
+        } else {
+            float rpmReeng = bus.EngineGetRPM();
+            float idleReeng = bus.EngineGetRPMIdle();
+            if (idleReeng < 100) idleReeng = 800;
+            bool freeRevSig = (bus.EngineIsOn() && kmhDiag < 1.0 && m_CachedThrottle > 0.5 && rpmReeng > idleReeng * 2.5 && !m_SpawnHoldActive && !m_AtStop && !m_EndpointLatched);
+            if (freeRevSig) {
+                // confirmar que las ruedas NO giran (clutch desconectado, NO wheelspin en barro/hielo)
+                float wheelSpinSum = 0;
+                int wcReeng = bus.WheelCountPresent();
+                for (int wReeng = 0; wReeng < wcReeng; wReeng++) {
+                    float avReeng = bus.WheelGetAngularVelocity(wReeng);
+                    if (avReeng < 0) avReeng = -avReeng;
+                    wheelSpinSum = wheelSpinSum + avReeng;
+                }
+                if (wheelSpinSum < 1.0) m_FreeRevTicks = m_FreeRevTicks + 1;
+                else                    m_FreeRevTicks = 0;
+            } else {
+                m_FreeRevTicks = 0;
+            }
+            if (m_FreeRevTicks >= 3 && (m_LastReengageTime == 0 || nowReeng - m_LastReengageTime > 6.0)) {
+                m_LastReengageTime = nowReeng;
+                m_FreeRevTicks = 0;
+                m_ReengageActive = true;
+                m_ReengageStart  = nowReeng;
+                string reengMsg = "[DRIVETRAIN] free-rev detectado (rpm=" + rpmReeng + " kmh=" + kmhDiag;
+                reengMsg = reengMsg + " ruedas SIN girar) -> secuencia neutral->primera al ralenti";
+                BZBusLog.Info(reengMsg);
+            }
         }
 
         // AI logging: graba el estado actual del bus al CSV si esta activo.
@@ -10274,6 +11016,73 @@ class BZBusService {
         SetCachedInput(thrG, steerMg, brkG);
         return true;
     }
+
+    // === FRENO PREDICTIVO DEL ENDPOINT PER-FRAME (2026-08-17) ===
+    // El freno del endpoint lo DECIDE el Tick de 500ms (EndpointGlideControl). Pero a 10-17 km/h los ultimos
+    // ~3m se cubren en ~2 ticks -> Boris no alcanza a ejecutar el frenado grabado 10->0 y CRUZA el punto con
+    // envion; el GlideLatch lo clava 0.24-0.42m pasado (varia por la fase del muestreo = varianza). Este paso
+    // corre SOLO el freno predictivo (aritmetica pura: stopDist=v^2/2a vs signed) CADA FRAME (~35Hz, desde
+    // OnInput) en los ultimos 5m -> el freno dispara en el INSTANTE en que Boris entra a su distancia de
+    // frenado, no hasta 500ms tarde -> para EN el punto en vez de cruzarlo. SIN queries de terreno
+    // (SurfaceY/SurfaceGetType3D) -> NO re-mete la degradacion del tick del server B (ese bug era por el
+    // sampleo PESADO per-frame, no por logica per-frame; ver SampleReceiver). Solo pisa throttle/brake, deja
+    // el steering (heading-align que puso el Tick). El creep/heading final (<1.5 km/h) lo sigue haciendo el
+    // Tick de 500ms (ahi 2Hz alcanza). Forward-only (la reversa clava por su camino propio). Respeta la
+    // grabada: usa la MISMA decel medida (EndpointBrakeDecel) que el freno predictivo de EndpointGlideControl.
+    void EndpointFrameBrake(Car car) {
+        if (!car || !m_Config || !m_Config.EndpointGlide) return;
+        if (!m_AtStop || m_EndpointLatched) return;
+        if (ActiveLegIsReverse()) return;
+        if (m_NextStopIndex < 0 || m_NextStopIndex >= m_Config.Waypoints.Count()) return;
+        vector stopExactPos = m_Config.Waypoints[m_NextStopIndex].GetVector();
+        vector bposF = car.GetPosition();
+        float dxF = stopExactPos[0] - bposF[0];
+        float dzF = stopExactPos[2] - bposF[2];
+        float gapF = Math.Sqrt(dxF * dxF + dzF * dzF);
+        if (gapF > 5.0) return;   // solo los ultimos 5m (gate barato: el 99% del tiempo corta aca)
+        // distancia con SIGNO (proyeccion sobre la direccion de llegada), identica a EndpointGlideControl
+        float signedF = gapF;
+        int piF = m_NextStopIndex - 1;
+        while (piF > 0) {
+            vector pvF = m_Config.Waypoints[piF].GetVector();
+            float ddxF = stopExactPos[0] - pvF[0];
+            float ddzF = stopExactPos[2] - pvF[2];
+            if (ddxF * ddxF + ddzF * ddzF > 1.0) break;
+            piF = piF - 1;
+        }
+        if (piF >= 0 && piF < m_NextStopIndex) {
+            vector pwF = m_Config.Waypoints[piF].GetVector();
+            float fxF = stopExactPos[0] - pwF[0];
+            float fzF = stopExactPos[2] - pwF[2];
+            float fnF = Math.Sqrt(fxF * fxF + fzF * fzF);
+            if (fnF > 0.01) {
+                fxF = fxF / fnF;
+                fzF = fzF / fnF;
+                signedF = dxF * fxF + dzF * fzF;
+            }
+        }
+        float kmhF = car.GetSpeedometerAbsolute();
+        // LATCH per-frame: si llego/cruzo el punto, clavar YA (no esperar hasta 500ms -> no rueda otro tramo)
+        if (signedF <= m_Config.EndpointGlideStopM) {
+            if (!m_EndpointLatched) BZBusLog.Info("[FrameLatch] endpoint CLAVADO per-frame a signed=" + signedF + "m (gap=" + gapF + " kmh=" + kmhF + ")");
+            m_EndpointLatched = true;
+            SetCachedInput(0, 0, 1.0);
+            car.SetHandbrake(1.0);
+            return;
+        }
+        // FRENO PREDICTIVO (misma fisica y misma decel medida que EndpointGlideControl ~10805-10821):
+        float aStopF = m_Config.EndpointPredictBrakeAccel;
+        if (aStopF <= 0) aStopF = 2.5;
+        if (m_Config.EndpointBrakeDecel > 0) aStopF = m_Config.EndpointBrakeDecel;
+        float vMsF = kmhF / 3.6;
+        float stopDistF = (vMsF * vMsF) / (2.0 * aStopF);
+        if (kmhF > 1.5 && stopDistF >= signedF) {
+            // clavar el freno SIN tocar el steering (heading-align lo puso el Tick)
+            m_CachedThrottle = 0;
+            m_CachedBrake    = 1.0;
+        }
+    }
+
 
     // OJO LONGITUDINAL: la velocidad que Boris puede tener AHORA y aun frenar comodo a lo que viene.
     // Escanea desde nearIdx una ventana = SU distancia de frenado (v^2/2a x margen, escala con la velocidad).
@@ -10850,6 +11659,9 @@ class BZBusService {
     private int m_LegAlignTicks;   // ticks esperando alinearse en el intercambio (valvula anti-cuelgue)
     private bool m_CuspSettled;      // Boris ya se asento (paro) en el cusp de reversa -> no re-frenar (anti-pasitos)
     private bool m_ForceLegAdvance;  // pedido de cerrar la pierna YA desde la supresion del cusp (lo consume UpdateLegBounds)
+    private bool m_ManeuverCreepHold; // ManeuverControl esta reptando a la pose (solo cerca) -> UpdateLegBounds NO cierra por min-aprox (deja que EL clave preciso). Se resetea cada tick en ManeuverControl -> nunca queda pegado (no traba el arranque)
+    private int  m_ManeuverLaunchTicks; // ticks en DESPEGUE (para el hill-start: revolucionar contra el handbrake N ticks y despues soltar)
+    private bool m_ManeuverHillStart;   // ManeuverControl esta en hill-start (subida): el AR NO dispara (dale margen a Boris para el pico de torque). Se resetea cada tick
     private bool m_InFinalEpZone;    // Boris dentro de la zona de glide del endpoint FINAL -> DeadZoneInverse OFF (no re-inflar el creep a un lanzon)
     private float m_LegEndMinDist; // minima distancia alcanzada al endpoint del tramo (para cerrar en la mejor aproximacion)
     private int m_LegStuckTicks;   // ticks casi-parado cerca del endpoint sin mejorar (anti-cuelgue INCONDICIONAL)
@@ -10877,9 +11689,13 @@ class BZBusService {
         // FORCE-ADVANCE DEL CUSP (2026-08-05, Sonom4n): la supresion asento a Boris parado dentro del radio de
         // captura del endpoint de reversa -> cerrar la pierna YA, sin esperar al creep/alineacion (que trababan
         // el cierre y hacian que mi brake tartamudeara en pasitos). Recien cerrada, la rampa lanza forward a 0.95.
-        if (m_ForceLegAdvance && ActiveLegIsReverse() && m_LegEnd < cntLg - 1) {
+        // FORCE-ADVANCE (2026-08-05 cusp reversa; 2026-08-16 EXTENDIDO a FORWARD para ManeuverControl): cuando el
+        // sub-controlador CLAVA el intercambio (signed<=StopTol) pide cerrar la pierna YA -> el clave PRECISO lo
+        // hace EL, no el min-aprox viejo. Antes esto solo valia para reversa (ActiveLegIsReverse) -> los forward
+        // (wp52, wp190) cerraban por min-aprox = precision ALEATORIA (0.5m o 2.3m segun que tan cerca pasaba Boris).
+        if (m_ForceLegAdvance && m_LegEnd < cntLg - 1) {
             m_ForceLegAdvance = false;
-            BZBusLog.Info("[TRAMO] cusp asentado -> force-advance de la pierna (wp " + m_LegEnd + ")");
+            BZBusLog.Info("[TRAMO] force-advance (ManeuverControl clavo) -> cierro la pierna (wp " + m_LegEnd + ")");
             SetLegFrom(m_LegEnd + 1);
             return;
         }
@@ -10914,12 +11730,17 @@ class BZBusService {
             float captR = m_Config.LegDoneTolM + m_Config.LegDoneCaptureExtraM;
             bool minAprox = (m_LegEndMinDist < captR && dEndLg > m_LegEndMinDist + 0.15);
             bool llegoLg = ((dEndLg < m_Config.LegDoneTolM || minAprox) && vLg < m_Config.LegDoneKmh);
+            // CUSP FORWARD->REVERSE (2026-08-17): pierna FORWARD que termina en un legBreak (el endpoint final
+            // queda afuera por m_LegEnd < cntLg-1). Ver el bloque de mas abajo para el por que del fix.
+            bool fwdCuspLg = (m_LegEnd < cntLg - 1 && !ActiveLegIsReverse() && m_Config.Waypoints[m_LegEnd].legBreak);
             // ANTI-CUELGUE INCONDICIONAL: si esta casi parado y cerca del endpoint sin mejorar por N ticks,
             // abrir igual pase lo que pase (garantiza que ningun intercambio trabe la ruta para siempre).
             if (vLg < m_Config.LegDoneKmh && m_LegEndMinDist < captR + 1.5) m_LegStuckTicks++;
             else m_LegStuckTicks = 0;
             // El creep (reversa o forward) esta llevando el ORIGEN al punto y AVANZA -> no es cuelgue: resetea.
-            if ((m_RevCreepShort || m_EpGlideShort) && improvedRc) m_LegStuckTicks = 0;
+            // fwdCuspLg incluido: su creep (el iman del endpoint) NO setea m_EpGlideShort, asi que sin esto el
+            // anti-cuelgue dispararia ANTES de que termine de reptar y abriria corto igual, anulando el fix.
+            if ((m_RevCreepShort || m_EpGlideShort || fwdCuspLg) && improvedRc) m_LegStuckTicks = 0;
             if (m_LegStuckTicks >= m_Config.LegDoneStuckMaxTicks) {
                 BZBusLog.Warn("[TRAMO] wp " + m_LegEnd + ": CLAVADO a " + dEndLg + "m (min " + m_LegEndMinDist + "m) tras " + m_LegStuckTicks + " ticks -> abro igual (anti-cuelgue)");
                 SetLegFrom(m_LegEnd + 1);
@@ -10929,7 +11750,17 @@ class BZBusService {
             // el ORIGEN llegue a <CheckpointCloseTolM (objetivo <0.5m, Sonom4n) como el endpoint, en vez de cerrar
             // a 1.4-2.5m. Vale para reversa (m_RevCreepShort) y forward (m_EpGlideShort). El anti-cuelgue de
             // arriba queda como red por si el creep no puede (no avanza N ticks).
-            if (m_RevCreepShort || m_EpGlideShort || m_SnapActive) return;   // m_SnapActive: el snap cinematico esta clavando la pose exacta -> el siguiente tramo arranca recien cuando termina
+            if (m_RevCreepShort || m_EpGlideShort || m_SnapActive || m_ManeuverCreepHold) return;   // m_SnapActive: el snap cinematico esta clavando la pose exacta. m_ManeuverCreepHold: ManeuverControl repta a la pose (solo cerca) -> que clave EL preciso, no el min-aprox corto
+            // CUSP FORWARD->REVERSE (2026-08-17): el forward que termina en un legBreak cerraba por min-aprox a
+            // ~1.9m porque UpdateLegBounds corre ANTES de que m_AtStop/el iman enganchen en el mismo tick, y
+            // m_EpGlideShort (que lo bloquearia, ver comentario arriba) solo se setea en DriveTowards, que queda
+            // BYPASSEADO cuando m_AtStop engancha -> la pierna avanzaba a la reversa SIN reptar (medido 0.7-2.2m
+            // en 5/6 vehiculos RUSForma; el tractor -lento- clavaba 0.41m; el ENDPOINT en cambio repta+clava
+            // <0.1m). Fix: NO cerrar el cusp forward hasta que Boris repte a <CheckpointCloseTolM (el iman del
+            // endpoint YA corre para el cusp, es forward-only no endpoint-only) -> clava como los rev->fwd. El
+            // endpoint final queda afuera (m_LegEnd < cntLg-1). El anti-cuelgue de arriba (m_LegStuckTicks) es la
+            // red si el creep no puede llegar.
+            if (fwdCuspLg && dEndLg >= m_Config.CheckpointCloseTolM) return;
             if (llegoLg && !alineadoLg) {
                 // llego pero torcido: le damos ticks para acomodarse antes de abrir igual (valvula
                 // anti-cuelgue; sin esto una pose inalcanzable dejaria la ruta trabada para siempre)
@@ -11293,6 +12124,15 @@ class BZBusService {
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).Remove(this.ExecuteActionDeferred);
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).Remove(this.DismountQuestCrew);
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).Remove(this.AmbushWaitStop);
+
+        // PACIFICAR EL CONTROL ANTES DE BORRAR (2026-08-17, fix del RUNNER FANTASMA): el Delete() de DayZ es
+        // DIFERIDO (fin de frame). En RespawnBus, CleanupEntities()+SpawnBus() corren en el MISMO frame -> durante
+        // la ventana de borrado, el bus VIEJO + Boris VIEJO siguen VIVOS, y como Boris (eAI) maneja SOLO siguiendo
+        // el waypoint de m_Group (el super.OnInput nativo), sigue MANEJANDO el bus viejo mientras el nuevo ya existe
+        // -> dos chasis solapados peleando fisica = free-rev / flota / ruedas al reves en el arranque (el fantasma
+        // que Sonom4n cazo). Le sacamos el waypoint del grupo para que Boris NO tenga hacia donde manejar durante el
+        // borrado diferido -> el bus viejo queda quieto hasta que el Delete lo saca del mundo. Cierra la ventana.
+        if (m_Group) m_Group.ClearWaypoints();
 
         if (m_Driver) { m_Driver.Delete(); m_Driver = null; }
         if (m_Guards) {
@@ -11847,6 +12687,7 @@ class BZBusService {
         foreach (Man man : players) {
             PlayerBase player = PlayerBase.Cast(man);
             if (!player || !player.GetIdentity()) continue;
+            if (!IsControlPanelAdmin(player.GetIdentity().GetPlainId())) continue;   // 2026-08-18: solo al admin
 
             float  dist = vector.Distance(busPos, player.GetPosition());
             string msg  = FormatDistance(dist, stopName);
@@ -11878,6 +12719,7 @@ class BZBusService {
             if (!bzp) continue;
             PlayerIdentity bzpid = bzp.GetIdentity();
             if (!bzpid) continue;
+            if (!IsControlPanelAdmin(bzpid.GetPlainId())) continue;   // 2026-08-18: notificaciones SOLO al admin (la data ya esta en la UI admin; no spamear jugadores)
             ScriptRPC bzrpc = new ScriptRPC();
             bzrpc.Write(msg);
             bzrpc.Send(bzp, BZBusRPC.RECEIVE_TOAST, true, bzpid);
