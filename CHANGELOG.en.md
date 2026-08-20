@@ -6,6 +6,14 @@ Newest on top. The **driving** (*config-as-manual* model) stays stable across ve
 
 ---
 
+## v1.1.1
+
+**Robust launch in reverse maneuvers.** Point patch on v1.1 — same driving model, no on-route behavior change.
+
+- **Fixed: the engine could rev without moving when starting a reverse maneuver.** On routes with reverse maneuvers (swaps, repositioning), a vehicle could get stuck revving in place after finishing a run and respawning for the next one. The fine-maneuver control floored the throttle on the standstill launch and, on a cold respawn, the drivetrain could decouple —the wheel spun but the vehicle didn't move—. Now the reverse standstill launch is handled by the proven, stable startup, and the fine-maneuver control takes back over —with its extra precision— as soon as the vehicle moves. Clean launches, same tight stops.
+
+---
+
 ## v1.1
 
 **Tighter precision + robust startup + player-panel improvements.** Same driving model (*config-as-manual*), tuned: **finer stops** (checkpoints and endpoints), **clean launches**, and a fuller live dashboard.

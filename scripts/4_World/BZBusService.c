@@ -5496,7 +5496,8 @@ class BZBusService {
 
         vector busPosMc = bus.GetPosition();
         float kmhMc = bus.GetSpeedometerAbsolute();
-        if (kmhMc >= m_Config.ManeuverLaunchKmh) m_ManeuverLaunchTicks = 0;   // ya rueda -> no esta en DESPEGUE -> resetea el contador del hill-start
+        float chassisKmhMc = GetVelocity(bus).Length() * 3.6;   // Camino V1 (2026-08-19): velocidad REAL del CHASIS. kmhMc es velocimetro (RUEDA) y engaña con el wheelspin del spawn frio (rueda gira, chasis no avanza).
+        if (chassisKmhMc >= m_Config.ManeuverLaunchKmh) m_ManeuverLaunchTicks = 0;   // ya rueda EL CHASIS -> fuera del despegue. Antes usaba la RUEDA -> el wheelspin reseteaba la rampa (re-ciclo -> floor -> mas wheelspin).
         bool revMc = ActiveLegIsReverse();
         vector legEndMc = m_Config.Waypoints[m_LegEnd].GetVector();
 
@@ -5628,6 +5629,17 @@ class BZBusService {
             }
         }
 
+        // DELEGAR EL DESPEGUE DE REVERSA AL CAMINO NO-MC (2026-08-19, fix de la auditoria): el despegue de
+        // ManeuverControl DESACOPLA el drivetrain en cold spawn (MEDIDO: gear/currentGear=0 reversa, rpm alto, pero
+        // av=0, ruedas NO giran pese al throttle -> el motor gira sin transmitir). El camino NO-MC (REVERSE_* / logica
+        // de v1.0) SI engancha (PROBADO: ManeuverControllerEnabled=false -> arrancan TODAS, incluida la 2a de Kamenka).
+        // Solucion: MC NO maneja el despegue de reversa DESDE PARADO -> retorna false -> DriveTowards larga con la
+        // logica no-MC que engancha el drivetrain; cuando el CHASIS ya rueda (chassisKmh>=LaunchKmh), MC retoma para la
+        // PRECISION del approach/clavado. Lo mejor de los dos: larga como v1.0, clava como v1.1.
+        if (revMc && chassisKmhMc < m_Config.ManeuverLaunchKmh && signedMc > m_Config.ManeuverStopTolM + m_Config.ManeuverLaunchMinGapM) {
+            return false;
+        }
+
         // DECEL AUTOADAPTATIVO del vehiculo+piso (generaliza; el mismo que el endpoint)
         float decMc = 4.0;
         if (m_InverseModel) {
@@ -5691,10 +5703,11 @@ class BZBusService {
             brkMc = 1.0;
             hbMc = 1.0;
             m_ForceLegAdvance = true;
-        } else if (kmhMc < m_Config.ManeuverLaunchKmh && signedMc > stopTolMc + m_Config.ManeuverLaunchMinGapM) {
-            // DESPEGUE: parado REAL (kmh<ManeuverLaunchKmh 0.5) y LEJOS de la pose -> romper la inercia firme.
-            // Antes gateaba con kmh<1.0: en maniobras lentas cualquier bajon a <1 disparaba thr=1 de golpe = tiron.
-            // Ahora solo desde parado real; los bajones a 0.5-1 los maneja el chase-vTgt (proporcional, suave).
+        } else if (chassisKmhMc < m_Config.ManeuverLaunchKmh && signedMc > stopTolMc + m_Config.ManeuverLaunchMinGapM) {
+            // DESPEGUE: parado REAL (chassisKmh<ManeuverLaunchKmh 0.5) y LEJOS de la pose -> romper la inercia firme.
+            // Camino V1 (2026-08-19): el gate usa CHASIS, no RUEDA. Con wheelspin la rueda va rapido -> antes el gate
+            // fallaba -> caia al chase-vTgt que flooreaba -> MAS wheelspin. Con chasis, si el auto no avanza de verdad,
+            // sigue en DESPEGUE (con traction control) hasta que el chasis agarra.
             thrMc = m_Config.ManeuverLaunchThrottle;
             // RAMPA DE DESPEGUE (2026-08-17): clavar throttle=1.0 desde el tick 0 revoluciona el motor a REDLINE
             // mientras el EMBRAGUE del respawn todavia se inicializa -> free-rev (motor a fondo, ruedas SIN girar =
@@ -5704,8 +5717,32 @@ class BZBusService {
             // para que el embrague enganche antes de subir a pleno. General, arregla el free-rev DE RAIZ (el config
             // ya tenia el TODO "ramp closed-loop"). El detector de re-enganche queda como red. En SUBIDA el
             // hill-start de abajo sigue mandando (revoluciona contra el handbrake hasta rpmClutch).
-            float launchRampMc = 0.35 + m_ManeuverLaunchTicks * 0.2;   // tick0=0.35 -> pleno en ~4 ticks (~2s)
-            if (thrMc > launchRampMc) thrMc = launchRampMc;
+            // DESPEGUE CLOSED-LOOP (2026-08-19, fix de la auditoria de ManeuverControl): la fase flooreaba
+            // thr=ManeuverLaunchThrottle (open-loop) para romper inercia -> en el embrague/fisica FRIO del respawn el
+            // motor revoluciona / las ruedas patinan SIN mover el chasis = free-rev/wheelspin (el bug que metio v1.1;
+            // v1.0 usaba el InverseModel closed-loop y NO flooreaba). Ahora: rampa FIRME pero CERRADA por la respuesta
+            // REAL del chasis. Si revoluciona sin mover el chasis (rpm alto + chasis quieto = patina O embrague
+            // desacoplado), corta el throttle -> el rpm cae / las ruedas agarran -> el chasis arranca. Cubre las DOS
+            // fallas del cold spawn. El resto de MC (volante, cross-track, LAND/CLAVADO, vTgt) queda INTACTO = precision.
+            float launchRampMc = 0.40 + m_ManeuverLaunchTicks * 0.10;   // firme (0.40) pero sube GRADUAL, no floor de golpe
+            if (launchRampMc > m_Config.ManeuverLaunchThrottle) launchRampMc = m_Config.ManeuverLaunchThrottle;
+            thrMc = launchRampMc;
+            float rpmLaunchMc = bus.EngineGetRPM();
+            float idleLaunchMc = bus.EngineGetRPMIdle();
+            if (idleLaunchMc < 100) idleLaunchMc = 800;
+            if (chassisKmhMc < 1.0 && rpmLaunchMc > idleLaunchMc * 2.0) {
+                // revoluciona SIN mover el chasis = drivetrain DESACOPLADO del cold spawn (motor gira, ruedas no).
+                // Cortar throttle solo no lo reconecta. Disparar el CICLO DE RE-ENGANCHE (neutral->reversa al ralenti,
+                // direccional por fix2) que SI reconecta el drivetrain (visto: av spikes al ciclar). Despues la rampa
+                // suave de arriba sostiene. Bypassa el gate de throttle>0.5 del detector 10550 (que mi cutoff impedia).
+                if (!m_ReengageActive && (m_LastReengageTime == 0 || GetGame().GetTickTime() - m_LastReengageTime > 3.0)) {
+                    m_ReengageActive = true;
+                    m_ReengageStart  = GetGame().GetTickTime();
+                    m_LastReengageTime = GetGame().GetTickTime();
+                }
+                thrMc = 0.18;                     // suave mientras re-engancha
+                m_ManeuverLaunchTicks = 0;        // no subir la rampa hasta que agarre
+            }
             brkMc = 0;
             m_ManeuverLaunchTicks++;
             // HILL-START en SUBIDA (2026-08-17, Sonom4n: "el instante que suelto freno al acelerador lo hace retroceder;
@@ -10522,7 +10559,15 @@ class BZBusService {
             if (elapsedRe < 1.2) {
                 SetDesiredGear(neutralRe); bus.ShiftTo(neutralRe);   // NEUTRAL: desacoplar y dejar caer el rpm
             } else if (elapsedRe < 2.0) {
-                SetDesiredGear(2); bus.ShiftTo(2);                    // PRIMERA al ralenti -> el embrague muerde suave
+                // FIX DIRECCIONAL 2026-08-19: el re-enganche hardcodeaba PRIMERA(2) = ADELANTE. En una maniobra de
+                // REVERSA metia primera mientras ManeuverControl re-metia reversa(0) -> thrash 0<->1<->2 -> nunca
+                // enganchaba el despegue de reversa (free-rev eterno, "andan la primera despues se quedan"). Ahora
+                // engancha en la DIRECCION de la maniobra: reversa(0) si m_Reverse, primera(2) si forward.
+                // 2026-08-19 fix2: m_Reverse era FLAG MUERTO (nunca se asigna) -> siempre forward. La señal real
+                // es ActiveLegIsReverse() (la que usa ManeuverControl en 5500). El debugger confirmo: en gear 0
+                // (reversa) las ruedas SI giran (av=-19.2) -> reversa es la marcha correcta, el re-enganche la abandonaba.
+                if (ActiveLegIsReverse()) { SetDesiredGear(0); bus.ShiftTo(0); }   // REVERSA al ralenti -> embrague muerde en reversa
+                else                      { SetDesiredGear(2); bus.ShiftTo(2); }   // PRIMERA al ralenti -> forward
             } else {
                 m_ReengageActive = false;                             // listo -> el control normal retoma (ya con torque)
                 BZBusLog.Info("[DRIVETRAIN] re-enganche completado (neutral->primera al ralenti) -> control normal");

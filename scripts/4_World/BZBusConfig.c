@@ -629,7 +629,7 @@ class BZBusRouteConfig {
     // Secuencia predictiva por fuera del cruise/endpoint: marcha fija (mata flip-flop) + volante = tu front-wheel
     // grabado (traza tu arco) + freno predictivo autoadaptativo -> clava <0.5m sobre tu pose. Reproduce tu movimiento
     // con fisicas y generaliza (decel/gain por-vehiculo). Ver ManeuverControl en BZBusService.c.
-    bool  ManeuverControllerEnabled = true;
+    bool  ManeuverControllerEnabled = true;  // 2026-08-19: re-habilitado con el despegue CLOSED-LOOP arreglado (la fase DESPEGUE flooreaba open-loop = free-rev del cold spawn; ahora rampa cerrada por respuesta del chasis, como v1.0). Confirmado: apagarlo elimina el free-rev; el resto de MC da la precision del intercambio.
     float ManeuverStopTolM       = 0.4;   // clava a esta distancia de la pose del intercambio (objetivo <0.5m)
     float ManeuverStopKmh        = 1.0;   // <= esto + dentro de StopTol -> CLAVADO (latch + cierra pierna)
     float ManeuverLaunchThrottle = 1.0;   // despegue firme desde parado (bus). TODO: ramp closed-loop para agnostico sedan

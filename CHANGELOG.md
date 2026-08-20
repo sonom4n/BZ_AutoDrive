@@ -6,6 +6,14 @@ Lo más nuevo arriba. La **conducción** (modelo *config-como-manual*) se mantie
 
 ---
 
+## v1.1.1
+
+**Arranque robusto en maniobras de reversa.** Parche puntual sobre v1.1 — mismo modelo de conducción, sin cambios de comportamiento en ruta.
+
+- **Corregido: el motor podía revolucionar sin avanzar al iniciar una maniobra de reversa.** En rutas con maniobras de reversa (intercambios, reacomodos), un vehículo podía quedarse trabado acelerando en el lugar después de completar un viaje y reaparecer para el siguiente. El control fino de maniobras aceleraba a fondo en el despegue desde parado y, en el reaparecido en frío, el tren motriz podía desacoplarse —la rueda giraba pero el vehículo no avanzaba—. Ahora el despegue desde parado en reversa lo maneja el arranque probado y estable, y el control fino retoma —con su precisión extra— en cuanto el vehículo se mueve. Largan parejo y clavan igual de preciso.
+
+---
+
 ## v1.1
 
 **Más precisión + arranque robusto + mejoras del reproductor.** Mismo modelo de conducción (*config-como-manual*), afinado: **paradas más finas** (checkpoints y endpoints), **largadas limpias**, y un tablero en vivo más completo.
