@@ -52,6 +52,3 @@ docs/RESEARCH_*.json
 # Paper: no se publica (queda local)
 PAPER_BZ_AutoDrive.md
 PAPER_BZ_AutoDrive.en.md
-
-# Docs de diseño internos (mapas de codigo/refactor): utiles para nosotros, no para el publico
-DESIGN_*.md
