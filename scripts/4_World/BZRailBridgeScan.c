@@ -1,6 +1,6 @@
 // ============================================================================
 //  BZRailBridgeScan - SCAN de VIAS DE TREN + PUENTES + AGUA de TODO el mapa.
-//  (Sonom4n, 2026-07-14) El editor de trayectorias ya tiene la red vial EXACTA
+//  (un jugador, 2026-07-14) El editor de trayectorias ya tiene la red vial EXACTA
 //  (BZRoadScan). Faltan: rail (rail_track/rail_polet), puentes (bridge/most) y
 //  agua (rios/mar) para cerrar los puentes de rio y completar el fondo.
 //  Mismo mecanismo probado que BZRoadScan/BZObjectScanAll: barrido en grilla,
@@ -33,7 +33,7 @@ class BZRailBridgeScan {
         inst.m_curX = 0; inst.m_curZ = 0; inst.m_hits = 0; inst.m_water = 0; inst.m_probes = 0;
         inst.m_objs = new array<Object>;
         inst.m_prox = new array<CargoBase>;
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         inst.m_fo = OpenFile(dir + "railbridge_map.csv", FileMode.WRITE);
         inst.m_fw = OpenFile(dir + "water_map.csv", FileMode.WRITE);
         if (!inst.m_fo || !inst.m_fw) { BZBusLog.Err("[RAILBR] no pude crear los CSV"); return; }

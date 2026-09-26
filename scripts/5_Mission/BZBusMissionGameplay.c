@@ -102,7 +102,6 @@ modded class MissionGameplay {
             if (BZIn("UABZMarkMax"))     BZPathLogService.GetInstance().MarkMaxSustained();
             if (BZIn("UABZSysIDStep"))   BZBusClientManager.RequestSysIDStep();
             if (BZIn("UABZSysIDCurve"))  BZBusClientManager.RequestSysIDCurve();
-            if (BZIn("UABZDriveTest"))   BZBusClientManager.RequestRespawnTest();   // v1.1 paso 3: rutea+maneja (NUMPAD 0)
             if (BZIn("UABZSlot1"))       BZBusClientManager.RequestRespawnSlot(1);
             if (BZIn("UABZSlot2"))       BZBusClientManager.RequestRespawnSlot(2);
             if (BZIn("UABZSlot3"))       BZBusClientManager.RequestRespawnSlot(3);
@@ -152,7 +151,7 @@ modded class MissionGameplay {
         // El panel (Reproductor) ahora se abre por el INPUT SYSTEM en OnUpdate
         // (UABZAutoDrivePanel, rebindeable). El viejo BZControlPanelUI quedo desconectado.
 
-        // 2026-08-01 (Sonom4n): REMOVIDO el layer de parada. Antes F cerca de una parada abria BZBusUI
+        // 2026-08-01 (un jugador): REMOVIDO el layer de parada. Antes F cerca de una parada abria BZBusUI
         // (bus_stop.layout) via RequestStatus. Era del transport viejo, ya no se usa -> F queda libre.
 
         // === Los keybinds (NUMPAD) se manejan ahora por el INPUT SYSTEM en OnUpdate ===

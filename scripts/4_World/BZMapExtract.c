@@ -1,5 +1,5 @@
 // ============================================================================
-//  BZMapExtract - EXTRACTOR COMPLETO DE MAPA, agnostico del mundo. (Sonom4n, 2026-07-15)
+//  BZMapExtract - EXTRACTOR COMPLETO DE MAPA, agnostico del mundo. (un jugador, 2026-07-15)
 //  Reemplaza a BZRoadScan(v3)+BZObjectScanAll+BZRailBridgeScan+BZWaterFineScan:
 //    * DIMENSIONES AUTOMATICAS: GetWorld().GetWorldSize() + GetWorldName() -> nada hardcodeado.
 //      (los scanners viejos tenian 15360 clavado = solo Chernarus)
@@ -64,7 +64,7 @@ class BZMapExtract {
         inst.m_objs = new array<Object>;
         inst.m_prox = new array<CargoBase>;
 
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         string pre = dir + inst.m_world + "_";
         FileHandle fm = OpenFile(pre + "meta.csv", FileMode.WRITE);
         if (fm) { FPrint(fm, "world,size\n"); FPrint(fm, inst.m_world + "," + inst.m_size + "\n"); CloseFile(fm); }

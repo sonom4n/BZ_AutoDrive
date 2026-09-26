@@ -56,7 +56,11 @@ modded class CarScript {
     //    chequea bateria/energia y en el cliente observador puede no estar synced
     //    (devolveria false y bloquearia el encendido).
     // ========================================================================
+    bool m_BZLuzDiagDado;      // el diagnostico de luces del cliente, una vez por vehiculo
+    bool m_BZLuzClientCorrio;  // nuestro override de UpdateLightsClient corrio en este cliente
     bool m_BZLightsWanted;  // NetSync: estado de luz que el server QUIERE en clientes
+    bool m_BZPartsLocked;   // NetSync: VEHICULO INVIOLABLE, lo fija el runner (BZBusService) sobre el auto que maneja.
+                            // Default false = vanilla en cualquier auto sin runner (esta clase moddeada toca a TODOS).
     int  m_BZLightPulse;    // NetSync: contador "pulso". SetSynchDirty() SOLO re-dispara
                             // OnVariablesSynchronized() en el observador si CAMBIA el VALOR
                             // de una NetSyncVar (dirty pelado sin cambio = no-op). El heartbeat
@@ -69,6 +73,28 @@ modded class CarScript {
         // garantizado porque esta clase modded se compila igual en ambos lados.
         RegisterNetSyncVariableBool("m_BZLightsWanted");
         RegisterNetSyncVariableInt("m_BZLightPulse");
+        RegisterNetSyncVariableBool("m_BZPartsLocked");
+    }
+
+    // VEHICULO INVIOLABLE. Con el auto parado, el motor deja soltar ruedas, puertas, bateria y demas (CarScript.
+    // CanReleaseAttachment solo lo impide con motor en marcha Y en movimiento); un vehiculo del framework con dos
+    // ruedas menos queda detenido para siempre, y "quitar rueda" competia con "subir" en la puerta del conductor.
+    // El valor viaja por NetSync porque las acciones vanilla (ActionDetach, ActionDetachFromTarget, ActionTakeItem)
+    // preguntan esto en el CLIENTE para mostrarse: sincronizado, el cartel ni aparece; el server rechaza igual.
+    // No cubre la carga (el botin sigue accesible), ni subir/bajar, ni PONER piezas (CanReceiveAttachment).
+    // OJO: un mod de vehiculos que sobreescriba CanReleaseAttachment sin llamar a super se saltea el bloqueo.
+    void BZSetPartsLocked(bool locked) {
+        if (!GetGame().IsServer()) return;
+        if (m_BZPartsLocked == locked) return;
+        m_BZPartsLocked = locked;
+        SetSynchDirty();
+    }
+
+    bool BZPartsLocked() { return m_BZPartsLocked; }
+
+    override bool CanReleaseAttachment(EntityAI attachment) {
+        if (m_BZPartsLocked) return false;
+        return super.CanReleaseAttachment(attachment);
     }
 
     // Heartbeat: llamado server-side periodicamente por BZBusService cuando las
@@ -107,6 +133,16 @@ modded class CarScript {
         // (abajo) cree/mantenga el haz segun m_BZLightsWanted. Ya NO tocamos LightOn()/
         // LightIsOn() aca: el control real del faro pasa por el override.
         UpdateLights();
+        // una linea por vehiculo en el RPT del CLIENTE la primera vez que el server pide luz:
+        // dice si NUESTRO UpdateLightsClient corrio (Expansion lo saltea si el vehiculo no es "car") y si el haz existe.
+        if (m_BZLightsWanted && !m_BZLuzDiagDado)
+        {
+            m_BZLuzDiagDado = true;
+            bool hazBZ = (m_Headlight != null);
+            string dgLuz = "[BZLuces] " + GetType() + " · el server pide luz · UpdateLightsClient (override BZ) corrio: " + m_BZLuzClientCorrio.ToString();
+            dgLuz = dgLuz + " · LightIsOn " + LightIsOn().ToString() + " · m_Headlight existe: " + hazBZ.ToString() + " · lamparas " + m_HeadlightsState.ToString();
+            Print(dgLuz);
+        }
     }
 
     // ========================================================================
@@ -135,6 +171,7 @@ modded class CarScript {
     //  version de DayZ. Si Bohemia cambia UpdateLightsClient, re-sincronizar esta copia.
     // ========================================================================
     override void UpdateLightsClient(int newGear = -1) {
+        m_BZLuzClientCorrio = true;
         int gear;
         if (newGear == -1) {
             gear = GetGear();
@@ -240,6 +277,34 @@ modded class CarScript {
         if (srv && source && CarScript.Cast(source)) srv.NotifyHitByVehicle();
     }
 
+    // QUIEN FUE. El detector de choque del cerebro sabe que la desaceleracion es imposible para un
+    // neumatico, pero no contra que pego: la corrida de PATRULLA se explico recien cuando el usuario fue a mirar
+    // y encontro un Landrover estacionado en la calzada. El motor ya tiene el dato y lo pasa por aca.
+    // Barato a proposito: esto se llama MUCHAS veces por frame (lo avisa el propio CarScript vanilla), asi que
+    // guarda el contacto de mayor impulso de la ventana y resuelve el nombre de clase SOLO cuando cambia el objeto
+    // (rodar sobre el terreno da `other` nulo siempre: mismo objeto, cero resoluciones).
+    Object m_BzContactoObj;
+    string m_BzContactoClase;
+    float  m_BzContactoImp;
+    float  m_BzContactoT = -1;
+    private const float BZ_CONTACTO_VENTANA_S = 0.5;
+
+    override void OnContact(string zoneName, vector localPos, IEntity other, Contact data) {
+        super.OnContact(zoneName, localPos, other, data);
+        if (!GetGame().IsServer()) return;
+        float ahoraC = GetGame().GetTickTime();
+        float impC = data.Impulse;
+        if (impC < 0) impC = -impC;
+        if (m_BzContactoT >= 0 && ahoraC - m_BzContactoT <= BZ_CONTACTO_VENTANA_S && impC <= m_BzContactoImp) return;
+        m_BzContactoT = ahoraC;
+        m_BzContactoImp = impC;
+        Object objC = Object.Cast(other);
+        if (objC == m_BzContactoObj) return;
+        m_BzContactoObj = objC;
+        m_BzContactoClase = "";
+        if (objC) m_BzContactoClase = objC.GetType();
+    }
+
     override void OnInput(float dt) {
         super.OnInput(dt);
 
@@ -265,6 +330,10 @@ modded class CarScript {
                 return;
             }
         }
+
+        // ===== CEREBRO 1.2 (F2): cuando el controller maneja, TODO el actuador por-frame
+        // es UNA llamada (Sample+apply). Reemplaza a las tres de abajo (SEAM Cara 3).
+        if (srv.SampleDrive12(this, dt)) return;
 
         // Freno predictivo del endpoint PER-FRAME (2026-08-17): en los ultimos 5m antes de un stop, recomputa
         // el freno cada frame (~35Hz) en vez de cada 500ms -> Boris para EN el punto en vez de cruzarlo con
@@ -317,6 +386,7 @@ modded class CarScript {
         // solo con follow_recording. El gear de parking/reverse lo setea el service
         // directo (SetDesiredGear en los paths directReplay), no la AT.
         if (cfg && (cfg.GearStrategy == "follow_recording" || cfg.UseInverseModel || cfg.FrameReplay)) return;
+        if (srv.EstaManejando12()) return;   // 12-mode: el gear lo comanda el applier via Sample(), la AT no opina
 
         if (!EngineIsOn() || m_BZBus_isShifting) return;
 

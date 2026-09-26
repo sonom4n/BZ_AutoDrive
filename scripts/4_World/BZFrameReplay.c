@@ -129,7 +129,7 @@ class BZFrameReplay {
         m_Cursor = 0;
         m_LastAccumCursor = -1;
 
-        string path = "$profile:BZ_AutoDrive_PathLogger\\" + file;
+        string path = BZCarpetas.PathLogger() + file;
         m_Path = path;
         if (!FileExist(path)) {
             BZBusLog.Err("[FrameReplay] no existe: " + path);

@@ -9,17 +9,37 @@
 #
 #  Uso:
 #    .\route_wizard.ps1
-#    .\route_wizard.ps1 -RoutesDir "C:\DayZServer\profiles\BZ_AutoDrive\"
+#    .\route_wizard.ps1 -RoutesDir "G:\MiServer\profiles\BZ_AutoDrive\"
 # ============================================================================
 
 param(
-    [string]$RoutesDir = "C:\DayZServer\profiles\BZ_AutoDrive\",
-    [string]$ServerBMirror = "",   # PUBLISH: vacio por default -> un admin nuevo NO hereda el mirror (no ve "server B"). Sonom4n lo tiene persistido en su wizard_config; se setea desde [6] si hay un 2do server.
+    [string]$RoutesDir = "",   # vacio: la primera corrida lo pide en la pantalla de paths (una sola) y queda en wizard_config.json
+    [string]$ServerBMirror = "",   # PUBLISH: vacio por default -> un admin nuevo NO hereda el mirror (no ve "server B"). un jugador lo tiene persistido en su wizard_config; se setea desde [6] si hay un 2do server.
     [string]$Lang = ""   # "es" | "en". Vacio = preguntar al inicio.
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "i18n_strings.ps1")
+
+# ★ PYTHON EMBEBIDO: el wizard trae su interprete en tools\python\
+# (python-3.12-embed: sin instalador, sin PATH, sin pip; el toolchain es stdlib pura). Orden: el embebido, que viaja
+# con el mod -> el `python` del PATH (la PC del que desarrolla) -> si no hay ninguno, UN mensaje claro al ARRANCAR,
+# no un "The term python is not recognized" a mitad de la conversion.
+# --- PY RESOLVER BEGIN ---
+$script:PY = Join-Path $PSScriptRoot "python\python.exe"
+if (-not (Test-Path $script:PY)) {
+    $script:PY = $null
+    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($pyCmd) { $script:PY = $pyCmd.Source }
+}
+if (-not $script:PY) {
+    Write-Host ""
+    Write-Host "  Falta Python: no esta tools\python\python.exe (el embebido que viaja con el mod) ni python en el PATH." -ForegroundColor Red
+    Write-Host "  Python missing: neither tools\python\python.exe (bundled with the mod) nor python in PATH." -ForegroundColor Red
+    Write-Host "  -> reinstala el mod (tools\python\ viene adentro) o instala Python 3  /  reinstall the mod or install Python 3." -ForegroundColor Yellow
+    exit 1
+}
+# --- PY RESOLVER END ---
 
 # Seleccion de idioma (por param o interactiva al inicio)
 function Select-Language {
@@ -63,15 +83,19 @@ function Update-LogDirs {
     # GUARD: Split-Path de un valor que NO es un path (ej. RoutesDir mal tipeado sin separadores)
     # devuelve string vacio -> Join-Path con Path vacio TIRA. Chequear cada parent antes de usar.
     $dirs = @($script:ClientRecDir)
+    # de que carpeta viene cada grabacion (la etiqueta [A]/[B]/[Cl] del selector) se deriva de ESTAS carpetas configuradas,
+    # no de letras de unidad de ninguna PC en particular.
+    $script:LOG_DIR_SRV = ""
+    $script:LOG_DIR_B = ""
     if ($script:RoutesDir) {
         $rdParent = Split-Path $script:RoutesDir -Parent
-        if ($rdParent) { $dirs += (Join-Path $rdParent "BZ_AutoDrive_PathLogger") }
+        if ($rdParent) { $script:LOG_DIR_SRV = (Join-Path $rdParent "BZ_AutoDrive_PathLogger"); $dirs += $script:LOG_DIR_SRV }
     }
     if ($script:ServerBMirror) {
         $bRoutes = Split-Path $script:ServerBMirror -Parent          # ...\profiles\BZ_AutoDrive
         if ($bRoutes) {
             $bParent = Split-Path $bRoutes -Parent
-            if ($bParent) { $dirs += (Join-Path $bParent "BZ_AutoDrive_PathLogger") }
+            if ($bParent) { $script:LOG_DIR_B = (Join-Path $bParent "BZ_AutoDrive_PathLogger"); $dirs += $script:LOG_DIR_B }
         }
     }
     $script:LOG_DIRS = @($dirs | Where-Object { $_ } | Select-Object -Unique)
@@ -79,13 +103,13 @@ function Update-LogDirs {
 
 # Marca de estado de un path para mostrar al lado en la UI. required=true -> si falta es
 # ERROR (carpeta de rutas); required=false -> opcional (mirror B / cliente), solo aviso.
-# Test-Path de un drive de red caido (Y: con B apagado) devuelve false rapido, no cuelga.
+# Test-Path de un drive de red caido (una unidad de red apagada) devuelve false rapido, no cuelga.
 function Get-PathMark {
     param([string]$p, [bool]$required)
     if (-not $p) { return "" }
     if (Test-Path $p) { return "  [OK]" }
-    if ($required) { return "  [X NO EXISTE]" }
-    return "  [X no disponible]"
+    if ($required) { return "  " + (T "path.missing") }
+    return "  " + (T "path.offline")
 }
 
 # ============================================================================
@@ -279,7 +303,7 @@ function Select-Csv {
     foreach ($entry in $allCsvs) {
         $f = $entry.File
         $kb = [math]::Round($f.Length / 1KB, 0)
-        $src = if ($entry.Source -like "Y:*") { "B" } elseif ($entry.Source -like "C:\DayZServer*") { "A" } else { "Cl" }
+        $src = if ($script:LOG_DIR_B -and ($entry.Source -eq $script:LOG_DIR_B)) { "B" } elseif ($script:LOG_DIR_SRV -and ($entry.Source -eq $script:LOG_DIR_SRV)) { "A" } else { "Cl" }
         # Vehiculo desde el sidecar header_<stamp>.txt (frame_<stamp>.csv -> header_<stamp>.txt).
         # Identifica la toma por FECHA HORA + VEHICULO sin abrir el CSV grande. Si no hay header, blanco.
         $veh = ""
@@ -352,11 +376,46 @@ function Invoke-Convert {
     $k = Read-Choice (T "convert.confirm") @("S","Y","N")
     if ($k -ne "S" -and $k -ne "Y") { return }
 
+    # ENVELOPE DESDE LA TOMA, ANTES del conversor: frame_to_route.py copia envelope_<clase>.csv al hdr de la ruta
+    # y deriva el creep de esa ficha. Corriendo despues, la primera ruta de cada vehiculo salia sin ficha y las
+    # siguientes con una ficha sin la toma que se estaba convirtiendo. envelope_emit.py lee clase/wb del header
+    # apareado y funde el mapa sincero de la toma en la ficha de la clase. NO se espeja al server B: cada server
+    # aprende el suyo (no-sync A<->B).
+    $pyEnv = Join-Path $PSScriptRoot "envelope_emit.py"
+    if (Test-Path $pyEnv) {
+        $prevEAP2 = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $envOut = & $script:PY $pyEnv $framePath '--out' $script:RoutesDir 2>&1 | Out-String
+        $envCode = $LASTEXITCODE
+        $ErrorActionPreference = $prevEAP2
+        if ($envOut -and $envOut.Trim() -ne "") { Write-Host ("   " + $envOut.TrimEnd()) -ForegroundColor $C_INFO }
+        # ★ 981 (el usuario, 22/09): el envelope se LLENA con cada toma de la clase (fusion en silencio, y la
+        # consola dice que crecio) y SOLO pregunta cuando el Fingerprint estable del vehiculo cambio (Mass / marchas /
+        # angulo de direccion): envelope_emit.py sale con codigo 3 y deja las dos firmas impresas arriba. La pregunta
+        # es sobre ESTA toma, no generica.
+        if ($envCode -eq 3) {
+            Write-Host ""
+            Write-Host ("   " + $(if ($global:BZ_LANG -eq 'en') { "The vehicle changed since its envelope was measured (mod update?). Regenerate the envelope from THIS take?" } else { "El vehiculo cambio desde que se midio su envelope (actualizacion del mod?). Regenero el envelope desde ESTA toma?" })) -ForegroundColor $C_WARN
+            $kEnv = Read-Choice $(if ($global:BZ_LANG -eq 'en') { "[R] regenerate   [S] keep as is" } else { "[R] regenerar   [S] dejar como esta" }) @("R","S")
+            if ($kEnv -eq "R") {
+                $ErrorActionPreference = "Continue"
+                $envOut2 = & $script:PY $pyEnv $framePath '--out' $script:RoutesDir '--pisar' 2>&1 | Out-String
+                $ErrorActionPreference = $prevEAP2
+                if ($envOut2 -and $envOut2.Trim() -ne "") { Write-Host ("   " + $envOut2.TrimEnd()) -ForegroundColor $C_INFO }
+            }
+        }
+    }
+
     # Llamada al conversor. Se baja ErrorActionPreference alrededor del native call: en
     # PS 5.1 la fusion 2>&1 envuelve el stderr en ErrorRecord y con Stop podria tirar.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $pyOut = & python $py $framePath $routeName '--profile' $script:RoutesDir 2>&1 | Out-String
+    # keep-inputs: conserva el pedal grabado (cols 8-9, hasInputData=1) para el
+    # feedforward de 1.2. Efecto declarado: 1.1 TAMBIEN reproduce pedal en rutas con hasInputData
+    # (conducta publicada de 1.1, no un colateral silencioso) -- las rutas viejas no cambian.
+    # cinta: cada conversion emite <base>_cinta.csv FULL-RES (40Hz,
+    # indexada por arco) junto a la ruta -- el overlay de ejecucion de LA CINTA (E2).
+    $pyOut = & $script:PY $py $framePath $routeName '--keep-inputs' '--cinta' '--profile' $script:RoutesDir 2>&1 | Out-String
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
 
@@ -376,10 +435,11 @@ function Invoke-Convert {
     Write-Host ("   " + (T "convert.ok")) -ForegroundColor $C_OK
     Write-Host ("   " + ((T "convert.deployed") -f $routeName)) -ForegroundColor $C_OK
 
-    # Mirror al server B: copia el trio generado (.json + _hdr.json + _wp.csv).
+    # Mirror al server B: copia los CUATRO archivos (.json + _hdr.json + _wp.csv + _cinta.csv). Sin la cinta, en B
+    # la ruta corria sin cinta.
     if ($script:ServerBMirror -and (Test-Path $script:ServerBMirror)) {
         $copied = 0
-        foreach ($suf in @(".json", "_hdr.json", "_wp.csv")) {
+        foreach ($suf in @(".json", "_hdr.json", "_wp.csv", "_cinta.csv")) {
             $src = Join-Path $script:RoutesDir ($outBase + $suf)
             if (Test-Path $src) { Copy-Item $src (Join-Path $script:ServerBMirror ($outBase + $suf)) -Force; $copied++ }
         }
@@ -627,6 +687,91 @@ function Select-Fingerprint {
     }
 }
 
+# ============================================================================
+# MERGE DE TRAMOS: la feature "continuar grabacion"
+#  deja la ruta larga partida en varios frame_*.csv. frame_merge.py los une:
+#  orden por EMPALME DE POSICION (no por timestamp), duplicados detectados y
+#  descartados con aviso, markers de cada tramo preservados, t_cum re-acumulado.
+#  Al final ofrece encadenar directo a Invoke-Convert (ruta + envelope + mirror).
+# ============================================================================
+function Select-CsvMulti {
+    Clear-Host
+    Write-Box ("  " + $(if ($global:BZ_LANG -eq 'en') { "MERGE: pick the SEGMENTS (2+)" } else { "MERGE: elegir los TRAMOS (2 o mas)" })) $C_TITLE
+    $allCsvs = @()
+    foreach ($d in $LOG_DIRS) {
+        if (Test-Path $d) {
+            $csvs = Get-ChildItem $d -Filter "frame_*.csv" -ErrorAction SilentlyContinue
+            foreach ($c in $csvs) { $allCsvs += [PSCustomObject]@{ File = $c; Source = $d } }
+        }
+    }
+    if ($allCsvs.Count -lt 2) {
+        Write-Host ("   " + (T "csv.none")) -ForegroundColor $C_ERR
+        Pause-Wizard
+        return $null
+    }
+    $allCsvs = $allCsvs | Sort-Object { $_.File.LastWriteTime }
+    $idx = 1
+    $opts = @()
+    foreach ($entry in $allCsvs) {
+        $f = $entry.File
+        $veh = ""
+        $hdrName = ($f.Name -replace '^frame_', 'header_') -replace '\.csv$', '.txt'
+        $hdrPath = Join-Path (Split-Path $f.FullName -Parent) $hdrName
+        if (Test-Path $hdrPath) {
+            $vl = Get-Content $hdrPath -TotalCount 3 -ErrorAction SilentlyContinue | Where-Object { $_ -match '^vehicleClass=' } | Select-Object -First 1
+            if ($vl -match '^vehicleClass=(.+)$') { $veh = $matches[1].Trim() }
+        }
+        Write-Host ("   [" + $idx.ToString().PadLeft(2) + "] " + $f.LastWriteTime.ToString("dd/MM HH:mm") + "  " + $veh.PadRight(16) + " " + $f.Name) -ForegroundColor $C_HILITE
+        $opts += $f.FullName
+        $idx++
+    }
+    Write-Host ""
+    Write-Host ("   " + $(if ($global:BZ_LANG -eq 'en') { "Numbers comma-separated (order does NOT matter: position decides the chain). 0 = back" } else { "Numeros separados por coma (el orden NO importa: la posicion decide la cadena). 0 = volver" })) -ForegroundColor $C_INFO
+    while ($true) {
+        Write-Host ""
+        Write-Host "   > " -NoNewline -ForegroundColor $C_HILITE
+        $sel = [Console]::ReadLine()
+        if ($sel.Trim() -eq "0") { return $null }
+        $nums = @($sel -split '[, ]+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+        $nums = @($nums | Where-Object { $_ -ge 1 -and $_ -le $opts.Count } | Select-Object -Unique)
+        if ($nums.Count -ge 2) { return @($nums | ForEach-Object { $opts[$_ - 1] }) }
+        Write-Host ("   " + (T "common.invalid")) -ForegroundColor $C_ERR
+    }
+}
+
+function Invoke-Merge {
+    $py = Join-Path $PSScriptRoot "frame_merge.py"
+    if (-not (Test-Path $py)) {
+        Write-Host ("   frame_merge.py " + $(if ($global:BZ_LANG -eq 'en') { "not found in " } else { "no encontrado en " }) + $PSScriptRoot) -ForegroundColor $C_ERR
+        Pause-Wizard
+        return
+    }
+    $frames = Select-CsvMulti
+    if (-not $frames -or $frames.Count -lt 2) { return }
+    Write-Host ""
+    $raw = Read-Host ("   " + $(if ($global:BZ_LANG -eq 'en') { "Name for the merged take (letters/numbers/_)" } else { "Nombre de la toma unida (solo letras/numeros/_)" }))
+    $name = ($raw -replace '[^A-Za-z0-9_]', '_').Trim('_')
+    if ($name -eq "") { return }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & $script:PY $py $name @($frames) 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+    if ($out -and $out.Trim() -ne "") { Write-Host ($out.TrimEnd()) -ForegroundColor $C_INFO }
+    if ($code -ne 0) {
+        Write-Host ("   " + $(if ($global:BZ_LANG -eq 'en') { "MERGE failed (see above): nothing written." } else { "El MERGE fallo (ver arriba): no se escribio nada." })) -ForegroundColor $C_ERR
+        Pause-Wizard
+        return
+    }
+    $merged = Join-Path (Split-Path $frames[0] -Parent) ("frame_" + $name + ".csv")
+    if (Test-Path $merged) {
+        Write-Host ""
+        $k = Read-Choice ($(if ($global:BZ_LANG -eq 'en') { "Convert the merged take to a route now?" } else { "Convertir la toma unida en ruta ahora?" })) @("S","Y","N")
+        if ($k -eq "S" -or $k -eq "Y") { Invoke-Convert $merged; return }
+    }
+    Pause-Wizard
+}
+
 function Invoke-ImportTransport {
     param([string]$v1Path)
 
@@ -677,7 +822,7 @@ function Invoke-ImportTransport {
     # el stderr en ErrorRecord y con Stop podria tirar.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $pyOut = & python @pyArgs 2>&1 | Out-String
+    $pyOut = & $script:PY @pyArgs 2>&1 | Out-String
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
 
@@ -698,7 +843,7 @@ function Invoke-ImportTransport {
 
     if ($script:ServerBMirror -and (Test-Path $script:ServerBMirror)) {
         $copied = 0
-        foreach ($suf in @(".json", "_hdr.json", "_wp.csv")) {
+        foreach ($suf in @(".json", "_hdr.json", "_wp.csv", "_cinta.csv")) {
             $src = Join-Path $script:RoutesDir ($outBase + $suf)
             if (Test-Path $src) { Copy-Item $src (Join-Path $script:ServerBMirror ($outBase + $suf)) -Force; $copied++ }
         }
@@ -712,25 +857,43 @@ function Invoke-ImportTransport {
 #  Config de paths (portable: wizard_config.json al lado del script)
 # ============================================================================
 function Invoke-ConfigPaths {
+    param([bool]$primera = $false)
     Clear-Host
     Write-Box ("  " + (T "cfgp.title")) $C_TITLE
-    $mir = if ($script:ServerBMirror) { $script:ServerBMirror } else { "(ninguno / none)" }
+    if ($primera) {
+        Write-Host ""
+        Write-Host ("   " + (T "cfgp.first_intro")) -ForegroundColor $C_WARN
+    }
+    $mir = if ($script:ServerBMirror) { $script:ServerBMirror } else { (T "cfgp.none") }
     Write-KV (T "cfgp.kv_routes") ($script:RoutesDir + (Get-PathMark $script:RoutesDir $true))
     Write-KV (T "cfgp.kv_client") ($script:ClientRecDir + (Get-PathMark $script:ClientRecDir $false))
     Write-KV (T "cfgp.kv_mirror") ($mir + $(if ($script:ServerBMirror) { (Get-PathMark $script:ServerBMirror $false) } else { "" }))
     Write-Host ""
     Write-Host ("   " + (T "cfgp.hint")) -ForegroundColor $C_INFO
     Write-Host ""
-    $s = Read-Host ("   " + (T "cfgp.ask_routes"))
-    if ($s.Trim() -ne "") { $script:RoutesDir = $s.Trim() }
-    $c = Read-Host ("   " + (T "cfgp.ask_client"))
-    if ($c.Trim() -ne "") { $script:ClientRecDir = $c.Trim() }
-    $m = Read-Host ("   " + (T "cfgp.ask_mirror"))
-    if ($m.Trim() -eq "-") { $script:ServerBMirror = "" }
-    elseif ($m.Trim() -ne "") { $script:ServerBMirror = $m.Trim() }
-    if (-not (Test-Path $script:RoutesDir)) {
-        Write-Host ("   " + ((T "cfgp.warn_missing") -f $script:RoutesDir)) -ForegroundColor $C_WARN
+    # La carpeta de rutas es OBLIGATORIA: sin una configurada, Enter no "mantiene" nada y se vuelve a pedir; si la tipeada
+    # no existe se ofrece crearla (nunca se crea una carpeta por un tecleo accidental).
+    while ($true) {
+        $pr = if ($script:RoutesDir) { (T "cfgp.ask_routes") } else { (T "cfgp.ask_routes_first") }
+        $s = ([string](Read-Host ("   " + $pr))).Trim()
+        if ($s -eq "") {
+            if ($script:RoutesDir) { break }
+            Write-Host ("   " + (T "cfgp.empty_required")) -ForegroundColor $C_WARN
+            continue
+        }
+        if (Test-Path $s) { $script:RoutesDir = $s; break }
+        Write-Host ("   " + ((T "cfgp.not_exists") -f $s)) -ForegroundColor $C_ERR
+        $cr = ([string](Read-Host ("   " + (T "cfgp.create_q")))).Trim()
+        if ($cr -match '^[sSyY]') {
+            try { New-Item -ItemType Directory -Force $s | Out-Null; $script:RoutesDir = $s; break }
+            catch { Write-Host ("   " + (T "cfgp.create_fail")) -ForegroundColor $C_ERR }
+        }
     }
+    $c = ([string](Read-Host ("   " + (T "cfgp.ask_client")))).Trim()
+    if ($c -ne "") { $script:ClientRecDir = $c }
+    $m = ([string](Read-Host ("   " + (T "cfgp.ask_mirror")))).Trim()
+    if ($m -eq "-") { $script:ServerBMirror = "" }
+    elseif ($m -ne "") { $script:ServerBMirror = $m }
     $cfgPath = Join-Path $PSScriptRoot "wizard_config.json"
     Save-WizardConfig $cfgPath
     Update-LogDirs
@@ -740,13 +903,13 @@ function Invoke-ConfigPaths {
 }
 
 # Chequeo de salud de carpetas al arrancar (post Resolve-Paths). Escanea los paths
-# configurados; si alguno no existe o no esta en linea (ej. Y: con el 2do server apagado),
+# configurados; si alguno no existe o no esta en linea (ej. una unidad de red apagada),
 # lo lista con [X] y ofrece cambiarlo [1] o continuar igual [2]. NO atrapa al usuario como
 # hacia el viejo paste-flow: si una carpeta de red esta caida, igual entras y la editas.
 function Test-PathsHealth {
     while ($true) {
         $bad = @()
-        if (-not (Test-Path $script:RoutesDir))    { $bad += ,@((T "cfgp.kv_routes"),  $script:RoutesDir,   $true) }
+        if ((-not $script:RoutesDir) -or (-not (Test-Path $script:RoutesDir))) { $bad += ,@((T "cfgp.kv_routes"),  $script:RoutesDir,   $true) }
         if (-not (Test-Path $script:ClientRecDir)) { $bad += ,@((T "cfgp.kv_client"),  $script:ClientRecDir, $false) }
         if ($script:ServerBMirror -and -not (Test-Path (Split-Path $script:ServerBMirror -Parent))) { $bad += ,@((T "cfgp.kv_mirror"), $script:ServerBMirror, $false) }
         if ($bad.Count -eq 0) { return }
@@ -775,9 +938,10 @@ function Show-MainMenu {
     Write-Section (T "menu.header")
     Wc ("   " + (T "menu.convert"))   $C_HILITE
     Wc ("   " + (T "menu.import_v1")) $C_HILITE
+    Wc ("   " + (T "menu.merge"))     $C_HILITE
     Wc ("   " + (T "menu.config"))    $C_INFO
     Wc ("   " + (T "menu.quit"))      $C_INFO
-    return Read-Choice (T "common.choice") @("1","2","6","Q")
+    return Read-Choice (T "common.choice") @("1","2","3","6","Q")
 }
 
 # ============================================================================
@@ -798,7 +962,7 @@ function Resolve-Paths {
 
     # 1. -RoutesDir explicito en la linea de comandos -> gana y se persiste.
     if ($explicit) {
-        Write-Host ("   RoutesDir (parametro): " + $script:RoutesDir) -ForegroundColor $C_INFO
+        Write-Host ("   " + ((T "cfgp.routes_param") -f $script:RoutesDir)) -ForegroundColor $C_INFO
         Save-WizardConfig $cfgPath
         return
     }
@@ -812,43 +976,30 @@ function Resolve-Paths {
             if ($cfg.ReportsDir)    { $script:ReportsDir    = $cfg.ReportsDir }
             if ($cfg.TransportDir)  { $script:TransportDir  = $cfg.TransportDir }
         } catch { }
-        if (Test-Path $script:RoutesDir) {
-            Write-Host ("   RoutesDir (config): " + $script:RoutesDir) -ForegroundColor $C_INFO
+        if ($script:RoutesDir -and (Test-Path $script:RoutesDir)) {
+            Write-Host ("   " + ((T "cfgp.routes_cfg") -f $script:RoutesDir)) -ForegroundColor $C_INFO
         } else {
-            # Configurado en un uso anterior pero AHORA no esta en linea (ej. Y: con el 2do
-            # server apagado). NO re-detectar ni atrapar: mantener el path y dejar que el
-            # chequeo de salud (Test-PathsHealth) avise y ofrezca cambiarlo o continuar.
-            Write-Host ("   RoutesDir (config, sin conexion ahora): " + $script:RoutesDir) -ForegroundColor $C_WARN
+            # Configurado en un uso anterior pero AHORA no esta en linea (ej. una unidad de red apagada). NO re-detectar ni
+            # atrapar: mantener el path y dejar que el chequeo de salud (Test-PathsHealth) avise y ofrezca cambiarlo o seguir.
+            Write-Host ("   " + ((T "cfgp.routes_offline") -f $script:RoutesDir)) -ForegroundColor $C_WARN
         }
         return
     }
-    # 3. Default historico (nuestro setup): si existe, usar + persistir (seamless para nosotros).
-    if (Test-Path $script:RoutesDir) {
-        Save-WizardConfig $cfgPath
-        return
-    }
-    # 4. No se encontro -> pantalla limpia + pedir un path que EXISTA. NO auto-crear cualquier
-    #    texto como carpeta (antes un tecleo accidental se volvia carpeta basura). PC-AGNOSTICO:
-    #    si copiaste el wizard a otra PC, los paths viejos del config no existen y aca los reseteas.
-    Clear-Host
-    Write-Host ""
-    Write-Host "   No encuentro la carpeta de rutas configurada en esta PC:" -ForegroundColor $C_WARN
-    Write-Host ("      " + $script:RoutesDir) -ForegroundColor $C_INFO
-    Write-Host "   Pega el path a tu profiles\BZ_AutoDrive\ (ej: G:\newserver\DayZServer\profiles\BZ_AutoDrive\):" -ForegroundColor $C_INFO
-    while ($true) {
-        $typed = (Read-Host "   RoutesDir").Trim()
-        if ($typed -eq "") { Write-Host "   (vacio) Pega un path, o Ctrl+C para salir." -ForegroundColor $C_WARN; continue }
-        if (Test-Path $typed) { $script:RoutesDir = $typed; break }
-        Write-Host ("   '" + $typed + "' no existe en esta PC.") -ForegroundColor $C_ERR
-        $cr = (Read-Host "   Crearla igual? [S/N]").Trim()
-        if ($cr -match '^[sSyY]') {
-            try { New-Item -ItemType Directory -Force $typed | Out-Null; $script:RoutesDir = $typed; break }
-            catch { Write-Host "   No se pudo crear esa carpeta. Proba otro path." -ForegroundColor $C_ERR }
-        }
-    }
-    $script:ServerBMirror = ""   # un modder con un solo server no tiene mirror B
-    Save-WizardConfig $cfgPath
-    Write-Host ("   Guardado en " + $cfgPath) -ForegroundColor $C_OK
+    # 3. Primera corrida (sin config y sin parametro): no se adivina ningun path de ninguna PC. Initialize-WizardPaths abre
+    #    la pantalla de paths, que no acepta una carpeta de rutas vacia, y la guarda.
+}
+
+# Arranque de paths, en UN solo lugar (la simulacion de primera corrida lo llama igual que el main loop): parametro o
+# config -> si es la PRIMERA corrida, la pantalla de paths (una sola, en el idioma elegido) -> carpetas de grabaciones ->
+# chequeo de salud.
+function Initialize-WizardPaths {
+    param([bool]$explicit)
+    $cfgPath = Join-Path $PSScriptRoot "wizard_config.json"
+    $script:FirstRun = (-not (Test-Path $cfgPath)) -and (-not $explicit)
+    Resolve-Paths $explicit
+    if ($script:FirstRun) { Invoke-ConfigPaths $true }
+    Update-LogDirs
+    Test-PathsHealth
 }
 
 # ============================================================================
@@ -858,14 +1009,9 @@ function Resolve-Paths {
 # (permite cargar las funciones para tests/demos sin lanzar la TUI).
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        $cfgPath  = Join-Path $PSScriptRoot "wizard_config.json"
-        $firstRun = -not (Test-Path $cfgPath)   # snapshot ANTES de Resolve-Paths (que puede crearlo)
         Enable-VTMode
         Select-Language
-        Resolve-Paths ($PSBoundParameters.ContainsKey('RoutesDir'))
-        Update-LogDirs
-        Test-PathsHealth
-        if ($firstRun) { Invoke-ConfigPaths }   # primera corrida: configurar paths antes del menu
+        Initialize-WizardPaths ($PSBoundParameters.ContainsKey('RoutesDir'))
         while ($true) {
           try {
             $choice = Show-MainMenu
@@ -877,6 +1023,9 @@ if ($MyInvocation.InvocationName -ne '.') {
                 "2" {
                     $v1 = Select-TransportRoute
                     if ($v1) { Invoke-ImportTransport $v1 }
+                }
+                "3" {
+                    Invoke-Merge
                 }
                 "6" {
                     Invoke-ConfigPaths

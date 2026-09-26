@@ -2,7 +2,7 @@
 
 **Conducción autónoma de vehículos NPC para DayZ — desde una sola vuelta grabada.**
 
-Grabás una ruta manejándola vos —o la dibujás en el editor—. Un NPC (Boris) la maneja para siempre, con la **física real de cada vehículo**. No entrena un modelo por vehículo ni pide waypoints a mano: **lee la configuración que el auto ya declara** en el motor (curva de torque, caja, dirección, geometría) y maneja según eso. **Maneja cualquier vehículo sin configurar nada por-auto.**
+Grabás una ruta manejándola vos. Un NPC (Boris) la maneja para siempre, con la **física real de cada vehículo**. No entrena un modelo por vehículo ni pide waypoints a mano: **lee la configuración que el auto ya declara** en el motor (curva de torque, caja, dirección, geometría), **reproduce tu manejo punto por punto** y **aprende de tus propias tomas** cómo se comporta ese vehículo. **Maneja cualquier vehículo sin configurar nada por-auto.**
 
 > Versión EN: [README.en.md](README.en.md) · Licencia **MIT** · Proyecto **BrigadaZ**
 
@@ -10,21 +10,20 @@ Grabás una ruta manejándola vos —o la dibujás en el editor—. Un NPC (Bori
 
 ## La idea en una frase
 
-**Grabás una ruta —o la dibujás en el editor—, el framework lee el config del vehículo, y el NPC la maneja — en cualquier auto, sin configurar nada por-vehículo, sin programar ni entrenar.**
+**Grabás una ruta, el framework lee el config del vehículo y aprende de tu manejo, y el NPC la maneja — en cualquier auto, sin configurar nada por-vehículo, sin programar ni entrenar.**
 
 ## Qué lo hace distinto
 
-- **Config-como-manual:** en vez de aprender la dinámica con datos, lee la física declarada del vehículo. Sin machine learning, **determinista e inspeccionable**.
-- **Cualquier vehículo, sin tuning:** el control lee la física declarada de cada auto y maneja según eso — delantera / trasera / central / 4x4 / **camión** — con **una sola configuración**, sin ajustes por-vehículo. Validado out-of-sample en un banco amplio de tracciones y tamaños. *(Una **grabación** es de su vehículo; para cross-vehículo, dibujás la **traza** en el editor y le asignás el que quieras.)*
+- **Config como manual, medición como corrección:** lee la física declarada del vehículo y la corrige con lo que **mide de tus tomas** (la *ficha* de cada vehículo): cuando lo declarado y lo medido no coinciden, manda lo medido. Sin machine learning, **determinista e inspeccionable**.
+- **Reproduce tu manejo:** la *cinta* guarda volante, acelerador, freno y marcha 40 veces por segundo, indexados por **distancia recorrida**. El NPC hace lo que hiciste **en ese punto del camino**: vuela donde volaste, frena donde frenaste.
+- **Cualquier vehículo, sin tuning:** el control lee la física declarada de cada auto y maneja según eso — delantera / trasera / central / 4x4 / **camión** — con **una sola configuración**, sin ajustes por-vehículo. Validado out-of-sample en un banco amplio de tracciones y tamaños. *(Una **grabación** es de su vehículo: para la misma ruta en otro auto, **grabala con ese auto** — así el framework aprende su física.)*
 - **Física real:** el NPC aplica volante, acelerador y freno reales sobre el vehículo simulado — se ve y se siente como una persona manejando, no un teleport scripteado.
-- **Maneja lo difícil:** curvas cerradas, reversa, cambios de sentido (K-turn) **auto-detectados**, y parada final precisa (típicamente **< 0.5 m**, hasta ~1 m en los más grandes).
+- **Maneja lo difícil:** curvas cerradas, reversa, cambios de sentido (K-turn) **auto-detectados**, y parada final precisa (a unos **10 cm** del punto grabado).
 - **Escala:** carga de rutas **~1700× más rápida** (cambio de formato de datos) + **múltiples vehículos concurrentes sin mover el FPS** del server.
 
 ## Qué incluye
 
 - **Pipeline de autoría** usable por un admin no-programador: grabar → convertir (wizard) → ejecutar → orquestar.
-- **Editor de rutas** visual (`tools/editor/`) para dibujar, unir y afinar recorridos sobre el mapa.
-- **Routing emergente sobre grafo:** componé muchas tomas y ruteá pares A→B nunca grabados enteros (mapear un pueblo).
 - **DSL de escenarios** (eventos/triggers/verbos por waypoint) + **integración con DayZ-Expansion-Quests** (convoyes, emboscadas, escoltas).
 - **UI / Reproductor:** tablero en vivo multi-vehículo, carga de rutas en caliente sin reiniciar.
 - **Remera branded** (classname `BZ_AutoDrive_TShirt`) — un cosmético del proyecto, incluido en el mod.
@@ -53,7 +52,7 @@ Grabás una ruta manejándola vos —o la dibujás en el editor—. Un NPC (Bori
 
 > La **primera vez** que abrís el wizard (`tools\Wizard.bat`) te pide tus **paths** (carpeta de rutas del server + dónde grabás) — los seteás **una sola vez** y se los acuerda.
 
-**Si sos modder:** subí el [AI knowledge pack](AI_KNOWLEDGE_PACK.md) a tu asistente IA — trae walkthroughs para grabar/convertir/correr, mapear zonas (unir grafos) y armar quests con vehículos.
+**Si sos modder:** subí el [AI knowledge pack](AI_KNOWLEDGE_PACK.md) a tu asistente IA — trae walkthroughs para grabar/convertir/correr y armar quests con vehículos, y una guía paso a paso para **portar el framework a otro juego** (Apéndice E, con 7 Days to Die como ejemplo resuelto).
 
 > **⚠️ Permisos de terceros:** referenciar un vehículo modded por **classname** (el mod se carga aparte, no se toca) **no** requiere permiso. **Repackear o extraer** assets de un tercero **sí** requiere permiso explícito del autor. Es la norma de la comunidad DayZ. Ante la duda: referenciá, no extraigas.
 
@@ -63,20 +62,21 @@ Grabás una ruta manejándola vos —o la dibujás en el editor—. Un NPC (Bori
 
 El framework se engancha a `CarScript` con **override-last**: deja correr al receptor de eAI y **sobrescribe después** los inputs con los que computa su stack de control. Como `CarScript` se hereda por toda la familia de vehículos, **cualquier auto que la extienda queda manejable por un bot sin escribir una línea por vehículo**.
 
-El chofer sigue la traza con un controlador **pure-pursuit** (apunta a un punto adelante sobre la línea), regula la velocidad por la **curvatura de lo que viene**, y saca acelerador/freno/marcha de un **modelo inverso derivado del config del vehículo**. No es replay de frames — es control real, cuadro a cuadro.
+El chofer **reproduce tu manejo por posición** (la *cinta*: lo que hiciste en cada punto del camino, no en cada instante), sigue la traza con un controlador **pure-pursuit** (apunta a un punto adelante sobre la línea), y saca acelerador/freno/marcha de un **modelo inverso derivado del config del vehículo y corregido por lo medido** en su ficha. No es un replay por tiempo: la física real hace el resto, cuadro a cuadro.
 
 ```
-PathLogger (grabás)  →  Wizard (convierte leyendo el config)  →  Control stack (pure-pursuit + curvatura + modelo inverso)  →  Reproductor (corrés)
+PathLogger (grabás)  →  Wizard (ruta + cinta + ficha del vehículo)  →  Cerebro 1.2 (cinta + pure-pursuit + modelo inverso + lo medido)  →  Reproductor (corrés)
 ```
 
 ## Dependencias
 
-**Requeridas:**
+**Requerida: DayZ-Expansion, vía el Bundle** (`@DayZ-Expansion-Bundle`, con sus propias dependencias: CF, Dabs Framework y Expansion-Licensed). El framework necesita tres partes de Expansion y **las tres vienen dentro del Bundle**:
 
-- **DayZ-Expansion-Core**
-- **DayZ-Expansion-AI (eAI)** — el cuerpo del NPC conductor.
-- **DayZ-Expansion-Vehicles**
-- **DayZ-Expansion-Quests**
+- **AI (eAI)** — el cuerpo del NPC conductor.
+- **Vehicles**.
+- **Quests** — el mod lo requiere para cargar aunque no hagas misiones.
+
+> ⚠ **No agregues `@DayZ-Expansion-AI` suelto** si ya tenés el Bundle: son las mismas clases en otra versión y **el server no arranca**.
 
 **Mods de vehículos del Workshop** — cualquiera que extienda `CarScript` (la mayoría) funciona automáticamente, sin tocar nada.
 
@@ -86,9 +86,9 @@ Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork
 
 ## Estado
 
-**v1.0** — control **unificado** (un solo stack, sin modos), conducción forward/cruise + **reversa resuelta** (pure-pursuit geométrico), **cambios de sentido auto-detectados**, **parada final resuelta** (endpoint < 0.5 m típico, validado out-of-sample en FWD/RWD/central/4x4/camión), **routing emergente sobre grafo**, **DSL de eventos**, **integración con Quests** (convoy/emboscada/escolta), **multi-runner**, UI/Reproductor, wizard de conversión.
+**v1.2** — **cerebro de manejo nuevo**: reproduce tu manejo (*cinta*) y **mide** cada vehículo (*ficha*); nadie se arrastra solo en ralentí (medido en 43 vehículos); gas de arranque medido en la flota; **AutoRecovery** que detecta la traba por el avance y rescata también en reversa; cambios de sentido más rápidos; la conversión genera **cuatro** archivos y trae **Python incluido**. Se mantiene de antes: **reversa y cambios de sentido auto-detectados**, **parada final precisa**, **DSL de eventos**, **integración con Quests** (convoy/emboscada/escolta), **multi-runner**, UI/Reproductor. Detalle en el [CHANGELOG](CHANGELOG.md).
 
-**Roadmap:** grafo + pathfinding in-game (hoy offline), wizard 100 % autónomo, adapter de boat/heli, archetype ferroviario, conductor con LLM.
+**Roadmap:** wizard 100 % autónomo, adapter de boat/heli, archetype ferroviario, conductor con LLM.
 
 ---
 

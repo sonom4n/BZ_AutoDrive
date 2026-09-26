@@ -122,8 +122,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ruta_v1", help="JSON de BrigadaZ Transport v1 (el del profile del server)")
     ap.add_argument("route_name")
-    ap.add_argument("--profile", default=r"C:\DayZServer\profiles\BZ_AutoDrive",
-                    help="carpeta de rutas del server (donde se deploya el trio)")
+    # OBLIGATORIO: el conversor no adivina donde esta el server de nadie (el Wizard lo pasa siempre).
+    ap.add_argument("--profile", default=None, metavar="DIR",
+                    help="carpeta de rutas del server (.../profiles/BZ_AutoDrive) donde se deploya el trio. Obligatorio.")
     ap.add_argument("--fingerprint", default=None,
                     help="identidad del vehiculo: header_*.txt del PathLogger o _hdr.json calibrado")
     ap.add_argument("--min-sep", type=float, default=0.05,
@@ -137,6 +138,9 @@ def main():
                          "(bus de linea 24/7), interceptable = frena y se queda (misiones), ninguno = off. "
                          "Requiere Modo 2/3 (UseInverseModel), que el template ya trae.")
     args = ap.parse_args()
+    if not args.profile:
+        ap.error("falta --profile <carpeta profiles/BZ_AutoDrive de TU server>: el conversor no adivina donde esta el server "
+                 "(el Wizard lo pasa solo)  /  --profile is required (your server's profiles/BZ_AutoDrive folder)")
 
     try:
         with open(args.ruta_v1, encoding="utf-8-sig") as fh:

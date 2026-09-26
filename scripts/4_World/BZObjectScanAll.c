@@ -1,6 +1,6 @@
 // ============================================================================
 //  BZObjectScanAll - SCAN DE OBJETOS/ESTRUCTURAS DE TODO EL MAPA (full data).
-//  (Sonom4n, 2026-07-11) roadscan_objects.csv fue un scan PARCIAL (solo Novaya) -> el
+//  (un jugador, 2026-07-11) roadscan_objects.csv fue un scan PARCIAL (solo Novaya) -> el
 //  editor solo tiene edificios ahi. Esto barre el MAPA ENTERO (frame-spread, no
 //  cuelga el server) y extrae TODO dato util de cada estructura:
 //    type, scenery, building, x, y, z, yaw, bw, bl, bh, model(debug)
@@ -31,7 +31,7 @@ class BZObjectScanAll {
         inst.m_curX = 0; inst.m_curZ = 0; inst.m_hits = 0; inst.m_probes = 0;
         inst.m_objs = new array<Object>;
         inst.m_prox = new array<CargoBase>;
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         inst.m_fo = OpenFile(dir + "roadscan_objects_full.csv", FileMode.WRITE);
         if (!inst.m_fo) { BZBusLog.Err("[OBJSCAN] no pude crear roadscan_objects_full.csv"); return; }
         FPrint(inst.m_fo, "type,scenery,building,x,y,z,yaw,bw,bl,bh,debug\n");

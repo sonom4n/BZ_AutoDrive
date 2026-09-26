@@ -92,14 +92,34 @@ class BZFrameRecorder {
             // nameCore no empezaba con path_ (jugador a pie improbable aca): prefijar
             frameCore = "frame_" + nameCore;
         }
-        m_Path = "$profile:BZ_AutoDrive_PathLogger\\" + frameCore + ".csv";
+        m_Path = BZCarpetas.PathLogger() + frameCore + ".csv";   // la carpeta se crea antes de abrir
 
         // front_wheel_deg (2026-07-05, Path 1): angulo de rueda EFECTIVO (post-rampa) = lo que genera la
         // fuerza lateral. Boris lo trackea en vez de re-correr la rampa del cmd. Columna nueva al final.
         // is_marker (2026-07-13): 1 = evento marcado con NUMPAD 4 en ese frame. Columna al FINAL
         // (backward-compat: los scripts leen por indice las 14 primeras). El importador la usa
         // para crear BZMarkerEvent en la ruta desde una grabacion humana.
-        string header = "t_cum,dt,throttle,brake,steering,gear,handbrake,x,y,z,heading,speed_kmh,rpm,front_wheel_deg,is_marker\n";
+        // COLUMNAS DE CALIBRACION (2026-08-25): la toma pasa a ser el banco del envelope.
+        // Van al FINAL: los lectores por indice de las 15 primeras siguen andando, y el
+        // extractor lee por NOMBRE, asi que las tomas viejas siguen sirviendo (marca las
+        // ausentes como fallback en vez de rellenarlas con cero).
+        //
+        //   pitch_deg    el pitch que usa el runtime, asin(dir[1]). El banco de planeo lo usa
+        //                DOS veces --compuerta de 2.2 grados y compensacion de gravedad-- y
+        //                derivarlo de x,y,z offline no es lo mismo que medirlo.
+        //   surface      el nombre CRUDO del piso, NO la clase dura/blanda. La clasificacion
+        //                es una decision de la capa de RESPUESTA (BZWorldProbeLive la hace
+        //                binaria a proposito); hornearla en el dato ataria las tomas viejas a
+        //                la clasificacion de hoy.
+        //   chassis_kmh  LA QUE MAS FALTABA, y no estaba en la lista pedida. speed_kmh es
+        //                GetSpeedometerAbsolute() = el velocimetro de RUEDA, y TODO el control
+        //                del framework corre sobre la velocidad de CHASIS. Las dos difieren
+        //                exactamente cuando el embrague desliza. Sin esta columna la toma no
+        //                tiene la velocidad que el controlador usa, el deslizamiento no se
+        //                puede derivar, y toda derivacion offline usa la de rueda creyendo
+        //                que es la otra.
+        string header = "t_cum,dt,throttle,brake,steering,gear,handbrake,x,y,z,heading,speed_kmh,rpm,front_wheel_deg,is_marker";
+        header = header + ",pitch_deg,surface,chassis_kmh\n";
         FileHandle f = OpenFile(m_Path, FileMode.WRITE);
         if (!f) {
             BZPathLog.Err("[FrameRec] no se pudo crear " + m_Path);
@@ -161,7 +181,18 @@ class BZFrameRecorder {
         row += "," + steering + "," + gear + "," + handbrake;
         row += "," + pos[0] + "," + pos[1] + "," + pos[2];
         row += "," + heading + "," + speedKmh + "," + rpm + "," + frontWheelDeg;
-        row += "," + isMarker + "\n";
+        row += "," + isMarker;
+
+        // --- calibracion: MISMAS expresiones que el runtime, para que la toma y el motor
+        // midan lo mismo. pitch por asin(dir[1]) y no por GetOrientation (crash documentado
+        // con Tan). chassis por GetVelocity, que es funcion GLOBAL sobre la entidad.
+        float pitchDeg = Math.Asin(Math.Clamp(dir[1], -1.0, 1.0)) * Math.RAD2DEG;
+        string surf = "";
+        GetGame().SurfaceGetType3D(pos[0], pos[1], pos[2], surf);
+        if (surf == "") surf = "none";
+        float chassisKmh = GetVelocity(car).Length() * 3.6;
+        row += "," + pitchDeg + "," + surf + "," + chassisKmh;
+        row += "\n";
 
         m_Buffer += row;
     }

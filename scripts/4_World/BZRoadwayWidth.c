@@ -1,5 +1,5 @@
 // ============================================================================
-//  BZRoadwayWidth - mide el ANCHO REAL DE CALZADA que ve el MOTOR. (Sonom4n, 2026-07-15)
+//  BZRoadwayWidth - mide el ANCHO REAL DE CALZADA que ve el MOTOR. (un jugador, 2026-07-15)
 //
 //  POR QUE: los anchos del catalogo salieron de medir el p3d (asf1=12m). Pero:
 //   (a) en SAKHAL los p3d viven dentro de worlds_sakhal.EBO = PBO ENCRIPTADO de DLC
@@ -59,7 +59,7 @@ class BZRoadwayWidth {
         i.m_sp.type = SurfaceDetectionType.Roadway;
         i.m_sp.rsd  = RoadSurfaceDetection.UNDER;     // sondeo desde arriba hacia abajo
         i.m_sr = new SurfaceDetectionResult();
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         i.m_fo = OpenFile(dir + i.m_world + "_roadway.csv", FileMode.WRITE);
         if (!i.m_fo) { BZBusLog.Err("[RWIDTH] no pude crear el CSV"); return; }
         FPrint(i.m_fo, "model,x,z,yaw,left,right,width\n");

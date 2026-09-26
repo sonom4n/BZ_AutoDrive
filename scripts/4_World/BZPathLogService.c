@@ -112,7 +112,7 @@ class BZPathLogService {
         // Inicializar archivo si es la primera marca
         if (!m_GearRangeInited) {
             EnsureProfileDir();
-            m_GearRangePath = "$profile:BZ_AutoDrive_PathLogger\\gear_ranges_" + BuildTimestamp() + ".csv";
+            m_GearRangePath = BZCarpetas.PathLogger() + "gear_ranges_" + BuildTimestamp() + ".csv";
             FileHandle h = OpenFile(m_GearRangePath, FileMode.WRITE);
             if (h) {
                 FPrint(h, "time_s,gear,speed_kmh,rpm,redline_rpm,mark_type,vehicle_class\n");
@@ -163,7 +163,7 @@ class BZPathLogService {
         }
         string nameCore = "path_" + BuildTimestamp();
         if (vehTag != "") nameCore = nameCore + "_" + vehTag;
-        m_FilePath        = "$profile:BZ_AutoDrive_PathLogger\\" + nameCore + ".csv";
+        m_FilePath        = BZCarpetas.PathLogger() + nameCore + ".csv";
         m_StartTickTime   = GetGame().GetTickTime();
         m_SampleCount     = 0;
         m_StopMarkCount   = 0;
@@ -327,9 +327,7 @@ class BZPathLogService {
     //  IO
 
     private void EnsureProfileDir() {
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
-        if (!FileExist(dir))
-            MakeDirectory(dir);
+        BZCarpetas.PathLogger();   // la misma carpeta que el resto del framework, creada en un solo lugar
     }
 
     private bool WriteHeader() {

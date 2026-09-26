@@ -33,7 +33,7 @@ class BZVehicleEnvelope {
     // Sin esto el control suelta el acelerador creyendo que planea hasta el punto y se PLANTA corto:
     // medido en el M3 (1400 kg) 8.5 m antes del endpoint y 5.5 m antes del intercambio, mientras el
     // Sedan (1000 kg) con el mismo codigo clavaba. Ver [[project_vehicle_envelope_learner]].
-    // POR PISO (2026-07-20, Sonom4n): la rodadura sobre tierra/campo es MUCHO mayor que sobre asfalto ->
+    // POR PISO (2026-07-20, un jugador): la rodadura sobre tierra/campo es MUCHO mayor que sobre asfalto ->
     // el mismo auto planea distinto segun donde este. Y justo los 3 puntos que fallaban (los dos
     // intercambios y el endpoint) NO son asfalto. Binear solo por velocidad promediaba asfalto con
     // tierra y sobrestimaba el planeo ahi. Indice = surf * NBINS + bin, surf: 0=duro, 1=blando.
@@ -63,7 +63,7 @@ class BZVehicleEnvelope {
         return e;
     }
 
-    private string FilePath() { return "$profile:BZ_AutoDrive_PathLogger\\envelope_" + m_Class + ".txt"; }
+    private string FilePath() { return BZCarpetas.PathLogger() + "envelope_" + m_Class + ".txt"; }
 
     // Extrae el understeer de la toma y (si hay senal) REEMPLAZA el mapa. Se llama al cargar/spawnear.
     void UpdateFromWaypoints(array<ref BZWaypoint> wps, float wheelbase) {

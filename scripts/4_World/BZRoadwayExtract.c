@@ -1,6 +1,6 @@
 // ============================================================================
 //  BZRoadwayExtract - LEE LA CAPA ROADWAY REAL DEL MOTOR (2026-07-10).
-//  Idea (Sonom4n): "hay una capa del mapa que no estamos viendo con detalle y la
+//  Idea (un jugador): "hay una capa del mapa que no estamos viendo con detalle y la
 //  traza esta dibujada ahi". El roadscan actual usa el bbox de los p3d (origenes
 //  dispersos). El motor tiene el ROADWAY LOD exacto (superficie, no colision) +
 //  ruteo vial nativo. Dos vias:
@@ -16,7 +16,7 @@ class BZRoadwayExtract {
     // RE-CORRIBLE (loop auto-mejora 2026-07-10): se re-extrae en cada Init de ruta con el flag prendido
     // -> load GRAFO -> extrae -> refinar -> load refinada -> re-extrae -> converge. Sin reiniciar el server.
     static void Extract(vector from, vector to, array<ref BZWaypoint> route) {
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         ExtractFindPath(from, to, dir);
         ExtractEdges(route, dir);
     }

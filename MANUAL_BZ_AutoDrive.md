@@ -2,7 +2,7 @@
 
 > Framework de conducción de vehículos por NPC para DayZ. Versión didáctica para admins/modders.
 > **Open source (MIT):** el código, este manual y el AI knowledge pack son públicos — descargalo, usalo en tu server, forkealo, extendelo y compartí tus rutas.
-> *Manual v1.0 — guía práctica del administrador. Reemplaza al MANUAL_eAI_VEHICLES como guía operativa.*
+> *Manual 1.2 — guía práctica del administrador.*
 
 ---
 
@@ -14,20 +14,20 @@
 4. Requisitos
 5. Inicio rápido — tu primera ruta
 6. El wizard en detalle
-6B. El editor de trayectorias y mapas — *dibujá en vez de grabar*
+6B. Los 4 archivos que genera el wizard
+6C. El envelope — lo que el framework aprende de tus tomas
 7. Cómo grabar bien
 8. El servicio de bus permanente
 9. Cómo maneja el NPC (sigue tu línea y tu velocidad)
 10. Eventos y secuencias
-11. El grafo — red de rutas
-12. Misiones — integración con Quests
-13. Controles (teclas)
-14. La interfaz (UI)
-15. Audio
-16. Si algo no anda
-17. Ideas
-18. Alcance y límites
-19. Frontera abierta
+11. Misiones — integración con Quests
+12. Controles (teclas)
+13. La interfaz (UI)
+14. Audio
+15. Si algo no anda
+16. Ideas
+17. Alcance y límites
+18. Frontera abierta
 - Apéndice A — Referencia completa de la config de ruta
 - Apéndice B — Para desarrolladores (extender con código)
 
@@ -52,9 +52,11 @@ BZ_AutoDrive hace que un **NPC maneje un vehículo de DayZ de forma autónoma**,
 
 > **Vos manejás la ruta una vez; el framework aprende tu línea y lee cómo es el vehículo; después un NPC la maneja.**
 
-Lo potente está en el "lee cómo es el vehículo": BZ_AutoDrive **lee el config del vehículo** (su dirección, sus marchas, su motor) y maneja según eso. Por eso **el framework maneja cualquier vehículo sin setup por-auto** — no calibrás nada por-vehículo, la física declarada alcanza.
+Lo potente está en el "lee cómo es el vehículo": BZ_AutoDrive **lee el config del vehículo** (su dirección, sus marchas, su motor) y maneja según eso. Por eso **el framework maneja cualquier vehículo sin setup por-auto**: no tenés que configurar nada por auto para que ande.
 
-> *Ojo con la grabación:* una grabación captura la corrida de **su** vehículo (su *fingerprint*, su freno medido, su marcha) — **es de ese auto**. ¿Querés la **misma traza** en otro vehículo? Eso se hace en el **editor**: cargás/dibujás la traza y le **asignás el vehículo** que quieras (§6B). La **traza dibujada es lo universal**; la grabación es de su auto. Cada vehículo la corre según lo que su física le permite (el chico clava la línea, el bus la hace más lento pero llega).
+Y hay una segunda capa, que es la novedad de 1.2: además de **leer** lo que el config declara, el framework **mide** cómo se comporta ese vehículo de verdad — cuánto frena, cuánto gira con cada ángulo de volante, si se arrastra solo en ralentí. Eso lo aprende **de tus propias tomas**, sin que hagas nada, y lo guarda en el *envelope* de esa clase (§6C). Cuando lo declarado y lo medido no coinciden, **manda lo medido**.
+
+> *Ojo con la grabación:* una grabación captura la corrida de **su** vehículo (su *fingerprint*, su freno medido, su marcha) — **es de ese auto**. ¿Querés la **misma ruta** en otro vehículo? **Grabala con ese vehículo.** No es una limitación: es la forma en que el framework trabaja mejor, porque de cada toma aprende cómo se comporta **esa** clase (§6C) — cuánto frena, cuánto gira. Una toma prestada trae las mediciones del auto equivocado.
 
 *(Por qué importa: DayZ no tiene "manejá hasta acá" para autos IA — solo te da el volante y los pedales. BZ_AutoDrive es el piloto que faltaba.)*
 
@@ -70,7 +72,7 @@ BZ_AutoDrive es un **punto de partida**, no un producto cerrado. El arco para cu
 
 Lo que agregás depende de para qué lo quieras:
 - **Servicio de bus / taxi** → grabás la(s) ruta(s) y las dejás corriendo (§8). Sin tocar código.
-- **Sistema de misiones** → sumás los Quests + las rutas de convoy/escolta (§12). El framework maneja los vehículos de tus misiones.
+- **Sistema de misiones** → sumás los Quests + las rutas de convoy/escolta (§11). El framework maneja los vehículos de tus misiones.
 - **Algo a medida** → lo extendés con código (Apéndice B) o construís tu propio mod sobre él como dependencia (B.6).
 
 > La gracia del open source: **todos bajan el mismo motor y lo hacen suyo.** Uno arma un bus de costa, otro un taxi urbano, otro una campaña de misiones — sin que ninguno tenga que reinventar el manejo.
@@ -82,10 +84,11 @@ Lo que agregás depende de para qué lo quieras:
 ## 4. Requisitos
 
 - **DayZ server** con el mod **BZ_AutoDrive** cargado + su `.bikey` en `keys/`.
-- **DayZ-Expansion-AI (eAI)** — *imprescindible*: el NPC chofer sale de acá. El framework **conduce**; eAI provee el "cuerpo" del NPC.
-- **DayZ-Expansion-Quests** — *solo* si vas a hacer **misiones con bots** (§12). Para transporte / taxi / patrulla **no** hace falta.
+- **DayZ-Expansion, vía el Bundle** (`@DayZ-Expansion-Bundle`) — *imprescindible*. Trae las tres partes que el mod necesita: **AI (eAI)**, que provee el "cuerpo" del NPC chofer (el framework **conduce**, eAI pone el cuerpo); **Vehicles**; y **Quests**, que el mod **requiere para cargar** aunque no hagas misiones. ⚠ **No agregues `@DayZ-Expansion-AI` suelto**: si ya tenés el Bundle son las mismas clases en otra versión y el server no arranca.
 - **El wizard** (`route_wizard.ps1`) corre en **tu PC** (fuera del juego), no en el server. Lo arrancás con doble clic en `tools\Wizard.bat` — no necesitás abrir PowerShell ni tipear nada.
-- **Python 3 (en tu PC)** — *imprescindible para convertir tomas*: el conversor del wizard (`frame_to_route.py`) y el import de v1 son Python. Sin Python, el wizard abre pero **no puede convertir** una grabación en ruta. Se instala **una vez** desde [python.org/downloads](https://www.python.org/downloads/) — en el instalador marcá **"Add Python to PATH"**. *(El mod, el editor de trayectorias y las rutas ya convertidas **no** lo necesitan — Python solo hace falta para el paso de **convertir/importar** tomas.)*
+- **Si agregás un pack de vehículos:** algunos packs necesitan **otro mod de base** (un *core*) que el Workshop **no descarga solo**, y sin él **el server se cae al arrancar**. Después de agregar un pack, buscá en el RPT **`requires addon`**: si aparece, instalá el mod que nombra y ponelo **antes** del vehículo en `-mod=`. Y acordate de que el **cliente** carga los mods de la lista de su launcher (DZSA), no del `start.bat` del server: si no lo tildás ahí también, no vas a ver los vehículos nuevos.
+- **Python: ya viene incluido.** El conversor del wizard (`frame_to_route.py`), el que arma la ficha del vehículo (`envelope_emit.py`) y el import de v1 son Python, y el mod **trae su propio Python** en `tools\python\`: no tenés que instalar nada. *(Si esa carpeta faltara, el wizard usa el Python de tu PC si lo encuentra en el PATH, y si no hay ninguno te lo dice al abrir.)*
+- **Qué corre por defecto: no tenés que activar nada.** El cerebro de manejo 1.2, la cinta y la ley de volante nueva vienen **encendidos**. Si por algún motivo querés el comportamiento anterior en tu servidor, se apaga con un archivo en `profiles\BZ_AutoDrive\` **con cualquier texto adentro**: `CEREBRO_11.txt` vuelve al cerebro 1.1, `BZ12_SIN_CINTA.txt` corre sin cinta, `BZ12_SIN_FF_PRIMARIO.txt` vuelve a la ley de volante anterior. **Un archivo vacío no hace nada.** Una ruta que no tiene `_cinta.csv` (por ejemplo, una importada de v1) corre sin cinta y lo avisa en el log.
 
 ---
 
@@ -105,7 +108,7 @@ El framework usa **solo 3 teclas**, ya asignadas por default. Entrá a **Opcione
 
 > **⚠ Lo primero: fijate que no choquen con tus teclas.** Si ya tenés `INICIO` o `NUMPAD 4/5` asignadas a **otro mod** (o a una acción de DayZ), se van a **pisar** y algo no va a responder — y **DayZ no te avisa del conflicto**. Por eso, antes de grabar: abrí esa categoría, mirá que las 3 no colisionen con lo tuyo, y **reasigná** la que haga falta (clic en la tecla → apretás la nueva). Es un minuto y te ahorra el clásico *"grabo y no pasa nada"* o *"aprieto INICIO y no abre el panel"*.
 
-*(Estas teclas solo tienen efecto para el **admin** —§14.1— aunque todos los jugadores las VEN en su menú de Controles. Detalle completo de los controles en §13.)*
+*(Estas teclas solo tienen efecto para el **admin** —§13.1— aunque todos los jugadores las VEN en su menú de Controles. Detalle completo de los controles en §12.)*
 
 ### Paso 1 — Grabá la ruta (la manejás vos)
 Subite al vehículo y manejá el recorrido **como querés que lo haga el NPC**.
@@ -125,22 +128,22 @@ Subite al vehículo y manejá el recorrido **como querés que lo haga el NPC**.
 > *Ejemplo real:* grabamos un UAZ-452 y de **un solo NUMPAD 5** salió todo: `UAZ_452`, wheelbase 2.53 m, R_min 3.9 m, 6 marchas, masa 2860 kg, + sus 4 ruedas (con la de auxilio), 6 puertas y batería/radiador/bujía. Cero configuración, cero adivinar.
 
 ### Paso 2 — Convertí la grabación (el wizard)
-El wizard es un **conversor**: agarra tu grabación cruda —atada al auto con el que manejaste— y la **convierte** en una ruta lista, **"del recorrido" y no "de los pedales de tu auto"** (la velocidad pasa a salir del modelo inverso que lee el config, no de tus pedales crudos), y **desplegada** en el Reproductor. *No calibra nada a mano — la fidelidad sale de leer el config del vehículo en vivo (el fingerprint), no de un ajuste por-ruta.*
+El wizard es un **conversor**: agarra tu grabación cruda y la **convierte** en una ruta lista y **desplegada** en el Reproductor. Guarda tu manejo **por posición** —qué volante, acelerador, freno y marcha tenías en cada punto del camino: la *cinta*— y actualiza la **ficha medida** del vehículo (§6C). El NPC parte de eso y lo corrige según lo que el vehículo puede. *No calibra nada a mano: no hay ajustes por ruta.*
 
 Arrancá el wizard con **doble clic en `tools\Wizard.bat`** (no hace falta abrir PowerShell ni tipear nada), elegís **[1] Convertir**, elegís tu grabación y le ponés un **nombre** — y te deja la ruta lista.
 
 > **La primera vez** que abrís el wizard te pide tus **paths** — la carpeta de rutas de tu server (`RoutesDir`) y dónde están tus grabaciones. Los seteás **una sola vez**, el wizard se los acuerda, y después los cambiás cuando quieras con **[6] Configurar paths** (detalle en §6).
 
-> *¿Por qué este paso?* Sin él, el NPC manejaría con los pedales exactos de **tu** auto — y en otro vehículo se rompería. El wizard hace que la ruta sea **"del recorrido", no "del auto"**.
+> *¿Por qué este paso?* La grabación cruda es un registro **por tiempo**. El NPC necesita tu manejo **por posición** (qué hacías en cada punto del camino, aunque él vaya un poco más lento o más rápido) y la ficha medida del vehículo. El wizard arma las dos cosas.
 > *¿Dónde está mi grabación?* Vive en el **cliente**, la PC donde manejaste: `%LOCALAPPDATA%\DayZ\BZ_AutoDrive_PathLogger\`. El wizard la busca ahí sola. La ruta convertida se **deploya** a tu carpeta de rutas del server (`RoutesDir`). Todo el detalle —el "trío" de archivos y las carpetas— en **§6**.
 
 ### Paso 3 — Deploy (ya lo hace el wizard)
-Al convertir, el wizard corre los chequeos + el split y deja la ruta **desplegada y lista en el Reproductor** (carga en caliente, **sin reiniciar el server**). No editás ningún archivo a mano. Si tenés un segundo server, el wizard te ofrece copiarla al server B (los paths los configurás en **[6] Configurar paths**).
+Al convertir, el wizard arma la ruta, actualiza la ficha del vehículo y deja todo **desplegado y listo en el Reproductor** (carga en caliente, **sin reiniciar el server**). No editás ningún archivo a mano. Si configuraste un segundo server en **[6] Configurar paths**, el wizard copia la ruta también allá.
 
 ### Paso 4 — Probalo (que el NPC la maneje)
-Abrí el **Reproductor** (la UI del admin) → elegí tu ruta de la lista → el NPC aparece y arranca a manejar. **Sin reiniciar el server.**
+Abrí el **Reproductor** (la UI del admin, tecla `INICIO`) → elegí tu ruta en la lista → apretá **LOAD & SPAWN**: el NPC aparece y arranca a manejar. **Sin reiniciar el server.**
 
-> *Ejemplo:* elegís "Bus pueblo" en la lista y ahí nomás el colectivo sale de la terminal, manejado por el NPC, parando donde marcaste.
+> *Ejemplo:* elegís "Bus pueblo" en la lista, apretás LOAD & SPAWN y ahí nomás el colectivo sale de la terminal, manejado por el NPC, parando donde marcaste.
 
 **Eso es todo el ciclo:** `grabás → wizard → deploy → play`. El resto del manual es para sacarle más jugo a cada parte.
 
@@ -152,14 +155,14 @@ El **wizard** (`tools\route_wizard.ps1`) convierte tu grabación cruda en una ru
 
 > **Arrancalo con doble clic en `tools\Wizard.bat`** — abre el wizard directo, sin abrir PowerShell ni tipear comandos. (El `.bat` usa `-ExecutionPolicy Bypass`, que **solo afecta esa ejecución** — no cambia la política de tu sistema.)
 
-> **Principio: todo pasa por el wizard.** El wizard corre las sub-herramientas (`csv_to_route`, `route_split`) **por vos**, en orden. Vos **no** editás el JSON a mano ni corrés los `.ps1` sueltos — el wizard es la única puerta de entrada.
+> **Principio: todo pasa por el wizard.** El wizard corre las sub-herramientas (`frame_to_route.py`, `envelope_emit.py`, `frame_merge.py`) **por vos**, en orden. Vos **no** editás el JSON a mano ni corrés los scripts sueltos — el wizard es la única puerta de entrada.
 
 ### ⚠ Dónde se aloja cada toma (leé esto)
 
 Cuando grabás (NUMPAD 5), el archivo **no queda donde lo buscarías intuitivamente**. La regla de oro:
 
 - La **grabación humana** (`path_*.csv` / `frame_*.csv`, la que hacés con NUMPAD 5) cae en el **cliente** (la PC donde manejaste): `%LOCALAPPDATA%\DayZ\BZ_AutoDrive_PathLogger\`.
-- Las **corridas de Boris** (`ai_run_*.csv` y `boris_native_*.csv`) se arman con los **checks del Reproductor** (§14, ya **no con teclas**) y caen en el **server que corrió**, no en el cliente. *Son mediciones para diagnosticar/comparar, no tomas para convertir (§16.1–16.2).*
+- Las **corridas de Boris** (`ai_run_*.csv` y `boris_native_*.csv`) se arman con los **checks del Reproductor** (§13, ya **no con teclas**) y caen en el **server que corrió**, no en el cliente. *Son mediciones para diagnosticar/comparar, no tomas para convertir (§15.1–16.2).*
 
 El wizard busca tus grabaciones en el **cliente** automáticamente, así que normalmente la encuentra sola. Si corrés el server en otra PC, también podés apuntarle a esa carpeta:
 
@@ -173,110 +176,231 @@ El wizard busca tus grabaciones en el **cliente** automáticamente, así que nor
 Dos archivos más que conviene conocer:
 
 - Junto a cada grabación hay un **`header_*.txt`** = el **fingerprint del vehículo** (dirección, marchas, wheelbase). El wizard lo **lee** para armar la ruta a la medida de ese auto (no lo calibra: lo lee).
-- Las **rutas terminadas** (el "trío") viven en tu carpeta de rutas del server (`RoutesDir` — ver `[6]`).
+- Las **rutas terminadas** (los cuatro archivos de §6) viven en tu carpeta de rutas del server (`RoutesDir` — ver `[6]`).
 
 ### El menú del wizard
 Arrancás el wizard (doble clic en `Wizard.bat`) y te aparece el menú:
 
-> **[1] Convertir · [2] Importar ruta de BrigadaZ Transport v1 · [6] Configurar paths · [Q] Salir**
+> **[1] Convertir · [2] Importar ruta de BrigadaZ Transport v1 · [3] Merge de tramos (continuar grabación) · [6] Configurar paths · [Q] Salir**
 
 #### [1] Convertir — de grabación a ruta lista
-Agarrás una grabación cruda (`frame_*.csv` + su `header_*.txt` apareado) y el wizard la vuelve una **ruta desplegada y lista en el Reproductor**, en un paso. Lo único que te pide es un **NOMBRE** → la ruta sale como `BZBusRoute_<nombre>` y aparece con ese nombre en el Reproductor.
+Agarrás una grabación cruda (`frame_*.csv` + su `header_*.txt` apareado) y el wizard la vuelve una **ruta desplegada y lista en el Reproductor**, en un paso. Lo único que te pide es un **NOMBRE** → la ruta sale como `BZBusRoute_<nombre>` y aparece con ese nombre en el Reproductor. En la lista de grabaciones, cada una trae la etiqueta de la carpeta donde la encontró: `[Cl]` la del cliente, `[A]` la de grabaciones de tu server (`BZ_AutoDrive_PathLogger`, al lado de la carpeta de rutas) y `[B]` la del segundo server, si configuraste uno.
 
-**Qué genera y dónde va.** De una grabación salen **tres archivos** (el "trío" que lee el server), todos en tu **carpeta de rutas** (`RoutesDir` — ver `[6]`):
+**Qué genera y dónde va.** De una grabación salen **cuatro archivos de la ruta**, todos en tu **carpeta de rutas** (`RoutesDir` — ver `[6]`):
+
+| Archivo | Qué es | ¿Lo tocás? |
+|---|---|---|
+| `BZBusRoute_<nombre>_hdr.json` | el **header**: vehículo, medidas del vehículo, config de manejo y la lista de **eventos** de tus NUMPAD 4 | **sí** — es el archivo que editás |
+| `BZBusRoute_<nombre>_wp.csv` | los **waypoints**, uno por punto de la ruta (unos 900 en una ruta de 10 minutos) | no |
+| `BZBusRoute_<nombre>_cinta.csv` | la **cinta**: tu manejo completo, muestreado fino a lo largo del recorrido —posición, rumbo, velocidad, volante, acelerador, freno y marcha— unas 12 veces más denso que los waypoints. Es de acá que sale la fidelidad: el NPC no interpola entre waypoints, reproduce esto | no |
+| `BZBusRoute_<nombre>.json` | el **master**: header + waypoints en un solo archivo | no, es respaldo |
+
+> **El par que manda es `_hdr.json` + `_wp.csv`.** Si los dos existen, el server carga ese par y **el `.json` completo queda sin usar**. Por eso los eventos van en el `_hdr.json`.
+
+**Y un quinto archivo, que no es de la ruta sino del vehículo:**
 
 | Archivo | Qué es |
 |---|---|
-| `BZBusRoute_<nombre>.json` | el **master** editable (header + todos los waypoints) |
-| `BZBusRoute_<nombre>_hdr.json` | el **header** solo — vehículo, fingerprint, config de manejo (sin waypoints) |
-| `BZBusRoute_<nombre>_wp.csv` | los **waypoints** en 21 columnas (*fast-load*: el server los lee sin parsear el JSON) |
+| `envelope_<clase de vehículo>.csv` | la **ficha medida de ese vehículo**: cuánto avanza solo sin acelerador, qué velocidad sostiene en cada curvatura, cómo frena. Se arma de tus tomas y **lo comparten todas las rutas de ese vehículo** |
 
-> Corre los **chequeos + el split** solo y te avisa que quedó **desplegada** (carga en caliente, **sin reiniciar**). Si configuraste un 2º server, te ofrece **copiar el trío** allá. *Tip:* convertí el mismo CSV **dos veces** con nombre+modo distinto (`costa_m1` / `costa_m3`) → las dos quedan en el Reproductor para comparar.
+**Dónde va.** A la **misma carpeta que las rutas** (`RoutesDir`, tu `…\profiles\BZ_AutoDrive\`) — el wizard lo escribe ahí junto con los cuatro archivos. El nombre lleva **la clase del vehículo, no el de la ruta**: `envelope_BZ_ChernoBus_02.csv`, no `envelope_MI_RUTA.csv`. Por eso hay **uno por vehículo** y no uno por ruta: si grabás tres rutas con el mismo bus, las tres alimentan y usan la misma ficha.
+
+La ficha se mide sola cuando terminás la toma como dice §7.1, y **el wizard no la pisa** en las tomas siguientes: cada toma nueva **suma** lo que aportó. Para rehacerla desde cero a propósito: `tools\python\python.exe tools\envelope_emit.py "<toma.csv>" --out "<RoutesDir>" --pisar` (o respondé **[R] regenerar** cuando el wizard te lo pregunte: lo hace solo si el vehículo cambió desde que se midió su ficha).
+
+> **Si movés una ruta a otro servidor:** una ruta convertida con esta versión **lleva adentro** el envelope de su vehículo (en el `_hdr.json`), así que alcanza con los cuatro archivos. Una ruta convertida antes necesita además el envelope de su vehículo; sin él, el framework arranca sin lo medido y usa los valores de fábrica hasta que junte tomas nuevas. Detalle de qué guarda y cómo se llena: **§6C**.
+
+> **Mientras el NPC maneja**, el server escribe además dos cosas en `profiles\BZ_AutoDrive\`: `BZ12_LOG_<ruta>_<hora>.csv`, con el detalle de esa corrida, y `AR_log.csv`, con una fila por cada vez que el AutoRecovery tuvo que intervenir (§9.6). Los podés borrar cuando quieras.
+
+> Te avisa que quedó **desplegada** (carga en caliente, **sin reiniciar**). Si configuraste un 2º server, **copia los archivos de la ruta** allá.
 
 #### [2] Importar ruta de BrigadaZ Transport v1
 ¿Venías usando **BrigadaZ Transport v1** y ya tenés un recorrido grabado? **No lo grabes de nuevo** — esta opción lo trae al formato de BZ_AutoDrive.
 - **Dónde busca el archivo.** La ruta de v1 **no está en el PBO**: vive en el profile de **tu** server, y esa carpeta **puede llamarse de cualquier forma** (un repack/fork le cambia el nombre), así que el wizard **no la adivina: se la indicás vos** con **[B]** (y se la acuerda). Apuntale a tu `profiles\` y busca en **todas las subcarpetas**. También mira la carpeta **`_importar`** que te crea dentro de tu carpeta de rutas (buzón para el JSON que te traés de **otro** server), y con **[P]** pegás el path a un `.json` puntual.
-- **De qué vehículo es.** Te pregunta la **identidad del vehículo** (`Wheelbase`, `Fingerprint`), que la toma de v1 no sabe. Te lista lo que ya tenés: cualquier **grabación** de ese vehículo (el `header_*.txt` — sirve una de **10 segundos**) o una **toma ya calibrada** (esas además traen el freno medido). Pone primero la que coincide con el vehículo que declara tu ruta.
-- **El perfil de obstáculos.** Te pregunta si Boris debe sortear autos parados en el camino: **Robusto** (frena + esquiva, ideal bus de línea 24/7), **Interceptable** (frena y se queda) o **Ninguno** (ver §A.5b).
+- **De qué vehículo es.** Te pregunta la **identidad del vehículo** (`Wheelbase`, `Fingerprint`), que la toma de v1 no sabe. Te lista lo que ya tenés: cualquier **grabación** de ese vehículo (el `header_*.txt` — sirve una de **10 segundos**) o una **ruta ya convertida** de ese vehículo (esas además traen el freno medido). Pone primero la que coincide con el vehículo que declara tu ruta.
+- **El perfil de obstáculos.** Te pregunta si Boris debe sortear autos parados en el camino: **Robusto**, **Interceptable** o **Ninguno** (§A.5b). ⚠ **Sólo tiene efecto con el cerebro 1.1** (`CEREBRO_11.txt`): el cerebro 1.2, el que corre por defecto, no esquiva; si algo lo traba, actúa el AutoRecovery (§9.6).
 - **Qué te corrige.** v1 marcaba la parada donde apretabas la tecla, no donde el vehículo frenaba: las paradas declaradas **en movimiento** se planchan a 0 con la frenada pintada hacia atrás; colapsa los puntos repetidos de cuando estabas detenido; marca el final como parada.
-> Lo que **no** migra: el perfil de manejo es por vehículo. Si tu recorrido es con otro auto, calibralo igual — es el manual de manejo de *ese* auto, no de la ruta.
+> Lo que **no** migra: el perfil de manejo es por vehículo. Si tu recorrido es con otro auto, **grabalo con ese auto**: la grabación trae el perfil de *ese* auto, no de la ruta.
+
+#### [3] Merge de tramos — continuar una grabación
+¿Grabaste una ruta larga **en partes** (te desconectaste, paraste a descansar, la seguiste otro día)? Esta opción une esas partes en **una sola toma**:
+- Elegís los `frame_*.csv` de las partes (dos o más, **en cualquier orden**): el wizard los encadena **por dónde empieza y termina cada una**, no por la hora. El final de una parte tiene que estar **a menos de 8 m** del comienzo de la siguiente, y todas tienen que ser **del mismo vehículo**.
+- Una parte repetida (mismo comienzo y mismo final) se descarta con aviso; las marcas de NUMPAD 4 de cada parte se conservan.
+- Le ponés un nombre a la toma unida y el wizard te ofrece **convertirla en ruta** en el acto (igual que **[1]**).
+> Para que empalme bien, **empezá cada parte donde terminó la anterior**: pará el vehículo, cortá la grabación, y al retomar arrancá desde ese mismo punto.
 
 #### [6] Configurar paths — las carpetas del server
-El wizard **recuerda** las carpetas en `wizard_config.json` (al lado del script) para no pedírtelas cada vez. En la **primera corrida** te las pregunta; después las cambiás acá cuando quieras *(Enter = mantener cada una)*:
+El wizard **recuerda** las carpetas en `wizard_config.json` (al lado del script) para no pedírtelas cada vez. En la **primera corrida** te las pregunta, en el idioma que elegiste; la carpeta de rutas es **obligatoria** (no hay una por defecto y sin ella no avanza); después las cambiás acá cuando quieras *(Enter = mantener cada una)*:
 
 | Carpeta | Qué es |
 |---|---|
-| **RoutesDir** | dónde van las **rutas** del server (el trío). Es tu `…\profiles\BZ_AutoDrive\`. **La única imprescindible.** |
+| **RoutesDir** | dónde van las **rutas** del server. Es tu `…\profiles\BZ_AutoDrive\`. **La única imprescindible.** |
 | **Grabaciones del cliente** | de dónde lee tus `frame_/path_*.csv` (por default `%LOCALAPPDATA%\DayZ\BZ_AutoDrive_PathLogger\`). |
-| **2º server (mirror B)** | si tenés un server de test aparte, te ofrece copiar la ruta allá al convertir. `-` = ninguno. |
+| **2º server (mirror B)** | si tenés un server de test aparte, el wizard copia la ruta allá al convertir. `-` = ninguno. |
 | **Rutas v1** | dónde busca las tomas de BrigadaZ Transport v1 (para `[2]`). |
 
 > Las carpetas son **portables**: un modder con el server en otro disco lo setea **una vez** y no toca `-RoutesDir` nunca más.
 
 ### Qué hace la conversión (y qué no)
-Es una conversión **directa**: `frame_to_route.py` toma tu grabación + su `header_*.txt` (el fingerprint) y arma el trío — **generaliza** la línea leyendo la física del vehículo del config, y le pega la config de manejo. **No hay linters interactivos ni "puntaje"**: es un conversor puro, no te va a preguntar *"¿capeo esta curva?"*. La calidad sale de **grabar bien** (§7): si la toma quedó sucia (te subiste a un cordón, frenaste mal), **re-grabá** — es gratis y rápido.
+Es una conversión **directa**: `frame_to_route.py` toma tu grabación + su `header_*.txt` (el fingerprint) y arma los archivos de la ruta — **generaliza** la línea leyendo la física del vehículo del config, y le pega la config de manejo. **No hay linters interactivos ni "puntaje"**: es un conversor puro, no te va a preguntar *"¿capeo esta curva?"*. La calidad sale de **grabar bien** (§7): si la toma quedó sucia (te subiste a un cordón, frenaste mal), **re-grabá** — es gratis y rápido.
 
-> **La comparación visual** —tu traza 🔵 contra la de Boris 🟠, con los "puntos calientes" donde más se desvió— ahora se hace en el **editor**: importás la corrida de Boris (`boris_native`) como capa y la superponés sobre tu toma. Ver §6B (*Importar corrida/tramo*) y §16.2.
+> **¿Querés ver dónde se desvió Boris de tu toma?** El framework puede exportar su propia trayectoria (`boris_native`) en el mismo formato que una grabación, para compararla con la tuya. Ver §15.2.
 
 ---
 
-## 6B. El editor de trayectorias y mapas — *dibujá en vez de grabar*
+## 6B. Los 4 archivos que genera el wizard — qué son y para qué sirve cada uno
 
-Además de grabar manejando, podés **dibujar la ruta directamente sobre el mapa** — sin subirte a ningún vehículo. Es una herramienta de navegador (un HTML **self-contained**, no instala nada) que abrís con **doble clic en `tools\editor\trajectory_editor.html`**. Sirve para dos cosas distintas, y por eso tiene **dos modos** (el switch arriba):
+Cuando convertís una toma, el wizard no produce un archivo: produce **cuatro**. Es la pregunta que más aparece, y la respuesta corta es que **cada uno se lee en un momento distinto de la vida de la ruta**.
 
-> 🚗 **Trayectoria** — dibujás/editás **la ruta de un vehículo** (la que sigue Boris).
-> 🗺 **Mapa** — editás **la red vial del mapa** (los caminos que usa el ruteo). *Esto es de admin/autoría.*
+```
+BZBusRoute_<NOMBRE>.json          ~510 KB    la ruta COMPLETA en un archivo: le da el NOMBRE en la lista.
+BZBusRoute_<NOMBRE>_hdr.json     ~3-12 KB    el CARNET: quien es el vehiculo y que sabemos de el.
+BZBusRoute_<NOMBRE>_wp.csv         ~82 KB    los PUNTOS del camino (una fila por waypoint).
+BZBusRoute_<NOMBRE>_cinta.csv     ~534 KB    tu manejo FIEL, 40 veces por segundo.
+```
 
-> **Todo es en vivo:** lo que dibujás o borrás queda **activo al instante** (se guarda en el navegador). El **Exportar** es solo para **desplegar/publicar**, no para trabajar.
+*(Los tamaños son de una ruta real de 1.016 waypoints y 2,8 km. Escalan con el largo.)*
 
-**Mapas disponibles en el editor.** Es **un solo editor** (`trajectory_editor.html`) con el **fondo ya construido** (relieve, vegetación, edificios, huellas), que toma el mapa por parámetro. Para abrirlo en cada mapa, abrí el archivo que corresponda:
+Los cuatro van juntos en la misma carpeta: `<perfil del server>\BZ_AutoDrive\`.
 
-| Mapa | Abrí | Qué es |
-|---|---|---|
-| **Chernarus** (`chernarusplus`) | `tools\editor\trajectory_editor.html` | el editor (Chernarus es el default) |
-| **Livonia** (`enoch`) | `tools\editor\trajectory_editor_livonia.html` | acceso → abre el editor con `?map=enoch` |
-| **Sakhal** | `tools\editor\trajectory_editor_sakhal.html` | acceso → abre el editor con `?map=sakhal` |
+### El master — `BZBusRoute_<NOMBRE>.json`
 
-> Los tres abren el **mismo** editor: los de Livonia/Sakhal son **accesos directos** de 2 líneas que le pasan el mapa. Para sumar un mapa nuevo alcanza con otro acceso igual.
+**Qué es.** La ruta entera en un solo archivo: todos los waypoints con sus paradas y nombres, los eventos, el vehículo, los accesorios y las opciones de configuración de esa ruta (Apéndice A).
 
-> Se irán **agregando más mapas** en próximas actualizaciones (el pipeline de extracción es genérico — lee el tamaño y la superficie del propio scan, no hay nada hardcodeado por mapa).
+**Para qué sirve.** Es **el nombre de la ruta**: lo que aparece en la lista del Reproductor y lo que pedís cuando lanzás. También es tu **respaldo legible** — si querés ver la ruta completa en un solo lugar, es éste.
+
+> **Ojo: no es el que se lee para manejar.** Cuando la ruta arranca, el servidor carga **el par compacto** `_hdr.json` + `_wp.csv` (y la cinta), no el master. Por eso los cuatro tienen que estar: el master te da el nombre, los otros hacen el trabajo.
+
+### El carnet — `_hdr.json`
+
+**Qué es.** Unos pocos kilobytes (3 sin la ficha del vehículo, hasta unos 12 con ella) con lo que define a esa toma:
+
+```
+VehicleClass        con que vehiculo grabaste
+Fingerprint         masa, marchas, angulo de direccion, wheelbase, radio minimo
+Wheelbase  MaxGear  la geometria y la caja
+Events              las paradas y lo que pasa en cada una
+Attachments         las ruedas y demas piezas con las que grabaste
+CreepKmh            este vehiculo, se arrastra solo en ralenti?
+CreepSource         de donde salio ese numero  ("coast2", "chist2", "nocreep")
+CreepSamples        con cuantas mediciones
+CoastAtRest         la frenada del motor casi parado, en m/s2
+Envelope            copia de la ficha medida del vehiculo (§6C)
+WpRows  CintaRows   cuantas filas tienen los otros dos archivos
+```
+
+**Para qué sirve.** El servidor lo lee **primero y entero**, porque es chico. Con eso ya sabe qué vehículo spawnear, qué física tiene y **cuánto trabajo le va a costar leer el resto**.
+
+> **Desde 1.2 el creep y la ficha del vehículo viajan acá**, y no sólo en archivos aparte. Eso arregla de raíz dos fallas que cuestan caro: un archivo suelto **se pierde** o **se desactualiza** respecto de la toma. Lo que viaja adentro no se despega.
+
+### Los puntos — `_wp.csv`
+
+**Qué es.** Una fila por waypoint: posición, rumbo, marcha, ángulo de rueda, si es parada y su nombre.
+
+**Para qué sirve.** Es lo que el NPC usa para saber **por dónde va el camino**. Se carga **de a pedazos**, repartido en varios cuadros del servidor.
+
+### La cinta — `_cinta.csv`
+
+**Qué es.** Tu manejo tal cual, **40 muestras por segundo**: posición, rumbo, velocidad del chasis, ángulo de la rueda delantera, acelerador, freno, marcha y freno de mano. Está indexada por **distancia recorrida**, no por reloj.
+
+**Para qué sirve.** Es la diferencia entre "seguir un camino" y **reproducir tu manejo**. De acá sale la velocidad que el NPC usa en cada punto: vuela donde vos volaste, frena donde vos frenaste.
+
+> **Por qué por distancia y no por tiempo.** Porque el NPC no repite tu reloj: repite tu **recorrido**. Si esperaste 6 segundos en un semáforo, eso no se reproduce solo — la espera se pone con un evento (§10).
+
+### ★ Por qué cuatro y no uno
+
+Por una razón concreta y medida: **cargar una ruta entera en un solo cuadro cuelga el servidor.**
+
+Una ruta son más de medio mega entre puntos y cinta. Leerlo todo de una vez congela la simulación el tiempo que tarde, y si se lanzan varias rutas juntas, se multiplica.
+
+La solución es una **cola de carga con presupuesto por cuadro**: el servidor lee un poco de cada ruta en cada cuadro y nunca gasta más de lo que puede. Para repartir el trabajo necesita **saber de antemano cuánto hay**, y eso es exactamente lo que declaran `WpRows` y `CintaRows` en el carnet.
+
+```
+el carnet     se lee ENTERO y al instante: quien es el vehiculo y cuanto pesa el resto
+los puntos    se cargan por tajadas
+la cinta      se carga por tajadas; es la fase mas larga
+```
+
+**El resultado:** el costo por cuadro es constante — con 1, 2, 3 o 5 rutas lanzadas a la vez, el peor cuadro es el mismo.
+
+### Preguntas frecuentes
+
+**¿Puedo borrar alguno?** No. Sin `_wp.csv` la ruta la maneja el cerebro 1.1; **sin `_cinta.csv` el NPC sigue el camino pero ya no reproduce tu manejo** (corre sin cinta); sin `_hdr.json` el servidor carga el master entero, que es lento y **congela el servidor** mientras lo lee; y sin el master la ruta no aparece en la lista.
+
+**¿Puedo editarlos a mano?** El master y el carnet son JSON y se dejan. **La cinta no se toca**: es una medición, no una configuración. Si algo de tu ruta no te gusta, la respuesta es **volver a grabarla**, no corregir los números.
+
+**¿Puedo usar esta ruta con otro vehículo?** No conviene, y la razón está en el carnet: la toma trae el *fingerprint* y las mediciones **de ese vehículo**. Si querés la misma ruta con otro auto, **grabala con ese auto** — te va a salir mejor que cualquier adaptación, porque el framework aprende de lo que grabás (§6C).
+
+**¿Los tengo que copiar a mano?** No: el wizard los deja donde van. Sólo asegurate de copiar **los cuatro** si movés una ruta de un servidor a otro.
+
+---
+
+## 6C. El envelope — lo que el framework aprende de tus tomas
+
+Además de los 4 archivos de cada ruta, el framework mantiene **un archivo por clase de vehículo**:
+
+```
+<perfil del server>\BZ_AutoDrive\envelope_<CLASE>.csv
+```
+
+**Qué es.** Lo que el framework **midió** de ese vehículo: cuánto frena, cuánto acelera, cuánto gira con cada ángulo de volante, si se arrastra solo. No lo configurás vos: sale de tus tomas.
+
+**Por qué existe.** El framework lee el config del vehículo (motor, caja, dirección) y con eso ya maneja. Pero el config **declara** cómo debería comportarse; el envelope **registra cómo se comporta de verdad**. Cuando los dos dicen cosas distintas, manda lo medido.
+
+### Qué guarda, campo por campo
+
+```
+scalars    radio de rueda y wheelbase
+fp         el fingerprint: la firma del vehiculo, para no mezclar clases distintas
+medido     la procedencia: de cuantas tomas y cuantos cuadros salio este envelope
+k          curvatura: cuanto gira de verdad con cada angulo de volante
+ratio      la transferencia de cada marcha (rpm -> velocidad)
+stx2       transferencia comando -> angulo de rueda
+shist      histograma de direccion: que angulos usaste
+ahist      aceleracion: lo que este vehiculo puede
+coast2     desaceleracion en punto muerto, por superficie   <- de aca sale el creep
+chist2     arrastre medido en ralenti (si lo hay)
+nocreep    cuantas veces se midio que NO se arrastra
+lhist      acelerador al despegar, durante el manejo normal
+lcal       el piso de despegue medido aparte                 <- ver mas abajo (en esta version queda vacio)
+lcalrun    la firma de cada medicion del piso
+```
+
+### Cómo se llena
+
+**Con las tomas que grabás.** Cada conversión aporta lo que esa toma haya mostrado. Una toma corta en línea recta aporta poco; una con curvas cerradas, frenadas fuertes y varias velocidades aporta mucho.
+
+> **La riqueza depende de la variedad, no del largo.** Diez vueltas a la misma rotonda enseñan una sola curva. El envelope está completo cuando **cubre lo que ese vehículo va a tener que hacer**: si tu sedán sólo va a recorrer 10 metros en recta, no necesita más.
+
+> **Un envelope es de UNA clase.** No se comparte entre vehículos, ni siquiera entre variantes del mismo modelo: dos libreas distintas son dos clases distintas y llevan envelopes separados. El `fp` está justamente para que no se mezclen.
+
+### Qué ficha usa una ruta
+
+Al arrancar, el vehículo usa **la ficha de su clase** (`envelope_<clase>.csv`), la que se enriquece con cada toma que grabás de ese vehículo. **Para que un vehículo aproveche tomas nuevas no hace falta reconvertir nada.**
+
+Cada ruta convertida con esta versión lleva además, adentro de su `_hdr.json`, **una copia de la ficha tal como estaba al convertirla**. Esa copia sólo se usa en dos casos:
+- **en el servidor no existe la ficha del vehículo** (por ejemplo, una ruta que llevaste a otro servidor);
+- **la ficha del servidor midió menos que la copia** (un servidor recién instalado, con una ficha de una sola toma corta).
+
+El RPT dice cuál usó, en la línea `[Envelope]`. Reconvertir una ruta sólo actualiza la copia que viaja adentro.
+
+### El piso de despegue: lo único que tus tomas no pueden medir
+
+**Qué es.** El acelerador mínimo con el que ese vehículo rompe el reposo. Por debajo de ese valor, pisar el acelerador no hace nada.
+
+**Por qué no sale de tus tomas.** Por dos razones medidas:
+
+1. **El teclado es binario.** En 502 tomas hay 1.873 arranques desde parado, y en **1.778 de ellos el acelerador estaba a fondo**. La tecla W no tiene medias tintas, así que tus tomas no contienen ningún valor intermedio del que deducir el piso.
+2. **El arranque desde parado es un transitorio del motor.** En 2 de cada 3 despegues, la velocidad sube hasta ~2 km/h y se resetea **sin que el vehículo se haya movido 10 centímetros**. Ese tramo no refleja tu manejo: es cómo el motor de física saca un vehículo del reposo.
+
+**Qué usa entonces el framework.** Un valor de flota **medido**: el piso de siete clases de vehículo (un auto, una moto, un 4x4 militar, un camión y tres buses), medido con el vehículo quieto en llano y el acelerador subiendo de a poco, entre cinco y nueve veces cada uno. Van de 0,05 a 0,25, y el framework usa la mediana, **0,13**, para cualquier vehículo. No hace falta que hagas nada.
+
+**Qué implica — y qué no.** Seamos claros:
+
+> **No cambia cómo maneja.** En una ruta sin paradas, entre el valor de flota y el de tu vehículo hay **un tick de rampa**: unas cuatro décimas de segundo al cruzar 5 km/h.
 >
-> **⚠️ Ojo — esto es solo el FONDO del editor, no una limitación del framework.** El vehículo **maneja en cualquier mapa**: en el juego el NPC lee la **superficie roadway real** en vivo, así que **grabar y correr rutas funciona en todos lados**. Que un mapa todavía no tenga fondo dibujable acá solo significa que, por ahora, en ese mapa **grabás** la ruta (NUMPAD 5) en vez de dibujarla a mano en el editor.
+> **Dónde sí puede notarse:** en el **arranque en pendiente**, donde el framework tiene que sostener el acelerador justo por encima del piso para no retroceder. Si un vehículo tuyo retrocede al arrancar en una cuesta empinada, ese es el lugar donde mirar.
 
-### 🚗 Modo Trayectoria — armar una ruta a mano
-
-**Las herramientas** (panel *⚒ Herramientas*):
-- **✎ Pluma** — agrega nodos al final, curva. **╱ Línea** — igual pero recto.
-- **⭶ Cursor** — mové un punto (con sus *handles* de curva). **▚ Selección** — caja para agarrar varios y mover/rotar el grupo. **＋ Insertar** — clic sobre la línea agrega un nodo ahí. **🗑 Borrar nodo**.
-- **📏 Regla** — medí en metros (punto a punto y suma); doble clic o Esc para limpiar.
-- **🖌 Pincel vel.** — pintá la velocidad (el valor del panel) sobre los nodos. **↹ Reverse** / **★ Evento** — marcás un tramo de marcha atrás o un nodo de evento (§10), igual que las teclas al grabar.
-
-**El menú 🛣 Trayectoria** — de dónde sale la traza:
-- **📄 Cargar mi toma (wp.csv)** — abrí una grabación **ya convertida** y editala (tocar velocidad, corregir la línea).
-- **⏺ Importar corrida/tramo** — traé un **`boris_native`** para **COMPARAR** (entra como capa: tu traza 🔵 vs la de Boris 🟠, ves dónde se desvió — §16.2), o un **`frame_`** para **COMBINAR** con tu traza.
-- **⟿ Traza auto (por calles)** — marcás **inicio y destino** y el editor **rutea solo por los caminos del mapa** (el grafo, §11). Ideal para armar un viaje largo sin dibujar cada tramo.
-
-**El menú ⚡ Ruta** — el vehículo y su velocidad:
-- **🚗 Asignar vehículo** — quién corre la ruta.
-- **⚡ Recalcular Vel. óptima** — calcula la velocidad **óptima según la física del vehículo** (grip en curvas, freno, radio mínimo). Punto de partida para ajustar a mano.
-- **✔ Validar ruta** — te marca **curvas imposibles, velocidades inalcanzables, frenados/aceleraciones imposibles** para ese vehículo (al panel ⚠), *antes* de correrla.
-
-**Las capas** (*👁 Vista*) son el **fondo propio del framework** (no usa assets del juego): **Relieve** (medido, hillshade + altura), **Vegetación** (bosque/campo), **Edificios** (huella real coloreada por tipo), **Huellas** (tierra). Prendés/apagás lo que te ayude a dibujar.
-
-**El proyecto** se guarda como `.bzproj.json` (📁 Proyecto → Guardar, `Ctrl+S`). Cuando la ruta está lista, **exportás los 3 archivos del framework** → deploy → play, igual que una grabación.
-
-### 🗺 Modo Mapa — editar la red vial *(admin / autoría)*
-
-Sirve para **armar o corregir la red de caminos** que el grafo (§11) usa para rutear — agregar una calle que la extracción automática no tomó, o borrar una que quedó mal.
-
-- **Tipo de camino** (el que vas a agregar): **🛣 Carretera** (asfalto, ancha, con **carriles** — doble mano, se maneja por el derecho) · **🌾 Camino de tierra** (media, solo eje) · **🥾 Senda** (angosta, solo eje). *Regla a ojo: ¿carriles? carretera. ¿solo eje? tierra si es media, senda si es finita.*
-- **✎ Pluma** para dibujar → **➕ Agregar traza a la red vial** con el tipo elegido → queda **ruteable al instante** y persiste.
-- **🧽 Borrar camino (clic)** — cada clic elimina el camino que tocás, **incluidos los que vienen por default** (es una capa de exclusión, no toca el archivo base). **↺ Restaurar borrados** los devuelve.
-- **⬇ Exportar caminos (planchar)** — arma el `.js` **final** para publicar (agregados + borrados). **Sin post-proceso**: lo que baja el navegador se copia y listo.
-
-> **Undo/redo son por modo** (`Ctrl+Z` / `Ctrl+Shift+Z`): deshacer en Mapa no te mueve la trayectoria y viceversa. Idioma ES/EN con el botón 🌐.
-
----
+**Medir el piso de cada vehículo** es una herramienta que existe en desarrollo y **no viene en esta versión**. Cuando venga, se va a explicar acá.
 
 ## 7. Cómo grabar bien (la calidad sale de acá)
 
@@ -287,12 +411,45 @@ El NPC va a manejar **tan bien como manejaste vos** — la grabación es su manu
 - **Ritmo constante en las rectas:** la velocidad que grabás es la referencia que va a usar el NPC.
 - **Una toma limpia vale más que diez sucias.** Si te subiste a un cordón o frenaste mal, **re-grabá** — es gratis y rápido.
 - **Cambios de sentido (K-turn, galpón):** frená del todo, **cambiá de marcha y seguí** — el **intercambio se auto-detecta** del cambio de gear (no tocás ninguna tecla); la reversa también sale del gear (§9.4).
-- **Paradas:** frená del todo y marcá con **NUMPAD 4** donde querés que el NPC pare.
-- **Bocina y luces:** mientras grabás, **lo que hagas con la bocina (tecla H) y las luces (tecla L) queda grabado** y Boris lo reproduce **en el mismo lugar** donde lo hiciste (replay espacial). ¿Querés que el bus toque bocina al llegar a la parada? Tocá **H** ahí mientras grabás. ¿Querés que prenda las luces al entrar a un túnel? Tocá **L** ahí. No configurás nada — manejás como querés que se vea. *(Si preferís controlarlo por config en vez de grabarlo, ver los modos `HornMode`/`LightsMode` en el Apéndice A.2.)*
-  > **Ojo con las luces:** por default `LightsMode` es **`auto`** (luces de noche automáticas — ver §7 "Bocina y luces"), así que **las teclas L que grabes solo se reproducen si ponés `"LightsMode": "replay"`** en la ruta. Con el default `auto` las luces las decide la hora del juego, no lo grabado. (La bocina sí se reproduce siempre por default.)
+- **Paradas:** una sola frenada continua hasta detenerte del todo, y ahí marcá con **NUMPAD 4**. Ver "Cómo parar" más abajo.
+- **Bocina y luces:** en esta versión **no se graban** — lo que hagas con la bocina o las luces mientras grabás no queda en la toma. Las **luces** las prende el framework según la hora del juego (`LightsMode: "auto"`, el default) y la **bocina** se configura por ruta con `HornMode` (§9 "Bocina y luces" y Apéndice A.2b).
   > **Para que las luces se vean:** el vehículo necesita **batería + bombillas (faros) instaladas**. El framework le energiza la batería al spawn, pero las bombillas tienen que estar entre sus `Attachments` (normalmente ya vienen del fingerprint del vehículo). Sin faros físicos, la tecla L no prende nada.
 
 > *Regla mental:* manejá pensando "así quiero que lo haga el bot". Lo que vos hagas, lo hace él.
+
+### 7.1 — Cómo terminar la toma (de esto depende que el NPC llegue exacto)
+
+Al final de la toma, **en llano**: frená, **soltá todo** —acelerador, freno y freno de mano— y **esperá a que el motor baje a ralentí**. Son dos o tres segundos, más en un deportivo. Recién ahí cortá con **NUMPAD 5**, con el motor encendido.
+
+En esos segundos el framework mide cuánto avanza el vehículo solo, sin acelerador. Esa medición es la que le permite clavar el punto final. Sin ella usa un valor estimado y la llegada se corre.
+
+- **El freno de mano no sirve para esto:** con el freno de mano puesto no se puede medir si el vehículo avanza solo.
+- **En pendiente no se mide** (ver abajo).
+- **Alcanza con hacerlo una vez por vehículo.** El wizard guarda la medición por vehículo (`envelope_<clase>.csv`) y no la pisa en las tomas siguientes del mismo vehículo. Para rehacerla: `tools\python\python.exe tools\envelope_emit.py "<toma.csv>" --out "<RoutesDir>" --pisar`.
+
+### 7.2 — Cómo parar (paradas intermedias)
+
+**Una sola frenada continua hasta detenerte.** No frenes, sueltes y te arrastres los últimos metros: el NPC puede llegar un poco más lento y se queda en la *primera* frenada, metros antes de tu parada.
+
+**Recién detenido del todo, marcá NUMPAD 4**, y seguí.
+
+- **No hace falta esperar en la toma.** El tiempo de espera lo ponés en el evento de esa marca (§10.1); al grabar, detenete lo justo y arrancá.
+- **No hace falta esperar el ralentí en cada parada**: eso es una sola vez por vehículo (§7.1). Podés mantener el freno pisado.
+- **Cambiar de marcha estando detenido está bien** —bajar a primera para arrancar—: el framework lo resuelve.
+
+**Si parás en pendiente, mantené el freno de pie pisado** mientras marcás o cortás la toma. Si soltás, el vehículo rueda unos centímetros hacia atrás y ese retroceso queda grabado. Usá el freno de pie, no el de mano. Y la medición de §7.1 hacela en cualquier tramo llano de esa misma toma: lo más cómodo es al principio, arrancá a grabar con el motor encendido, quedate quieto dos o tres segundos con todo suelto, y recién ahí salí.
+
+### 7.3 — Tres cosas que arruinan una toma
+
+**Terminar derrapando.** Si al frenar el vehículo se cruza o hace un trompo, regrabá ese final. Lo que el vehículo hace de costado no lo puede reproducir ningún chofer, y el framework puede llegar a interpretarlo como una maniobra que no existe. El wizard te avisa con el segundo exacto: `(!) TROMPO en la fila 7393 de la toma (t 184.8 s ...): el chasis gira 216 grados y desliza 179 -- la toma NO es reproducible desde ahi`.
+
+**Pasar rozando en un lugar angosto.** En calles angostas y curvas cerradas junto a carteles, postes o muros, pasá más despacio y bien centrado. El NPC repite tu línea con variaciones de centímetros entre una corrida y otra: si en tu toma pasaste rozando, a veces va a tocar.
+
+**Ignorar los avisos de salto.** A alta velocidad el server a veces corrige tu posición hacia atrás mientras grabás; se siente como un tirón. El conversor lo limpia solo, pero si en la salida del wizard ves `(!) glitch en racha` o `(!) salto persistente`, revisá ese tramo o regrabalo.
+
+### 7.4 — Grabá vacío
+
+Grabá con el vehículo **vacío**. Baúl lleno y pasajeros no cambian cómo lo maneja el NPC: velocidad, aceleración, trayectoria y llegada dan igual. Lo que grabaste vacío sirve cargado.
 
 ---
 
@@ -303,7 +460,7 @@ Es el caso para el que **nació** el framework: **un bus de línea que recorre t
 Cómo dejarlo corriendo como servicio permanente:
 1. **Grabá una ruta en loop** (que vuelva cerca del inicio) — ej. la costa parando en cada pueblo.
 2. **Dejala como la ruta default** del server (`BZBusRoute.json`).
-3. Al arrancar el server, el bus **aparece solo y empieza a manejar**. Cuando termina la vuelta (o si lo destruyen), **respawnea** a los `RespawnDelay` segundos (`300` por default) → **servicio continuo, 24/7**.
+3. Al arrancar el server, el bus **aparece solo y empieza a manejar**. Cuando termina la vuelta (o si lo destruyen), **respawnea** a los `RespawnDelay` segundos (`300` por default; `0` o un número negativo valen **60 s**, no lo apagan) → **servicio continuo, 24/7**. *(Las rutas que largás desde el Reproductor no se re-lanzan: al terminar, el vehículo se retira solo.)*
 
 > No necesita Quest ni que vos estés conectado: solo el mod cargado + tu ruta default. Lo prendés y se olvida.
 > *Ejemplo:* el bus de la costa de Chernarus uniendo 14 paradas, dando vueltas todo el día — los jugadores lo toman para moverse, como un colectivo de verdad.
@@ -313,9 +470,9 @@ Cómo dejarlo corriendo como servicio permanente:
 |---|---|---|
 | **Servicio permanente** | sola, al boot del server (ruta default + loop) | bus de línea ambiental |
 | **On-demand (Reproductor)** | la elegís en la UI, sin restart | probar, eventos puntuales |
-| **Por misión (Quest)** | la dispara un quest | convoyes, refuerzos, emboscadas (§12) |
+| **Por misión (Quest)** | la dispara un quest | convoyes, refuerzos, emboscadas (§11) |
 
-### 8.1 — Parada a demanda: hacele señas al bus *(validado in-game)*
+### 8.1 — Parada a demanda: hacele señas al bus *(validado in-game con el cerebro 1.1; con el 1.2 falta probarlo)*
 
 El bus de línea no para solo en los waypoints `isStop`: **cualquier jugador puede pedirle que pare haciéndole señas**, como en la vida real.
 
@@ -329,15 +486,99 @@ El bus de línea no para solo en los waypoints `isStop`: **cualquier jugador pue
 **Qué pasa por dentro:**
 - La detección es **server-side**: el framework recorre los jugadores cerca del vehículo, mira si están en el **cono frontal** del bus (producto punto rumbo-del-bus · dirección-al-jugador > 0.25 → "el chofer lo ve", no detrás ni al costado) y si están ejecutando el emote OK.
 - Al detectarlo, **pausa** el bus (reusa el freno del modo pausa) y marca la reanudación a **+10 s**.
-- A los 10 s reanuda **re-localizando** el waypoint a la posición real del bus (clave, ver abajo).
+- A los 10 s reanuda. Con el cerebro 1.2 el seguimiento es por posición, así que retoma desde donde quedó el vehículo; con el 1.1 reanuda **re-localizando** el waypoint a la posición real del bus (ver abajo).
 
 **Parámetros:** el **on/off** ya es config (`HailGestureEnabled`, default off); el resto está hoy en constantes (fáciles de exponer a JSON): radio 30 m · cono `dot > 0.25` (~±75°) · espera 10 s (20 ticks) · emote `ID_EMOTE_THUMB` (9).
 
 **Dos cosas que costó resolver (notas para quien extienda):**
 1. **Leer QUÉ emote hace el jugador, server-side.** `EmoteManager.GetGesture()` NO sirve: devuelve `m_GestureID` (otro campo, seteado por `SetGesture()`), no el emote en curso. El emote real vive en `m_CurrentGestureID`, que es `protected` y sin getter público. Solución: un `modded class EmoteManager { int BZ_CurrentGesture() { return m_CurrentGestureID; } }` — es script class (no engine → moddeable), y el `protected` es accesible desde la subclase.
-2. **Retomar derecho tras la parada.** Al frenar, el bus sigue de largo ~10-15 m mientras se detiene, pero el índice de waypoint queda congelado donde frenó. Como el avance del índice está capado por la velocidad (no avanza desde 0 km/h), al reanudar el bus está *adelante* de su objetivo → el control apuntaba a un wp que quedó atrás → **timonazo al costado**. Fix: al reanudar, **re-localizar el índice al waypoint más cercano a la posición real** (una vez, salteando el cap).
+2. **Retomar derecho tras la parada** *(cerebro 1.1)*. Al frenar, el bus sigue de largo ~10-15 m mientras se detiene, pero el índice de waypoint queda congelado donde frenó. Como el avance del índice está capado por la velocidad (no avanza desde 0 km/h), al reanudar el bus está *adelante* de su objetivo → el control apuntaba a un wp que quedó atrás → **timonazo al costado**. Fix: al reanudar, **re-localizar el índice al waypoint más cercano a la posición real** (una vez, salteando el cap).
 
 > **El gesto como primitiva.** Es el primer uso de un patrón más general: *el emote del jugador como input de control del framework*. Hoy está cableado a "OK → parar", pero el mismo mecanismo (leer el emote server-side + condición de proximidad/visión) sirve para cualquier comando (seguir, esperar, dar la vuelta). Es la contraparte jugador↔NPC de los triggers del DSL de eventos (§10).
+
+### 8.2 — Lanzar y encadenar rutas desde el `init.c` de tu misión (sin mod propio) *(probado en juego)*
+
+Es la forma más básica de disparar secuencias: unas líneas en el `init.c` de la misión del server (`mpmissions\<tu misión>\init.c`) y el framework hace el resto. **No hace falta armar un mod:** el `init.c` ve las clases de los mods cargados.
+
+**Dónde va.** Dentro de la clase `CustomMission` que ya tiene tu `init.c` agregás un `OnInit` (si ya tenés uno, sumá las líneas adentro, después del `super.OnInit()`) y los métodos de abajo. Las rutas se nombran por **archivo**: `BZBusRoute_<nombre>.json`, tal como las deja el Wizard en `profiles\BZ_AutoDrive\`.
+
+```c
+class CustomMission: MissionServer
+{
+    // ... lo que ya tenias ...
+
+    override void OnInit()
+    {
+        super.OnInit();   // primero: ahi arranca el framework
+        // espera a que el mundo este listo antes de lanzar (60 s)
+        GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.BZ_Lanzar, 60000, false);
+    }
+
+    // lanza una ruta con su propio runner; devuelve null si no arranco
+    BZBusService BZ_Ruta(string archivo, string etiqueta)
+    {
+        BZBusService r = new BZBusService();
+        BZBusService.GetRunners().Insert(r);
+        r.SetHoldAtStops(false);          // false: en las paradas espera lo grabado y sigue solo
+        r.SetEtiqueta(etiqueta);          // firma el log: <ruta>#<etiqueta>
+        r.RespawnFromPath(archivo);
+        if (!r.RunnerIsActive() && !r.RunnerEsperandoCabecera())
+        {
+            BZBusService.UnregisterRunner(r);
+            return null;
+        }
+        return r;
+    }
+
+    void BZ_Lanzar()
+    {
+        BZ_Ruta("BZBusRoute_PATRULLA.json", "P1");
+        // otra, 2 minutos despues
+        GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.BZ_LanzarConvoy, 120000, false);
+    }
+
+    void BZ_LanzarConvoy()
+    {
+        BZ_Ruta("BZBusRoute_CONVOY_01.json", "C1");
+    }
+}
+```
+
+**Encadenar: cuando termina una, largar la siguiente.** Un runner lanzado así **se retira solo** cuando llega completo (a los `EndHoldSeconds`, 3 s por defecto), así que alcanza con mirar cada tanto si terminó. Estos métodos van en la misma clase:
+
+```c
+    ref BZBusService m_BZ_Tramo;       // el runner que esta corriendo
+    int m_BZ_Paso = 0;
+
+    void BZ_Cadena()   // llamala una vez (por ejemplo desde BZ_Lanzar)
+    {
+        m_BZ_Tramo = BZ_Ruta("BZBusRoute_IDA.json", "IDA");
+        GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.BZ_Vigilar, 5000, true);   // cada 5 s
+    }
+
+    void BZ_Vigilar()
+    {
+        if (!m_BZ_Tramo || !m_BZ_Tramo.RunnerRouteEnded()) return;   // todavia maneja
+        if (!m_BZ_Tramo.RunnerRouteCompleted())
+            BZBusService.UnregisterRunner(m_BZ_Tramo);             // termino mal: retiralo vos
+        m_BZ_Paso++;
+        if (m_BZ_Paso == 1) m_BZ_Tramo = BZ_Ruta("BZBusRoute_VUELTA.json", "VUELTA");
+        else
+        {
+            m_BZ_Tramo = null;
+            GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).Remove(this.BZ_Vigilar);   // fin de la cadena
+        }
+    }
+```
+
+**Lo que tenés que saber:**
+- **`SetHoldAtStops(false)`.** Con `true` —el default de `PlayRouteByName`— el vehículo se queda en cada parada hasta que alguien llame a `ResumeFromHold()`: desde un `init.c` quedaría parado para siempre en la primera.
+- **Un runner propio por ruta**, no `PlayRouteByName`: así cada uno se retira solo al terminar y lo podés dar de baja con `UnregisterRunner`. Sale en el panel con su etiqueta, y desde ahí también lo podés parar.
+- **Si termina mal** (`ROUTE_INCOMPLETE`, `STUCK`), el vehículo queda quieto: retiralo vos, como en el ejemplo.
+- **Si el punto de salida está ocupado**, el runner espera a que se libere (`RunnerEsperandoCabecera()`): en una cadena de ida y vuelta, la vuelta sale cuando se retira el vehículo de la ida.
+- **Para un servicio que da vueltas para siempre**, dejá esa ruta como la ruta por defecto del server (§8), o relanzala cuando termine con el mismo esquema de la cadena.
+- **Los eventos de cada ruta** (§10) funcionan igual: el `init.c` decide cuándo arranca cada una; lo que pasa adentro lo ponen sus `Events`.
+- **Un error en el `init.c` no deja arrancar la misión.** Mirá el RPT (`Can't compile`). Valen las reglas de Enforce del Apéndice B.5: no hay operador ternario, `new` va sin argumentos, etc. La API completa (estado, pausa, eventos) está en el Apéndice B.7.
 
 ---
 
@@ -347,11 +588,13 @@ El bus de línea no para solo en los waypoints `isStop`: **cualquier jugador pue
 - **sigue tu línea** grabada (*pure-pursuit*: apunta a un punto adelante sobre tu traza), y
 - **usa tu velocidad grabada** —vuela en las rectas, frena antes de las curvas, igual que vos—, **moderada** por lo que el vehículo **puede** hacer en cada curva: si grabaste una curva más rápido de lo que ese auto aguanta, la **capea sola**.
 
-El acelerador/freno salen de un **modelo inverso** derivado del **config del vehículo** (motor, torque, caja), no de tus pedales. Por eso **el mismo controlador maneja cualquier vehículo sin tuning por-auto** (config-como-manual): cada uno lo hace según SU física — el chico clava la línea, el pesado la hace más lento pero llega. *(La grabación en sí es de su vehículo; para correr la misma **traza** en otro auto, la reasignás en el editor — §6B.)*
+El acelerador y el freno parten de **tus pedales grabados** (la cinta) y los corrige un **modelo inverso** derivado del **config del vehículo** (motor, torque, caja) y de lo que se **midió** de él: si el vehículo puede menos que lo que pediste, lo acomoda. Por eso **el mismo controlador maneja cualquier vehículo sin tuning por-auto** (config-como-manual): cada uno lo hace según SU física — el chico clava la línea, el pesado la hace más lento pero llega. *(La grabación en sí es de su vehículo: para correr la misma ruta en otro auto, **grabala con ese auto** — §6B, §6C.)*
 
-> **No configurás nada:** el wizard produce este control solo, leyendo el fingerprint del auto (§5). *(Antes existían "modos 1/2/3" —repetir pedales / velocidad por curvatura / velocidad grabada—; quedaron **unificados en este único control**, el que valida esta versión. Los flags que los prendían —`FollowPath`, `UseInverseModel`…— siguen en el Apéndice A.2 como **ajuste avanzado**, por si un modder quiere otro comportamiento.)*
+> **No configurás nada:** el wizard produce este control solo, leyendo el fingerprint del auto (§5). *(Antes existían "modos 1/2/3" —repetir pedales / velocidad por curvatura / velocidad grabada—; quedaron **unificados en este único control**, el que valida esta versión. Los flags que los prendían —`FollowPath`, `UseInverseModel`…— son **del cerebro 1.1**: con el 1.2, el que corre por defecto, no se leen (Apéndice A.2).)*
 
-> **¿Un vehículo pesado se ve forzado con tu ritmo?** Lo mejor es **grabar la ruta con ese vehículo** — así la corrida ya nace a su medida. *(Si después querés la misma traza para autos más chicos, dibujala/reasignala en el editor — §6B — en vez de reusar la grabación del pesado.)*
+> **¿Un vehículo pesado se ve forzado con tu ritmo?** Lo mejor es **grabar la ruta con ese vehículo** — así la corrida ya nace a su medida. *(Si después querés esa misma ruta para autos más chicos, **grabala con uno de ellos** en vez de reusar la grabación del pesado: cada toma alimenta el envelope de SU clase — §6C.)*
+
+> **Lo que el NPC no reproduce: el tiempo detenido.** El NPC repite tu recorrido **por posición, no por reloj**. Lo que hiciste parado —esperar, mirar alrededor— no se repite: al llegar a una parada arranca apenas se detiene. La espera la ponés vos con un evento en esa marca (§7.2 y §10.1).
 
 ### 9.4 — Cambios de sentido (K-turn, entrar de cola): auto-detectados
 
@@ -362,15 +605,15 @@ Cuando tu ruta necesita **cambiar de dirección** —un giro de tres puntos (**K
 2. Hacés la reversa: **despacio (3–8 km/h), con correcciones chicas** (el arco no tiene que ser perfecto, lo vas corrigiendo). El framework **auto-detecta** que ese tramo es reversa —del gear— y lo trata como reversa.
 3. Al terminar → **frená del todo** → metés **forward** y seguís. *(De nuevo sin tecla: el cambio reversa → forward es el segundo intercambio.)*
 
-Repetís en cada cambio de sentido, siempre igual: **frenás del todo, cambiás de marcha, seguís**. Cada uno de esos cambios de gear corta el tramo (`legBreak`), y Boris lo trata como un **nuevo arranque**: llega alineado, se planta, y sale limpio en el sentido nuevo. Es el *cusp* (reversa↔forward), el punto más difícil del control — hoy **resuelto** (§18).
+Repetís en cada cambio de sentido, siempre igual: **frenás del todo, cambiás de marcha, seguís**. Cada uno de esos cambios de gear corta el tramo (`legBreak`), y Boris lo trata como un **nuevo arranque**: llega alineado, se planta, y sale limpio en el sentido nuevo. Es el *cusp* (reversa↔forward), el punto más difícil del control — hoy **resuelto** (§17).
 
 > **Un 0 km/h NO es siempre un intercambio.** Frenar del todo **sin cambiar de sentido** (esperar, ceder el paso) es una **pausa**, no un corte de tramo. El conversor distingue las dos cosas: solo el 0 km/h **con cambio de gear forward↔reverse** genera el `legBreak`. Por eso no necesitás marcar nada — el gear ya lo dice todo.
 
 **Lo que el framework hace SOLO (no marcás nada):**
 - **El intercambio** — sale del **cambio de gear** (forward↔reverse) grabado: ahí el conversor pone el `legBreak` y corta el tramo.
 - **La reversa** — sale del **gear grabado**: si manejaste en marcha atrás, ese tramo es reversa. Boris la reproduce con su controlador de reverse (dirección por eje trasero) y la **generaliza a cada vehículo por su física** (uno de giro ancho reversa más lento y por eso sigue mejor el arco).
-- **La aproximación** a la maniobra — **automática** (`ApproachAuto`): Boris frena predictivo ANTES de la maniobra, sin que marques nada.
-- **La parada final** (endpoint) — autoadaptativa por vehículo + piso (§18).
+- **La aproximación** a la maniobra — **automática**: Boris frena predictivo ANTES de la maniobra, sin que marques nada.
+- **La parada final** (endpoint) — autoadaptativa por vehículo + piso (§17).
 
 > **Regla de oro: frená en la recta, no en la curva.** El punto donde frenás para invertir la marcha es donde el auto-detect **corta el tramo** — así que hacelo donde la **trayectoria YA ES RECTA** (el rumbo ya se estabilizó), no en plena curva. El detalle de por qué (los ángulos de volante de la reversa son del vehículo, no del camino) y la validación multi-vehículo están en §9.5.
 
@@ -378,59 +621,106 @@ Repetís en cada cambio de sentido, siempre igual: **frenás del todo, cambiás 
 
 > *Tomas que arrancan en reversa.* El conversor define la dirección del **tramo inicial** por el **primer movimiento real** (>1 km/h), no por el gear en que estás parado. Si tu ruta empieza dando marcha atrás, hacé que tu **primer movimiento SEA la reversa** —sin creepear ni un pelo hacia adelante— y largá decidido, así el arranque queda leído como reversa.
 
-**Maniobras finas en el editor.** ¿Querés el arco EXACTO de un estacionamiento, sin depender del pulso? Lo dibujás en el **editor** (§6B) — da más control que grabarlo a mano (el editor marca el intercambio en el nodo, también sin tecla).
+**Maniobras finas.** ¿Querés el arco EXACTO de un estacionamiento? Se consigue **grabándolo con calma**: frenás del todo, metés la marcha, hacés la maniobra despacio (3-8 km/h) con correcciones chicas. El framework reproduce **lo que hiciste**, así que una maniobra grabada con cuidado sale mejor que una apurada. Si no te gustó cómo salió, volvé a grabar ese tramo: es más rápido que corregirlo después, y el resultado es fiel a la física de ese vehículo.
 
 > **`maniobra` (legacy):** existió un modo `maniobra` (replay directo con salida por cruce de waypoint) que se marcaba con tecla. **Deprecado** desde 2026-06-17 y **sacado del menú**: cruise + aproximación automática + geometría lo cubren. No aplica a tomas nuevas.
 
 ### 9.5 — Que una traza con maniobra sirva en varios vehículos (dónde cortar el cambio de sentido)
 
-La **reversa** es **replay directo (open-loop)**: el NPC reproduce los **ángulos de volante EXACTOS** que hiciste, **sin corrección lateral** (no hay cruise que lo acomode al camino). De ahí la premisa **"llegar listo"**: el vehículo tiene que alcanzar el tramo de reversa en la **pose y la velocidad** que demostraste — como es open-loop, un error de entrada no lo corrige.
+La **reversa** reproduce los **ángulos de volante** que hiciste (la cinta), con una corrección chica para no salirse de la línea; si la cinta no alcanza, un control de reversa propio sigue el camino. Como la corrección es chica, vale la premisa **"llegar listo"**: el vehículo tiene que alcanzar el tramo de reversa en la **pose y la velocidad** que demostraste — un error grande de entrada no se corrige del todo.
 
-**El punto fino: los ángulos de volante son del vehículo, no del camino.** Un mismo ángulo de volante da un **radio más ancho o más cerrado según el wheelbase** (un auto largo se abre, uno corto cierra). Entonces un tramo open-loop **sobre una curva NO generaliza** a otro vehículo: el que grabó cierra la curva, pero un auto más largo, con esos mismos ángulos, se abre y se la lleva puesta.
+**El punto fino: los ángulos de volante son del vehículo, no del camino.** Un mismo ángulo de volante da un **radio más ancho o más cerrado según el wheelbase** (un auto largo se abre, uno corto cierra). Entonces un tramo reproducido con tus ángulos **sobre una curva NO generaliza** a otro vehículo: el que grabó cierra la curva, pero un auto más largo, con esos mismos ángulos, se abre y se la lleva puesta.
 
 **La regla de oro — cortá en la recta, no en la curva.** Hacé el **cambio de sentido** (frená del todo antes de invertir la marcha, ahí el auto-detect corta el tramo) donde la trayectoria **YA ES RECTA** (el rumbo ya se estabilizó), no en plena curva. Así:
 - La **curva** la maneja el **control cerrado** (el pure-pursuit sigue el **camino**, agnóstico al vehículo — cada auto la hace con SU volante).
-- Solo la **recta + la maniobra** las hace el replay open-loop, que en recta es seguro (no hay curva que se abra).
+- Solo la **recta + la maniobra** dependen de tus ángulos de volante, y en recta eso es seguro (no hay curva que se abra).
 
-**Cross-vehículo: el editor, no la grabación.** Una **grabación** es de **su** vehículo (captura su *fingerprint*, su freno medido, su marcha) — meterle un header ajeno trae problemas, así que **no se recomienda header-swapear grabaciones**. Para correr la **misma traza con maniobra en otro vehículo**, el camino de hoy es el **editor**: cargás la traza y le **asignás el vehículo** (o lo cambiás cuando quieras — "Asignar vehículo", §6B). La **traza dibujada es vehicle-independiente**, y ahí sí vale la regla del corte de arriba (la maniobra en recta). El framework, por su lado, **no reentrena nada por vehículo**: lee el config del auto asignado (motor, torque, caja — "config como manual de manejo") y arma su curve advisory y su modelo inverso a la medida de ESE auto. *(El header-swap de una grabación sigue existiendo como mecanismo técnico legacy, pero el camino recomendado es el editor.)*
+**Cross-vehículo: grabala de nuevo.** Una **grabación** es de **su** vehículo: captura su *fingerprint*, su freno medido, su marcha, y alimenta el envelope de **esa clase** (§6C). Por eso **no se recomienda header-swapear grabaciones** — meterle el carnet de otro auto le pone mediciones que no son suyas.
+
+Para correr la misma ruta **con maniobra** en otro vehículo, **grabala con ese vehículo**. Con una maniobra de por medio la razón es más fuerte todavía: la reversa **reproduce tus ángulos de volante** y esos ángulos son **del vehículo, no del camino** — un auto más largo con esos mismos ángulos se abre y se lleva la curva puesta. Eso no se arregla reasignando: se arregla grabando.
+
+El framework, por su lado, **no reentrena nada por vehículo**: lee el config del auto (motor, torque, caja — "config como manual de manejo"), le suma lo que midió en el envelope de esa clase, y arma su curve advisory y su modelo inverso a la medida de ESE auto.
 
 > **Validado (la regla del corte).** Probando la **misma traza** en dos vehículos de wheelbase distinto —**OffroadHatchback** (2.357 m) y **CivilianSedan** (2.935 m, más largo)—:
-> - con el **corte en la recta** → completó la maniobra sin chocar; la reversa clava el intercambio bien alineada (precisión de parada resuelta — §18).
+> - con el **corte en la recta** → completó la maniobra sin chocar; la reversa clava el intercambio bien alineada (precisión de parada resuelta — §17).
 > - con el **corte en la curva** → el Sedan, más largo, **se abrió y chocó** (esos ángulos de volante eran del Hatchback).
 >
-> Moraleja práctica: **para que una traza con maniobra sirva en varios vehículos, el corte va en recta** — y el cambio de vehículo lo hacés en el editor (§6B).
+> Moraleja práctica: **hacé el cambio de sentido en recta, no en curva.** Y si querés esa misma ruta para otro vehículo, **grabala con ese vehículo**: la maniobra es lo primero que deja de generalizar.
 
-**La aproximación a la maniobra es automática (`ApproachAuto`).** El control frena predictivo antes del cambio de sentido, sin que marques nada. Si el corte cae en una **zona rápida** y notás que **frena de más** y se planta justo en la transición, la respuesta es **cortar la maniobra donde ya venís lento** (no en plena recta rápida) — así la entrada es suave.
+**La aproximación a la maniobra es automática.** El control frena predictivo antes del cambio de sentido, sin que marques nada. Si el corte cae en una **zona rápida** y notás que **frena de más** y se planta justo en la transición, la respuesta es **cortar la maniobra donde ya venís lento** (no en plena recta rápida) — así la entrada es suave.
 
-**Sin teleport de alineación (snap OFF por default).** El *ModeEntrySnap* —el teleportito que alineaba pose+rumbo al entrar a la reversa— ahora viene **apagado por default**. El control genuino (reverse por eje trasero, que clava el rumbo a **<1°**) posiciona **sin teleportar**. Si alguna ruta puntual lo necesitara, se reactiva por config (`ModeEntrySnapEnabled` — Apéndice A.7).
+**Sin teleport de alineación.** El vehículo entra a la reversa manejando, sin ningún salto de posición. *(El cerebro 1.1 tenía un "snap" de alineación, `ModeEntrySnapEnabled`, apagado por defecto; el 1.2 no lo usa.)*
 
 ---
 
 ### Bocina y luces — los modos `HornMode` / `LightsMode`
 
-Aparte de **cómo** maneja, una ruta define **qué hace con la bocina y las luces**. La bocina por default **reproduce lo que grabaste** (replay espacial — §7); las luces, en cambio, **por default son automáticas** (ver abajo). Podés forzar otro comportamiento sin tocar la grabación, en el Apéndice A.2:
+Aparte de **cómo** maneja, una ruta define **qué hace con la bocina y las luces**. **En esta versión la toma no graba ni la bocina ni las luces**, así que las dos se configuran por ruta (Apéndice A.2b):
 
-- **`HornMode`** — `replay` (default, toca donde lo hiciste vos) · `stops` (bocina en cada parada) · `finish` (bocina al llegar al final) · `off` (nunca).
-- **`LightsMode`** — **`auto` (DEFAULT)** · `off` · `auto_inverted` · `replay` · `on` (detalle abajo).
+- **`HornMode`** — `off` (**default**: nunca) · `stops` (bocina al terminar cada parada, antes de salir) · `finish` (bocina al llegar al final, cuando la ruta termina completa). `replay` viene de cuando la toma grababa la bocina: hoy sólo suena el verbo `horn`, y el server lo avisa al cargar la ruta.
+- **`LightsMode`** — **`auto` (DEFAULT)** · `off` · `auto_inverted` · `on` (detalle abajo). `replay` no sirve en esta versión: no hay luces grabadas que reproducir (sólo actúan los verbos, y el server lo avisa al cargar). **Un verbo `lights_on` / `lights_off` manda sobre `LightsMode` hasta el próximo spawn.**
 
-**Luces automáticas por default (`auto`).** Desde la versión actual, **todas las tomas arrancan en `auto`**: de noche el vehículo **prende los faros solo al arrancar el motor** (apenas Boris se sienta y enciende, antes de empezar a rodar — no a mitad de ruta), y de día los deja apagados. **No hace falta grabar nada**: aunque la toma no tenga ninguna tecla L grabada, las luces se prenden solas de noche. El umbral de "noche" es la hora del mundo del juego: **luces ON de 19:00 a 06:00**, OFF el resto del día.
+> **¿Bocina o luces en un punto exacto?** Marcá ese punto con **NUMPAD 4** al grabar y colgale un evento con el verbo `horn`, `lights_on` o `lights_off` (§10).
 
-Los cinco modos de `LightsMode`:
+**Luces automáticas por default (`auto`).** **Todas las tomas arrancan en `auto`**: de noche el vehículo **prende los faros solo** desde que arranca el motor (apenas Boris se sienta y enciende, antes de empezar a rodar), y de día los deja apagados. Si la hora cambia durante la ruta, las luces la siguen. **No hace falta grabar nada.** El umbral de "noche" es la hora del mundo del juego: **luces ON de 19:00 a 06:00**, OFF el resto del día.
 
-- **`auto`** — *(default)* prende de noche (19:00–06:00) al arrancar el motor, off de día. Ignora lo grabado.
+Los modos de `LightsMode`:
+
+- **`auto`** — *(default)* prende de noche (19:00–06:00), desde que arranca el motor y también si la noche cae a mitad de ruta; off de día.
 - **`off`** — luces **siempre apagadas**. Es el override para **misiones nocturnas sigilosas**: el vehículo no se delata con los faros aunque sea de noche.
 - **`auto_inverted`** — al revés del `auto`: **apaga de noche** (sigilo por horario) y prende de día.
-- **`replay`** — reproduce las teclas **L que grabaste** (prende/apaga exactamente donde lo hiciste vos — §7).
 - **`on`** — luces **siempre encendidas**, de día y de noche.
 
 > **Cómo DESACTIVAR las luces.** Si querés que una ruta corra **a oscuras** (misión sigilosa nocturna, no delatar el vehículo), poné en el header/JSON de la ruta:
 > ```json
 > "LightsMode": "off"
 > ```
-> Con `off` los faros nunca se prenden, aunque sea de noche y aunque hayas grabado teclas L. (Para volver al comportamiento automático, sacá el campo o ponelo en `"auto"`.)
+> Con `off` los faros nunca se prenden, aunque sea de noche. (Para volver al comportamiento automático, sacá el campo o ponelo en `"auto"`.)
 
 > *Ejemplo:* un bus de pasajeros normal no necesita tocar nada — con el default `auto` ya prende de noche solo. Un convoy de infiltración usa `"LightsMode": "off"` (o `auto_inverted`) para no delatarse en la oscuridad.
 > Recordá: para que las luces se vean, el vehículo necesita **batería + faros instalados** (§7).
+
+---
+
+### 9.6 — Cuando se traba: el AutoRecovery
+
+Una ruta larga, corriendo desatendida durante horas, tarde o temprano se encuentra con algo: un auto que alguien dejó en la calzada, una parada en pendiente donde el vehículo se fue unos centímetros hacia atrás, una subida donde el motor se ahoga. El **AutoRecovery** se ocupa de eso. Viene **activado**, funciona solo, y **no salta el vehículo a otra parte de la ruta**: lo destraba donde está —como mucho lo re-ubica unos metros— y la ruta sigue desde ahí.
+
+**Cómo se da cuenta.** No mira sólo la velocidad: un vehículo que empuja algo, o que patina contra un cordón, marca medio km/h sin avanzar un metro. Por eso mira el **avance sobre la ruta**:
+- si en **10 s** no avanzó y el acelerador está a fondo, está **trabado**;
+- si en **20 s** no avanzó nada, sea cual sea el motivo, también;
+- una **parada grabada** (un lugar donde vos te detuviste al grabar) **no cuenta** como traba: el vehículo está quieto a propósito.
+
+Trabaja en tres niveles, de menos a más invasivo.
+
+**1. Se trabó el cerebro, el vehículo puede moverse.** Es el caso típico de una parada: el vehículo quedó unos centímetros fuera del punto donde la grabación lo espera y no vuelve a enganchar. El AutoRecovery lo re-arranca en el lugar, hasta tres veces. No se ve nada raro en pantalla: el vehículo arranca y sigue.
+
+**2. Se ahogó el motor.** En una cuesta, si el vehículo llega con menos velocidad que en la grabación, la marcha que trae puede no alcanzar. El controlador fuerza **primera** y arranca como se arranca en pendiente. Esto lo hace el controlador, no el AutoRecovery, y se configura aparte (`BogRecovery`).
+Pero acelerador a fondo con el motor en ralentí también es lo que se ve cuando el vehículo **empuja algo**. Por eso, si con la primera avanza un poco y se vuelve a clavar, o si en 10 s no avanza ni lo que avanzaría a 2 km/h, **no era un ahogo**: pasa a la escalera en ese mismo momento.
+
+**3. Traba física: chocó, quedó cruzado, montado sobre algo, hundido o volcado.** Acá entra la **escalera**, que prueba estos pasos en orden, en el mismo lugar:
+
+1. **Salir manejando.** Se aleja 3 m en línea recta, a no más de 5 km/h, en el sentido **contrario** al que venía (marcha atrás si iba hacia adelante; hacia adelante si el tramo es de los que se graban en reversa), y después vuelve a encarar la ruta solo. Si de ese lado hay un obstáculo —otro vehículo, una garita, un poste, un guardrail, una pared—, no se mueve: lo detecta y pasa al paso siguiente.
+2. **Volver sobre sus huellas.** Se re-ubica en el último punto que pisó bien, un largo entre ejes más atrás, con la orientación que tenía el humano al grabar ahí.
+3. **Zonas seguras hacia adelante.** La primera está a la mitad del largo del vehículo más metro y medio, que es la primera posición donde el paragolpes trasero pasa el punto de la traba. Después avanza de a un metro.
+
+Los tres pasos funcionan también en los tramos de reversa (salir de un andén marcha atrás, entrar de cola). Si un destino está ocupado por otro vehículo, o el vehículo queda montado sobre algo, ese intento no se gasta: corre la posición un metro y prueba de nuevo. Cada re-ubicación fuerza el arranque desde ese punto, y la escalera se reinicia cuando el vehículo retoma la marcha.
+
+**Sólo si la escalera se agota** la ruta se da por trabada (`STUCK`), y el log dice por qué. Si la escalera está en medio de un paso, no se corta.
+
+**Qué no hace.** No frena ni esquiva ante un vehículo detenido en el camino: si lo empuja sin avanzar, a los 10 s lo trata como traba. *(El `ObstacleSlow` del Apéndice A.5b es del cerebro 1.1.)*
+
+**Nada de esto tapa el problema.** Cada intervención queda registrada:
+
+- En el RPT, con el lugar y la evidencia que la disparó: `[AR] <ruta> wp 380 s 594 · FISICO (...) · escalon 1: maniobra`. Cuando la escalera se abre sale `[C12] BLOQUEADO en wp N · <motivo>`, y cuando se cierra, `[C12] BLOQUEO terminado tras X s`: tiene que haber tantos de uno como del otro. Si tu mod necesita enterarse (por ejemplo, para que otro vehículo no le ceda el paso a uno que no se puede mover), consultá `RunnerBloqueado()` (Apéndice B.7).
+- Al final de la ruta: `ROUTE_COMPLETE en wp 939 · AR-FISICO x2 (wp 386 maniobra..., wp 385 re-ubicado...)`. Una llegada con ayudas **no es una llegada limpia**.
+- En `profiles/BZ_AutoDrive/AR_log.csv`, una fila por intervención de todas las corridas: fecha, ruta, vehículo, waypoint, tipo, evidencia, acción y resultado.
+
+Si una ruta necesita el AutoRecovery **siempre en el mismo lugar**, eso es información: andá a ese punto y mirá qué hay. Suele ser un tramo de la grabación para rehacer.
+
+**Intervención manual.** Si estás mirando una corrida y querés destrabarla vos, escribí el nombre de la ruta en `profiles/BZ_AutoDrive/BZ12_AR_MANUAL.txt`. El vehículo se re-ubica 10 m más adelante sobre la ruta, contados desde el último punto que pisó bien. Si ese lugar está ocupado, no hace nada.
+
+Todos los valores se configuran por ruta en el Apéndice A.5.
 
 ---
 
@@ -446,16 +736,18 @@ Una ruta no es solo manejar de A a B: podés hacer que **pasen cosas** en puntos
 Manejás la ruta normal (NUMPAD 5 para empezar a grabar). Cuando llegás al lugar donde querés que pase algo (la parada), tocás **NUMPAD 4** *una vez*. Seguís manejando hasta el final y tocás **NUMPAD 5** para cortar.
 > Cada NUMPAD 4 deja una marca en ese punto exacto. Podés marcar varios puntos en la misma vuelta.
 
-**Paso 2 — Pasala por el wizard y anotá el número.**
-Corrés el wizard → **Convertir** → elegís tu grabación. Te genera la ruta y, al convertir, te muestra una **lista de marcadores** con el **número de waypoint (wp)** de cada NUMPAD 4. Por ejemplo:
-```
-[ 1] wp 88   'parada'   dur=0s rad=0m  mode=normal
-```
-> **Anotá ese número (88).** Es la dirección de tu marca — la vas a usar para enganchar la acción.
+**Paso 2 — Pasala por el wizard.**
+Corrés el wizard → **Convertir** → elegís tu grabación. Te genera la ruta y en el resumen te dice **cuántos eventos** quedaron (`eventos N`): uno por cada NUMPAD 4, en el orden en que los tocaste.
+> El **número de waypoint (wp)** de cada marca lo ves en el paso siguiente, en el `_hdr.json`. Es la dirección de tu marca — la vas a usar para enganchar la acción.
 
 **Paso 3 — Dónde quedó la marca en el archivo.**
-Abrí el JSON de la ruta: `C:\DayZServer\profiles\BZ_AutoDrive\BZBusRoute.json`. Tu NUMPAD 4 quedó como un waypoint con **`"isStop": true`** y, en el ejemplo, es el **wp 88** (el índice 88 dentro de la lista `Waypoints`).
-> *Cómo encontrarlo si no anotaste el número:* buscá `"isStop": true` en el archivo — ese es tu punto. Su posición en la lista `Waypoints` es el número de wp.
+Abrí **`BZBusRoute_<nombre>_hdr.json`** en tu carpeta de rutas. El wizard ya dejó ahí, en la lista `Events`, un evento **por cada NUMPAD 4** (en orden), con su `wp` y la lista de acciones vacía. Si tocaste NUMPAD 4 una sola vez, hay uno solo; anotá su `wp` (en el ejemplo, 88):
+```json
+{ "wp": 88, "trigger": { "type": "wp_reached", "wp": 88 }, "actions": [] }
+```
+Completás las acciones en ese mismo bloque.
+> **⚠ Editá el `_hdr.json`, no el `.json` completo.** Cuando existen `BZBusRoute_<nombre>_hdr.json` y `BZBusRoute_<nombre>_wp.csv` —que es lo normal, el wizard los genera— el server carga **ese par**, y el `.json` completo queda solo como respaldo. Los eventos que escribas en el `.json` no tienen efecto.
+> *Si tocaste varias marcas:* la primera de la lista `Events` es tu primer NUMPAD 4, la segunda el segundo, y así.
 
 **Paso 4 — Enganchá la secuencia desde ahí.**
 En el mismo JSON, agregás (o editás) el bloque `Events`, apuntando a ese wp:
@@ -467,77 +759,654 @@ En el mismo JSON, agregás (o editás) el bloque `Events`, apuntando a ese wp:
     "actions": [
       { "verb": "freeze_vehicle" },
       { "verb": "play_sound", "value": "MiVoz_SoundSet", "delay": 0.5 },
-      { "verb": "resume_route", "delay": 3.0 }
+      { "verb": "unfreeze_vehicle", "delay": 3.0 }
     ]
   }
 ]
 ```
-> El **`"wp": 88` es el enganche**: conecta tu marca (el NUMPAD 4) con lo que pasa ahí. Cambiá `88` por el número que te dio el wizard. Las `actions` se ejecutan en orden, con `delay` en segundos.
+> El **`"wp": 88` es el enganche**: conecta tu marca (el NUMPAD 4) con lo que pasa ahí. Cambiá `88` por el `wp` de tu marca. Cada acción puede llevar un `delay` en segundos, **contado desde que disparó el evento** (no desde la acción anterior).
+
+> **⚠ Cada verbo se deshace con su par, y un `delay` solo no detiene nada.** `delay` demora *esa* acción N segundos; no frena el vehículo. La espera siempre son dos acciones: una que detiene y su contraria con el `delay` puesto.
+> ```
+> freeze_vehicle   <->  unfreeze_vehicle     (clava el vehículo: freno + freno de mano)
+> stop_route       <->  resume_route         (pausa el avance de la ruta)
+> ```
+> Mezclarlos deja el vehículo clavado para siempre: **`resume_route` no descongela** lo que congeló `freeze_vehicle`. Mientras está congelado, el cerebro de manejo no corre, así que la grabación no interfiere con la espera.
 
 **Paso 5 — Deploy y probá.**
-Guardás el archivo, deployás (el wizard lo hace, o copiás los `_hdr.json`/`_wp.csv`), y corrés la ruta desde el Reproductor. El bus llega al wp 88 → **frena → suena el mensaje → espera 3s → sigue.** Esa es tu primera secuencia. 🎉
+Guardás el archivo y **relanzás la ruta desde el Reproductor** (LOAD & SPAWN): eso relee el `_hdr.json`. *(Un vehículo que ya estaba corriendo, o que se re-lanza solo, sigue con la versión anterior del archivo.)* El bus llega al wp 88 → **frena → suena el mensaje → espera 3s → sigue.** Esa es tu primera secuencia. 🎉
 
 > *Para más acciones (bajar bots, prender motor, etc.) y más triggers (al acercarse un jugador, al recibir daño), seguí leyendo — abajo está la lista completa.*
 
 ---
 
-### 10.2 — Cómo funciona (referencia)
+### 10.2 — Cómo funciona
 
 Cuando grabaste, tocaste NUMPAD 4 en los puntos importantes. Cada uno quedó como un **nodo de evento**. Después le colgás **acciones**: *"cuando el vehículo llegue acá, hacé esto"*.
 
 Cada evento tiene dos partes:
-- **Cuándo dispara** (el *trigger*): al llegar a un waypoint, cuando un jugador se acerca, cuando el vehículo recibe daño, a los X segundos del arranque…
-- **Qué hace** (las *acciones*, en orden, con una demora opcional para coreografiar).
+- **Cuándo dispara** (el *trigger*): al llegar a un waypoint, cuando un jugador se acerca al vehículo o a un punto de la ruta, cuando un jugador se sube, cuando el vehículo recibe daño, a los X segundos de aparecer el vehículo.
+- **Qué hace** (las *acciones*, los "verbos"): cada una con una demora opcional (`delay`, en segundos **desde que disparó el evento**) para coreografiar.
 
-**Las acciones que tenés** (los "verbos"), por familia — **estos ya andan**:
-- **Vehículo:** `start_engine` / `stop_engine` (arrancar/parar motor), `freeze_vehicle` / `unfreeze_vehicle` (clavarlo/liberarlo), `set_vehicle_mortality` (**switch de daño**: irrompible ↔ destructible, en caliente), `set_driver_mortality` (Boris mortal o no), `repair_vehicle`, `refuel` / `drain_fuel`, `lights_on` / `lights_off`, `horn`, `despawn_vehicle`.
-- **Ruta:** `stop_route` / `resume_route` (pausar y reanudar el avance).
-- **Carga:** `add_cargo` — mete ítems en el baúl (cambiás el **inventario del vehículo** en un punto de la ruta).
-- **Gente:** `spawn_guard` (bots armados al costado), `dismount_guard` (que se bajen, animado).
-- **Narrativa / estado:** `ui_broadcast` / `log_event` (mensaje), `play_sound` (audio 3D pegado al auto), `set_var` (**declarás o cambiás un estado** de la misión).
-
-**Los triggers** (el CUÁNDO): `wp_reached` (Boris llega a un waypoint), `player_in_radius` (un jugador se acerca), **`player_enter_vehicle`** (un jugador **se sube** — el "onPlayerSit"), `vehicle_health_below` (le pegaron al vehículo), `timer` (a los X segundos del arranque).
-
-> **⚠️ El evento NO obliga a parar.** Marcar un NUMPAD 4 **detenido** crea una **parada** real (`isStop`) — eso es lo que querés para un taxi. Pero un evento es solo *"trigger → acciones"*: podés colgarlo en **cualquier** waypoint (con ★ Evento en el editor, §6B) y que dispare **en pleno cruise, sin frenar** — ideal para **declarar estados** (`set_var`), prender luces, tocar bocina o soltar un mensaje al pasar. Y los triggers que **no** son `wp_reached` (`timer`, `player_enter_vehicle`, `player_in_radius`, `vehicle_health_below`) ni siquiera dependen de un punto: disparan estén donde estén.
+> **⚠️ El evento NO obliga a parar.** Marcar un NUMPAD 4 **detenido** crea una **parada** real (`isStop`) — eso es lo que querés para un taxi. Pero un evento es solo *"trigger → acciones"*: podés colgarlo en **cualquier** waypoint (editando el `Events` del `_hdr.json` — §6B, Apéndice A) y que dispare **en pleno cruise, sin frenar** — para prender luces, tocar bocina, cargar el baúl o dejar una línea en el log al pasar. Y los triggers que **no** son `wp_reached` ni siquiera dependen de dónde esté el vehículo.
 
 **Ejemplos:**
-- *Taxi (parada real):* en cada NUMPAD 4 colgás `stop_route` → `play_sound` ("subió un pasajero") → esperar 3s → `resume_route`. Para, levanta pasajero y sigue.
-- *Arranca cuando alguien se sube (`player_enter_vehicle`):* el bus espera **con el motor apagado**; cuando un jugador se sienta, dispara `start_engine` → `resume_route` y **sale solo**. *(Ya existe como trigger — no hay que tocar código.)*
+- *Taxi (parada real):* en cada NUMPAD 4 colgás `stop_route` → `play_sound` (`delay` 0,5, "subió un pasajero") → `resume_route` (`delay` 3). Para, levanta pasajero y sigue.
+- *Arranca cuando alguien se sube:* dos eventos. Uno en el wp 0 con `freeze_vehicle` y `stop_engine` (con un `delay` que caiga después de la espera de arranque, por ejemplo 10 s): el bus espera **con el motor apagado**. Otro con el trigger `player_enter_vehicle` y `unfreeze_vehicle`: cuando un jugador se sienta, el bus **sale solo** (el motor se enciende solo al soltarlo).
 - *Cambiar el inventario en ruta (`add_cargo`):* al llegar al depósito, mete cajas/suministros en el baúl — sin frenar si lo colgás mid-cruise.
-- *Volverlo frágil en la emboscada (`set_vehicle_mortality`):* viene irrompible; en el punto caliente lo hacés **destructible** para que el jugador pueda reventarlo.
-- *Accidente (gancho de misión):* colgás `stop_engine` + `ui_broadcast` ("el bus se averió"). El jugador lo encuentra detenido.
+- *Volverlo frágil en la emboscada (`set_vehicle_mortality` con `"mortal"`):* viene irrompible; en el punto caliente lo hacés **destructible** para que el jugador pueda reventarlo.
+- *El vehículo como recompensa (`set_vehicle_parts` con `"unlocked"`):* viene **inviolable**: mientras el framework lo maneja, nadie le saca ruedas ni piezas. Cuando el jugador se lo gana, lo desbloqueás. Si el chofer muere y el vehículo queda de botín, el framework lo desbloquea solo.
+- *Accidente (gancho de misión):* colgás `freeze_vehicle` y `stop_engine` (`delay` 1). El vehículo queda detenido con el motor apagado hasta que otro evento lo suelte con `unfreeze_vehicle`. *(`stop_engine` solo, sin congelar, dura medio segundo: el framework vuelve a encender el motor.)*
 
-*(El branching condicional —"si pasa X, hacé Y"— no vive acá; de eso se encarga el sistema de Quests, que se acopla aparte. Ver §12.)*
+*(El branching condicional —"si pasa X, hacé Y"— no vive acá: los eventos no tienen condiciones que un admin pueda usar. De eso se encarga el sistema de Quests, que se acopla aparte. Ver §11.)*
+
+### 10.3 — Referencia completa: disparadores, verbos y condiciones
+
+Todo lo que acepta la lista `Events`, sacado del código de esta versión. Funciona igual con los dos cerebros; donde el efecto cambia, cada ficha lo dice en la línea **Cerebro 1.2**.
+
+#### Lo básico: formato, `delay` y cuándo se revisan
+
+Un **evento** es un "cuándo" más un "qué": un **trigger** (el disparador) y una lista de **acciones** (los verbos). Los eventos van en la lista `Events` del header de la ruta, **`BZBusRoute_<nombre>_hdr.json`**. Si existen el `_hdr.json` y el `_wp.csv` (lo normal: los genera el wizard), el server carga ese par y **el `.json` completo no se lee**: un evento escrito ahí no tiene efecto.
+
+El wizard ya deja un evento por cada NUMPAD 4 que tocaste, con el trigger puesto y la lista de acciones vacía:
+
+```json
+{ "wp": 88, "trigger": { "type": "wp_reached", "wp": 88 }, "actions": [] }
+```
+
+##### Formato de un evento
+
+| Campo | Tipo | Si falta | Qué es |
+|---|---|---|---|
+| `wp` | número entero | `0` | el waypoint del evento. Si no hay `trigger`, es el punto donde dispara |
+| `trigger` | objeto | se usa `wp_reached` sobre `wp` | cuándo dispara (ver *Triggers*, abajo) |
+| `actions` | lista de acciones | el evento no hace nada | qué hace (ver *Los verbos, uno por uno*, abajo) |
+
+**Campos del `trigger`:**
+
+| Campo | Tipo | Unidad | Si falta | Lo usan |
+|---|---|---|---|---|
+| `type` | texto | — | vacío = `wp_reached` | todos |
+| `wp` | entero | índice de waypoint | `0` | `wp_reached`, `player_near_waypoint` |
+| `radius` | decimal | metros | `0` (= nunca dispara) | `player_in_radius`, `player_near_waypoint` |
+| `threshold` | decimal | fracción de salud, 0 a 1 | `0` (= nunca dispara) | `vehicle_health_below` |
+| `seconds` | decimal | segundos | `0` (= dispara enseguida) | `timer` |
+
+**Campos de una acción** (una acción usa sólo los que le corresponden; los demás se ignoran):
+
+| Campo | Tipo | Unidad | Si falta | Lo usan |
+|---|---|---|---|---|
+| `verb` | texto | — | la acción no hace nada y deja un aviso en el log | todos |
+| `delay` | decimal | segundos | `0` = inmediato | todos |
+| `msg` | texto | — | vacío | `log_event`, `ui_broadcast` |
+| `format` | texto | — | `"toast"` | `ui_broadcast` (por dónde: `"toast"`, `"chat"` o `"both"`) |
+| `value` | texto | — | vacío | `set_vehicle_mortality`, `set_driver_mortality`, `set_vehicle_parts`, `set_var`, `play_sound`, `spawn_guard`, `ui_broadcast` |
+| `var` | texto | — | vacío | `set_var` |
+| `items` | lista de `{ "cls": texto, "qty": entero }` | — | lista vacía | `add_cargo` |
+| `count` | entero | bots | `1` | `spawn_guard` |
+| `faction` | texto | — | `"Raiders"` | `spawn_guard` |
+| `loadout` | texto | — | `"BanditLoadout"` | `spawn_guard` |
+| `radius` | decimal | metros | `8` (`guard_stop`) · `150` (`ui_broadcast` con `"near"`) | `guard_stop`, `ui_broadcast` |
+| `holdS`, `clearS`, `maxS`, `boardS`, `unreachableS` | decimal | segundos | `20`, `5`, `120`, `30`, `15` | `guard_stop` |
+| `slot` | entero | — | `-1` | reservado: ningún verbo lo lee hoy |
+| `fvalue` | decimal | — | `0` | reservado: ningún verbo lo lee hoy |
+
+> Los números van **sin comillas** y los textos **con comillas**. Los nombres de verbos y de triggers se comparan como texto exacto: `Freeze_Vehicle` o `freeze-vehicle` no existen. Qué pasa si un número viene entre comillas o el JSON tiene un error de sintaxis: *(sin verificar)*; mirá que la línea `[EVT-LOAD]` de cada evento aparezca al cargar la ruta.
+
+##### Ejemplo: un evento con dos acciones demoradas
+
+```json
+"Events": [
+  {
+    "wp": 120,
+    "trigger": { "type": "wp_reached", "wp": 120 },
+    "actions": [
+      { "verb": "freeze_vehicle" },
+      { "verb": "play_sound", "value": "MiVoz_SoundSet", "delay": 1.0 },
+      { "verb": "unfreeze_vehicle", "delay": 8.0 }
+    ]
+  }
+]
+```
+
+Qué pasa: al llegar al wp 120 el vehículo se clava (segundo 0); al segundo 1 suena el audio; **al segundo 8** se suelta y sigue. No es al segundo 9: cada `delay` se cuenta desde que disparó el evento.
+
+##### Cómo funciona `delay`
+
+- **Se cuenta desde el disparo del evento**, no desde la acción anterior. Las acciones **no se encadenan**.
+- Las acciones sin `delay` (o con `0` o negativo) se ejecutan en el mismo instante del disparo, en el orden de la lista.
+- Las demoradas se ejecutan cuando se cumple su tiempo: **el orden lo da el número, no la posición en la lista**. Una acción sin `delay` escrita al final corre antes que una demorada escrita arriba. Dos acciones con el mismo `delay`: en qué orden salen, *(sin verificar)*.
+- Una acción demorada actúa sobre el vehículo que exista cuando le toca. Si ya no hay vehículo, no hace nada.
+- Si el vehículo se despawnea o se respawnea antes, las acciones demoradas pendientes se cancelan. *(Si se cancelan todas las pendientes o sólo una: no verificado.)*
+- Nada más las cancela: un `unfreeze_vehicle` demorado se ejecuta aunque en el medio haya pasado otra cosa (por ejemplo, un `guard_stop` a medias).
+
+##### Cuándo se revisan los triggers
+
+- **Cada 0,5 segundos**, por vehículo, recorriendo la lista `Events` en orden. En una misma revisión pueden disparar varios eventos.
+- Se revisan también con el vehículo congelado, frenado por `stop_route`, pausado desde el panel, durante la espera de arranque (el *spawn-hold*) y aun con la ruta terminada, mientras el vehículo siga en el mundo.
+- **No** se revisan mientras el chofer o la tripulación están subiendo al vehículo (el embarque animado, incluido el re-embarque de `guard_stop`). Se retoman cuando terminan de subir.
+- Si el chofer muere y nadie puede manejar, el framework suelta el vehículo como botín y sus eventos dejan de revisarse.
+- **Funcionan igual con los dos cerebros.** La revisión de eventos corre antes del punto donde el runner elige entre el cerebro 1.2 (el de siempre) y el 1.1. Lo que cambia en algunos verbos es el *efecto*: está en cada ficha, en la línea **Cerebro 1.2**.
+
+##### Una vez por corrida; se re-arman en cada spawn
+
+- **Cada evento dispara una sola vez por corrida.** Si el trigger se vuelve a cumplir, no pasa nada.
+- **Cada vez que el vehículo nace** (respawn al final de la línea, relanzarla desde el Reproductor, reintento de spawn, respawn desde el panel o por la API) **todos los eventos se re-arman**, y además vuelve a cero todo lo que los verbos cambiaron: el vehículo sin congelar y sin `stop_route`, la mortalidad del vehículo y del chofer y el bloqueo de piezas a lo que dice el header (`VehicleInvincible`, `DriverInvincible`, `VehiclePartsLocked`), las variables de `set_var` vacías y el reloj de `timer` en cero.
+- **El respawn automático reusa la ruta que ya está en memoria.** Si editás el `_hdr.json`, el cambio recién entra cuando la ruta se vuelve a cargar: relanzala desde el Reproductor (eso sí relee el archivo) o reiniciá el server.
+
+##### Qué ves en el log del server (RPT)
+
+- **Al cargar la ruta**, una línea por evento: `[EVT-LOAD] Event <n> wp=<wp> actions=<cantidad> trigger=type='<tipo>' verb0='<primer verbo>'`. Si el tipo de trigger no existe: `evento <n> wp=<wp>: trigger '<tipo>' desconocido -> nunca dispara (validos: ...)`.
+- **Al disparar**, una línea por acción: `[EVENT <n> @ wp <m>] <verbo>: ...`. `<n>` es la posición del evento en la lista, **empezando en 0**. Estas líneas **no llevan el nombre de la ruta**: con varios vehículos andando, no dicen de cuál son.
+- **Verbo mal escrito:** `[EVENT <n>] verbo no implementado todavia: '<verbo>'`. Sale **cuando el evento dispara**, no al cargar.
 
 ---
 
-## 11. El grafo — armá tu propia red de rutas *(avanzado)*
+#### Los verbos (resumen)
 
-Hasta acá, una grabación = una ruta. Pero podés grabar **muchas** (todas las calles de un pueblo, un pedazo de mapa, las vías de un tren) y el framework las **conecta en una red**. Después le pedís "andá de acá hasta allá" y te arma una ruta **que nunca grabaste entera**, combinando los tramos.
+Todos aceptan además `delay`.
 
-**¿Para qué?** Para que los NPCs vayan a cualquier punto de tu ciudad **sin grabar cada combinación**. Grabás las **calles**, no cada viaje posible.
-
-**¿Cómo se conecta?** Solo: grabás un tramo, y donde cruza o roza otro se crea una intersección. Agregás una calle nueva y se suma a la red sin tocar las anteriores.
-
-**¿Cómo lo armás?** En el **editor**, modo 🗺 **Mapa** (§6B): dibujás y borrás caminos, y exportás la red. *(No es el wizard.)*
-1. Grabás las calles, cada una **ida y vuelta** (cada sentido = un carril → importante para que el NPC maneje **por la derecha**).
-2. Un script arma la red a partir de las grabaciones.
-3. Le pedís ir de **A a B** → te arma la ruta compuesta.
-4. La deployás como cualquier ruta y la corrés.
-
-> *Ejemplo:* grabaste 9 tramos de un pueblo (≈5 km de calles). Le pedís "de la terminal este a la esquina noroeste" → te arma un recorrido de 367m combinando 8 tramos, **que ningún humano manejó junto**. Probado en múltiples vehículos de distinta tracción y tamaño, con **96-99%** de precisión.
-
-**¿Cuánto tengo cubierto?** Una herramienta de cobertura (`bz_coverage.py`) dibuja tu red sobre el mapa y te dice cuántos tramos, cuántos km y cuántas intersecciones tenés — así ves qué calles te faltan.
-
-> *Las vías del tren* son el caso más fácil: la red **son** los rieles (sin volante, sin giros inventados — solo acelerar y frenar).
+| Verbo | Qué hace | Campos |
+|---|---|---|
+| `add_cargo` | mete ítems en el baúl | `items` (`cls`, `qty`) |
+| `log_event` | escribe una línea en el log del server | `msg` |
+| `ui_broadcast` | aviso, sólo para los admins por default; también todos, los que están cerca o los pasajeros, en pantalla o en el chat | `msg`, `value`, `format`, `radius` |
+| `play_sound` | sonido 3D pegado al vehículo, una vez | `value` (nombre del SoundSet) |
+| `freeze_vehicle` | clava el vehículo: freno a fondo + freno de mano, sin avanzar | — |
+| `unfreeze_vehicle` | suelta lo que clavó `freeze_vehicle` | — |
+| `stop_route` | detiene el avance con freno a fondo (sin freno de mano, motor en marcha) | — |
+| `resume_route` | levanta el `stop_route` | — |
+| `start_engine` | enciende el motor | — |
+| `stop_engine` | apaga el motor (sólo dura con el vehículo congelado) | — |
+| `set_vehicle_mortality` | vehículo destructible o irrompible | `value` (`"mortal"` o cualquier otra cosa) |
+| `set_driver_mortality` | chofer mortal o invencible | `value` (`"mortal"` o cualquier otra cosa) |
+| `set_vehicle_parts` | vehículo inviolable (nadie le saca piezas) o con piezas que se pueden sacar | `value` (`"unlocked"` o cualquier otra cosa) |
+| `repair_vehicle` | lleva la salud general del vehículo al máximo | — |
+| `refuel` | llena el tanque | — |
+| `drain_fuel` | vacía el tanque | — |
+| `lights_on` | prende los faros | — |
+| `lights_off` | apaga los faros | — |
+| `horn` | un bocinazo corto (0,6 s) | — |
+| `set_var` | guarda una variable de la corrida (**hoy nadie la lee**) | `var`, `value` |
+| `spawn_guard` | crea bots armados parados al costado del vehículo | `value` (clase), `count`, `faction`, `loadout` |
+| `dismount_guard` | baja a la tripulación (`Crew`) y la deja patrullando un anillo de 8 m | — |
+| `guard_stop` | parada con escolta completa: frena, baja la tripulación, espera, la sube y sigue | `radius`, `holdS`, `clearS`, `maxS`, `boardS`, `unreachableS` |
+| `despawn_vehicle` | borra vehículo, chofer y bots; no respawnea | — |
+| `lock_seat` · `unlock_seat` · `eject_passenger` | **reservados: no hacen nada** (sólo un aviso en el log) | (`slot`, sin uso) |
 
 ---
 
-## 12. Misiones — BZ_AutoDrive + Quests *(la integración estrella)*
+#### Los verbos, uno por uno
+
+##### `add_cargo`
+
+Mete ítems en el baúl del vehículo. Lo que **se apila** (el propio ítem lo dice: su cantidad máxima es mayor que 1) se crea como **un solo ejemplar** con `qty` unidades, topeado al máximo de ese ítem. Lo que **no se apila** (armas, herramientas, ruedas) se crea **`qty` veces**. Lo que no entra se **descarta**: nunca tira nada al piso.
+
+- **Campos:** `items`, una lista de `{ "cls": "<classname>", "qty": <entero> }`. `qty` si falta o es menor que 1 vale 1.
+- **Si falla:** un classname que no existe (o un baúl lleno) deja `[CARGO] No se pudo crear '<cls>' (baul lleno o classname invalido?)` y sigue con el siguiente ítem. Si pediste más de lo que apila: `se pidieron N y la pila topa en M`. Si en los no apilables se llena el baúl: `entraron K de N (baul lleno). El resto se descarta`. Sin `items` o con la lista vacía, no crea nada.
+- **Ejemplo:**
+  ```json
+  { "verb": "add_cargo", "items": [ { "cls": "Rag", "qty": 6 }, { "cls": "Hammer", "qty": 2 } ] }
+  ```
+- **Trampas:** sin anidado: un arma con cargador puesto aparece vacía; meté el cargador como ítem aparte. Para ítems cuya "cantidad" no es un conteo (una botella mide líquido), `qty` se lee como cantidad del ítem, no como número de botellas *(no verificado en juego)*. Cómo se comportan munición y cargadores con `qty` *(sin verificar)*.
+- **Cerebro 1.2:** sí, no depende del cerebro.
+
+##### `log_event`
+
+Escribe una línea en el log del server (RPT) con tu mensaje. No se ve en el juego. Sirve para marcar en el log que la ruta pasó por un punto.
+
+- **Campos:** `msg` (texto). Sin `msg`, la línea sale vacía.
+- **Qué aparece:** `[EVENT <n> @ wp <m>] log_event: <msg>`.
+- **Ejemplo:**
+  ```json
+  { "verb": "log_event", "msg": "El convoy cruzo el puente" }
+  ```
+- **Cerebro 1.2:** sí.
+
+##### `ui_broadcast`
+
+Manda tu mensaje **a quien elijas**, en pantalla o en el chat. Sin `value` va sólo a los admins: para avisarles algo a los jugadores, elegí el destinatario. Qué ve cada uno, en §13.3.
+
+- **Campos:** `msg` (texto); `value`, a quién: `"all"` (todos los conectados), `"near"` (a menos de `radius` metros del vehículo; sin `radius`, 150 m), `"passengers"` (sentados en el vehículo), `"admins"` o vacío (los admins); `format`, por dónde: `"toast"` (pantalla, default), `"chat"` o `"both"`.
+- **Ejemplo** (a todos, en pantalla, al salir de la terminal):
+  ```json
+  { "verb": "ui_broadcast", "value": "all", "format": "toast", "msg": "The bus left the terminal" }
+  ```
+- **Trampas:** un `value` mal escrito va **sólo a los admins** (a propósito: un error de tipeo nunca le muestra a los jugadores algo que era para vos); un `format` mal escrito sale en pantalla. Cada jugador lo recibe una vez aunque cumpla dos condiciones (un admin que va de pasajero). El RPT dice a cuántos llegó: `[EVENT n @ wp X] ui_broadcast (all → 3 jugadores, toast): <msg>`.
+- **Cerebro 1.2:** sí.
+
+##### `play_sound`
+
+Reproduce un sonido **una vez**, en 3D, pegado al vehículo (se mueve con él). El sonido lo declarás vos en tu addon (`CfgSoundShaders` + `CfgSoundSets`).
+
+- **Campos:** `value` = el nombre del **SoundSet**. Sin `value`, no hace nada (ni siquiera deja línea en el log).
+- **Ejemplo:**
+  ```json
+  { "verb": "play_sound", "value": "MiVoz_SoundSet" }
+  ```
+- **Trampas:** el sonido se lanza desde el server; el propio código avisa que **puede no llegar a los clientes** y pide verificarlo en el juego *(sin verificar)*. Si el SoundSet no existe, qué pasa *(sin verificar)*.
+- **Cerebro 1.2:** sí, no depende del cerebro.
+
+##### `freeze_vehicle`
+
+**Clava** el vehículo donde está: a cada tick le pone freno a fondo y freno de mano, no avanza la ruta y **el cerebro de manejo no corre** (ni el 1.2 ni el 1.1). Es la parada "dura". Mientras está congelado, el framework **no le vuelve a encender el motor**: es el único estado donde `stop_engine` dura.
+
+- **Campos:** ninguno.
+- **Par:** `unfreeze_vehicle`. **`resume_route` no lo suelta.**
+- **Ejemplo:**
+  ```json
+  { "verb": "freeze_vehicle" }
+  ```
+- **Trampas:**
+  - Durante la espera de arranque (spawn-hold) el congelado todavía no manda: esa fase va primero (motor encendido, freno puesto) y el vehículo pasa a manejar igual; recién ahí queda clavado. Un evento al principio de la ruta con `freeze_vehicle` funciona, pero un `stop_engine` al mismo tiempo se deshace (ver `stop_engine`).
+  - `guard_stop` usa el **mismo** congelado: al terminar lo suelta, aunque vos hayas congelado aparte.
+  - Los eventos se siguen revisando con el vehículo congelado: un `timer` o un `player_in_radius` pueden soltarlo.
+- **Cerebro 1.2:** sí. Con el vehículo congelado el actuador del 1.2 se hace a un lado y se aplican freno y freno de mano.
+
+##### `unfreeze_vehicle`
+
+Suelta el congelado de `freeze_vehicle`: saca el freno de mano y el vehículo retoma la ruta.
+
+- **Campos:** ninguno.
+- **Par:** `freeze_vehicle`. **No levanta un `stop_route`**: si también había un `stop_route`, sigue detenido hasta un `resume_route`.
+- **Ejemplo:**
+  ```json
+  { "verb": "unfreeze_vehicle", "delay": 10 }
+  ```
+- **Trampas:** también suelta el congelado de un `guard_stop` en curso: el vehículo se va con los guardias afuera.
+- **Cerebro 1.2:** sí.
+
+##### `stop_route`
+
+Detiene el avance: a cada tick pone **freno a fondo**, **sin freno de mano**, con el **motor encendido** (si está apagado, lo enciende). El cerebro de manejo no corre mientras dure. Es la parada "blanda".
+
+- **Campos:** ninguno.
+- **Par:** `resume_route`. **`unfreeze_vehicle` no lo levanta.**
+- **Ejemplo:**
+  ```json
+  { "verb": "stop_route" }
+  ```
+- **Trampas:** como vuelve a encender el motor a cada tick, **no sirve para esperar con el motor apagado** (para eso: `freeze_vehicle` + `stop_engine`).
+- **Cerebro 1.2:** sí, igual que `freeze_vehicle` (el actuador del 1.2 se hace a un lado).
+
+##### `resume_route`
+
+Levanta el `stop_route` y el vehículo sigue.
+
+- **Campos:** ninguno.
+- **Par:** `stop_route`. **No descongela** lo que congeló `freeze_vehicle`: si mezclás los pares, el vehículo queda clavado.
+- **Ejemplo:**
+  ```json
+  { "verb": "resume_route", "delay": 3 }
+  ```
+- **Trampas:** no reabre una ruta que ya terminó.
+- **Cerebro 1.2:** sí.
+
+##### `start_engine`
+
+Enciende el motor si está apagado.
+
+- **Campos:** ninguno.
+- **Par:** `stop_engine`.
+- **Ejemplo:**
+  ```json
+  { "verb": "start_engine" }
+  ```
+- **Trampas:** casi nunca hace falta: el framework enciende el motor solo a cada tick en todos los estados salvo el congelado. Tras un `unfreeze_vehicle` el motor se enciende igual.
+- **Cerebro 1.2:** sí.
+
+##### `stop_engine`
+
+Apaga el motor si está encendido.
+
+- **Campos:** ninguno.
+- **Par:** `start_engine`.
+- **Ejemplo** (esperar con el motor apagado; el `delay` deja pasar el `freeze_vehicle`):
+  ```json
+  { "verb": "stop_engine", "delay": 2 }
+  ```
+- **Trampas:** **solo, dura medio segundo.** A cada tick el framework vuelve a encender el motor, manejando, con `stop_route`, en pausa y en la espera de arranque. **Sólo queda apagado con el vehículo congelado** (`freeze_vehicle` antes). Al principio de la ruta, dale un `delay` que caiga después de la espera de arranque (`SpawnHoldSeconds` más la carga de la ruta): durante esa espera el motor se vuelve a encender aunque esté congelado. *(Esto último sale del orden del código; no está probado en juego.)*
+- **Cerebro 1.2:** igual que en el 1.1: el encendido automático corre antes de elegir cerebro.
+
+##### `set_vehicle_mortality`
+
+Cambia el vehículo entre **destructible** e **irrompible**. El framework lo vuelve a aplicar a cada tick, así que el cambio se sostiene. Irrompible, además, se auto-repara si llega a arruinarse.
+
+- **Campos:** `value`. Sólo `"mortal"` (exacto, en minúscula) lo hace destructible. **Cualquier otra cosa, o no poner `value`, lo hace irrompible.** Para que se lea claro, usá `"invincible"`.
+- **Par:** el mismo verbo con el otro valor. El estado inicial de cada corrida lo da `VehicleInvincible` del header (por defecto `true`).
+- **Ejemplo:**
+  ```json
+  { "verb": "set_vehicle_mortality", "value": "mortal" }
+  ```
+- **Trampas:** `"Mortal"` con mayúscula lo deja **irrompible**. `vehicle_health_below` sólo dispara con el vehículo destructible.
+- **Cerebro 1.2:** sí.
+
+##### `set_vehicle_parts`
+
+Cambia el vehículo entre **inviolable** (los jugadores no le pueden sacar ruedas, puertas, batería, bujía, radiador ni ninguna otra pieza) y **con piezas que se pueden sacar**. Con el vehículo parado (en una parada, en una meseta, al final de la ruta), el juego deja sacarle piezas como a cualquier auto: dos ruedas menos y queda detenido para siempre; y "quitar rueda" compite con "subir" en la puerta del conductor. Inviolable, el cartel ni aparece. **No toca la carga**: lo que va en el baúl sigue accesible, y subir, bajar y abrir puertas funcionan igual.
+
+- **Campos:** `value`. Sólo `"unlocked"` (exacto, en minúscula) deja sacar piezas. **Cualquier otra cosa, o no poner `value`, lo deja inviolable.** Para que se lea claro, usá `"locked"`.
+- **Par:** el mismo verbo con el otro valor. El estado inicial de cada corrida lo da `VehiclePartsLocked` del header (por defecto `true`).
+- **Ejemplo** (el vehículo es la recompensa):
+  ```json
+  { "verb": "set_vehicle_parts", "value": "unlocked" }
+  ```
+- **Trampas:** `"Unlocked"` con mayúscula lo deja **inviolable**. Si el chofer muere y el vehículo queda de botín, el framework lo desbloquea solo. Un mod de vehículos que cambie las reglas de sus piezas sin respetar las de la clase base se puede saltear el bloqueo.
+- **Cerebro 1.2:** sí.
+
+##### `set_driver_mortality`
+
+Lo mismo para el **chofer** (el que está manejando en ese momento). No toca a la tripulación (`Crew`) ni a los bots de `spawn_guard`.
+
+- **Campos:** `value`, igual que el anterior: `"mortal"` lo hace mortal; cualquier otra cosa, invencible.
+- **Par:** el mismo verbo con el otro valor. Estado inicial: `DriverInvincible` del header (por defecto `true`).
+- **Ejemplo:**
+  ```json
+  { "verb": "set_driver_mortality", "value": "mortal" }
+  ```
+- **Trampas:** para que otro de la tripulación tome el volante cuando matan al chofer (bloque `Drivers` del header), el chofer tiene que ser mortal.
+- **Cerebro 1.2:** sí.
+
+##### `repair_vehicle`
+
+Lleva la **salud general** del vehículo al máximo.
+
+- **Campos:** ninguno.
+- **Ejemplo:**
+  ```json
+  { "verb": "repair_vehicle" }
+  ```
+- **Trampas:** el código sólo toca la salud general. Las partes (ruedas, batería, radiador…) tienen su propia salud; si las repara o no, y si repara las zonas de daño del motor o la carrocería, *(sin verificar)*.
+- **Cerebro 1.2:** sí.
+
+##### `refuel`
+
+Llena el tanque de combustible (pide una cantidad enorme y el juego la recorta a la capacidad del tanque).
+
+- **Campos:** ninguno.
+- **Par:** `drain_fuel`.
+- **Ejemplo:**
+  ```json
+  { "verb": "refuel" }
+  ```
+- **Cerebro 1.2:** sí.
+
+##### `drain_fuel`
+
+Vacía el tanque. El motor se termina parando por falta de combustible.
+
+- **Campos:** ninguno.
+- **Par:** `refuel`.
+- **Ejemplo:**
+  ```json
+  { "verb": "drain_fuel" }
+  ```
+- **Trampas:** el framework sigue intentando encender el motor a cada tick. Con el cerebro 1.2, un vehículo que no avanza se toma como trabado y arranca el AutoRecovery; si eso termina cerrando la ruta *(sin verificar)*. Si querés un vehículo "sin nafta" quieto y prolijo, congelalo.
+- **Cerebro 1.2:** el verbo se ejecuta; la reacción del cerebro *(sin verificar)*.
+
+##### `lights_on`
+
+Prende los faros.
+
+- **Campos:** ninguno.
+- **Par:** `lights_off`.
+- **Ejemplo:**
+  ```json
+  { "verb": "lights_on" }
+  ```
+- **Trampas:** convive con `LightsMode` del header, y el verbo **manda**:
+  - Con los dos cerebros, un `lights_on` / `lights_off` **manda sobre `LightsMode` hasta el próximo spawn**: después, en cada spawn, vuelve a decidir `LightsMode`.
+  - El framework manda un pulso por red para que los demás jugadores vean el haz estable, también con el cerebro 1.2.
+  - Para que se vean, el vehículo necesita batería y faros instalados.
+
+##### `lights_off`
+
+Apaga los faros. Mismas reglas que `lights_on`.
+
+- **Campos:** ninguno.
+- **Par:** `lights_on`.
+- **Ejemplo:**
+  ```json
+  { "verb": "lights_off" }
+  ```
+- **Cerebro 1.2:** ver `lights_on`.
+
+##### `horn`
+
+Un bocinazo corto: la bocina suena 0,6 segundos y se corta sola.
+
+- **Campos:** ninguno (si ponés `value`, se ignora).
+- **Ejemplo:**
+  ```json
+  { "verb": "horn" }
+  ```
+- **Cerebro 1.2:** sí.
+
+##### `set_var`
+
+Guarda una variable de texto de la corrida (`var` = `value`).
+
+- **Campos:** `var` (nombre), `value` (valor). Los dos texto.
+- **Ejemplo:**
+  ```json
+  { "verb": "set_var", "var": "fase", "value": "emboscada" }
+  ```
+- **Trampas:** **hoy nadie lee estas variables.** La única parte del código que las lee (la condición `var_equals`, ver *Condiciones*, abajo) no se llama desde ningún lado. En la práctica el verbo sólo deja la línea `set_var: fase = emboscada` en el log. Las variables se borran en cada spawn.
+- **Cerebro 1.2:** se ejecuta igual; no tiene efecto en ninguno de los dos.
+
+##### `spawn_guard`
+
+Crea bots armados **parados al costado derecho** del vehículo: el primero a 2,5 m y cada uno de los siguientes 1,5 m más afuera. Quedan en un grupo propio de la facción que pongas, con el loadout que pongas. **No suben** al vehículo ni lo siguen.
+
+- **Campos:**
+  - `value`: la clase del bot. Si falta, `eAI_SurvivorM_Boris`.
+  - `count`: cuántos. Si falta o es 0, 1.
+  - `faction`: la facción de eAI. Si falta, `Raiders` (hostil al jugador, amiga del chofer).
+  - `loadout`: el loadout de Expansion con que se arman. Si falta, `BanditLoadout`.
+- **Si falla:** una clase que no se puede crear deja `[spawn_guard] no se pudo crear '<clase>'` y sigue con el próximo.
+- **Ejemplo:**
+  ```json
+  { "verb": "spawn_guard", "count": 3, "faction": "Raiders", "loadout": "BanditLoadout" }
+  ```
+- **Trampas:** no son la tripulación (`Crew`): `dismount_guard` y `guard_stop` no los mandan. El código no los hace invencibles. Se **borran** cuando el vehículo se despawnea o se respawnea.
+- **Cerebro 1.2:** sí, no depende del cerebro.
+
+##### `dismount_guard`
+
+Baja a la **tripulación** (los bots de `Crew`) que esté sentada, salvo el que maneja. Bajan animados (abren la puerta), pasan a ser **mortales**, quedan en un grupo propio y **patrullan un anillo de 8 m** alrededor de donde está el vehículo, con una correa a 10 m. Si ven una amenaza pelean; al calmarse vuelven al anillo.
+
+- **Campos:** ninguno (el radio es fijo: 8 m).
+- **Ejemplo** (primero clavarlo, después bajar):
+  ```json
+  { "verb": "dismount_guard", "delay": 3 }
+  ```
+- **Trampas:**
+  - **El vehículo tiene que estar detenido**: DayZ no deja bajar con el vehículo en movimiento. Usalo después de un `freeze_vehicle`, con `delay`.
+  - **No vuelven solos.** No hay verbo para volver a subirlos: si soltás el vehículo, se va sin ellos. El ciclo completo (bajar, esperar y volver a subir) es `guard_stop`.
+  - Se **borran** con el vehículo cuando se despawnea o se respawnea, aunque ya estén abajo.
+  - La facción del grupo es la del **primer** bot de `Crew` (o `Raiders`).
+- **Cerebro 1.2:** sí, no depende del cerebro (pero necesita el vehículo congelado).
+
+##### `guard_stop`
+
+La **parada con escolta entera** en un solo verbo:
+
+1. **Congela** el vehículo y espera a que baje de 3 km/h (mira cada 0,5 s, hasta 10 s; pasado eso despliega igual).
+2. **Despliega**: igual que `dismount_guard`, pero con el anillo de `radius` metros (correa 2 m más afuera).
+3. **Espera** y sale por la primera de estas tres:
+   - **zona limpia**: pasaron `holdS` segundos **y** van `clearS` segundos seguidos sin combate;
+   - **amenaza fuera de alcance**: hay combate pero ningún blanco a menos de `radius` + 5 m, durante `unreachableS` segundos;
+   - **tope**: pasaron `maxS` segundos, pase lo que pase.
+4. **Repliegue**: los vivos caminan de vuelta a sus asientos, hasta el vehículo donde esté.
+5. **Embarque**: espera a que estén todos los vivos sentados, o `boardS` segundos como máximo. El que no llegó, **se queda**.
+6. **Descongela** y la ruta sigue.
+
+"Combate" es: algún bot de la tripulación con amenaza alta (el mismo umbral con que eAI entra a pelear) o el grupo en combate.
+
+- **Campos** (todos en decimal; 0 o negativo = el default): `radius` 8 m · `holdS` 20 s · `clearS` 5 s · `maxS` 120 s · `boardS` 30 s · `unreachableS` 15 s.
+- **Ejemplo:**
+  ```json
+  { "verb": "guard_stop", "radius": 10, "holdS": 30, "clearS": 5, "maxS": 180, "boardS": 40, "unreachableS": 15 }
+  ```
+  `{ "verb": "guard_stop" }` solo ya anda con los defaults.
+- **Qué ves en el log:** `[MISION] wp N: guard_stop · radio ... -> freeze y espero la parada`, `despliegue X/Y`, `combate -> retengo`, `zona limpia tras ... -> repliegue` (o `amenaza fuera de la correa` o `tope de`), `embarcados X/Y ... -> sigue`.
+- **Trampas:**
+  - Necesita tripulación declarada en `Crew` del header. Sin `Crew` no baja nadie: el vehículo queda parado unos `holdS` segundos y sigue *(sale del código; no probado en juego)*.
+  - Usa el **mismo** congelado que `freeze_vehicle`: al terminar lo suelta aunque vos lo hayas congelado aparte, y un `unfreeze_vehicle` en el medio suelta el vehículo con los guardias afuera.
+  - Mientras la tripulación re-embarca, los eventos no se revisan.
+  - La facción del grupo desplegado es la del primer bot de `Crew`; el campo `faction` de los demás no se usa. Con `Deploy.IgnoreInfected` (por defecto `true`), los guardias y los infectados se ignoran entre sí.
+- **Cerebro 1.2:** sí (funciona sobre el mismo congelado).
+
+##### `despawn_vehicle`
+
+Fin de la historia: a los 50 ms borra el vehículo, el chofer, la tripulación (aunque ya haya bajado) y los bots de `spawn_guard`, cancela lo pendiente (acciones demoradas, respawn) y manda `BZ AutoDrive vehicle stopped.` a los admins. **No respawnea.**
+
+- **Campos:** ninguno.
+- **Ejemplo:**
+  ```json
+  { "verb": "despawn_vehicle", "delay": 60 }
+  ```
+- **Trampas:** no hay vuelta atrás: la ruta no se re-lanza sola. Para mods que usan la API: el runner no sale del registro.
+- **Cerebro 1.2:** sí (además corta el cerebro 1.2).
+
+##### `lock_seat` · `unlock_seat` · `eject_passenger` (reservados)
+
+**No hacen nada.** Existe el campo `slot` para ellos, pero el despachador no tiene código para estos verbos: cuando el evento dispara, dejan en el log `verbo no implementado todavia` y siguen. Cualquier otro nombre que no esté en esta referencia se comporta igual.
+
+---
+
+#### Los disparadores (triggers)
+
+| Trigger | Dispara cuando… | Campos |
+|---|---|---|
+| `wp_reached` (o `waypoint`, o sin trigger) | el vehículo llega a un waypoint (o lo pasa) | `wp` |
+| `player_in_radius` | un jugador real está a menos de `radius` metros **del vehículo** | `radius` |
+| `player_near_waypoint` | un jugador real está a menos de `radius` metros **de un waypoint fijo** | `wp`, `radius` |
+| `player_enter_vehicle` | un jugador real está adentro del vehículo | — |
+| `vehicle_health_below` | la salud general del vehículo baja de `threshold` | `threshold` |
+| `timer` | pasaron `seconds` segundos desde que nació el vehículo | `seconds` |
+
+Para todos: se revisan cada 0,5 s, **disparan una sola vez por corrida** y **se re-arman en cada spawn** (ver *Lo básico*). Un tipo que no existe (o mal escrito) avisa al cargar la ruta y **nunca dispara**. "Jugador real" es un jugador conectado: los bots de eAI (el chofer, la tripulación, los guardias) no cuentan.
+
+##### `wp_reached`
+
+Dispara cuando el índice de waypoint del vehículo es **mayor o igual** al pedido. Como es "mayor o igual", si el vehículo salta puntos (una re-ubicación del AutoRecovery) el evento dispara igual apenas los pasa. Es el trigger que escribe el wizard. `waypoint` es otro nombre para lo mismo, y un evento **sin** `trigger` (o con `type` vacío) también es un `wp_reached`.
+
+- **Campos:** `wp` (entero, índice de waypoint). Si el `wp` del trigger es 0 o falta, se usa el `wp` del evento.
+- **Una vez / re-armado:** una vez por corrida; se re-arma en cada spawn.
+- **Desde cuándo:** desde el primer tick en que se revisan eventos. Un evento en el wp 0 (o sin `wp` ni trigger) **dispara apenas nace el vehículo**, durante la espera de arranque.
+- **Ejemplo:**
+  ```json
+  { "wp": 340, "trigger": { "type": "wp_reached", "wp": 340 }, "actions": [ { "verb": "horn" } ] }
+  ```
+- **Trampas:**
+  - Si querés un evento en el wp 0 usando el `wp` del trigger, tenés que poner también `"wp": 0` en el evento: un `wp` 0 en el trigger no cuenta y manda el del evento.
+  - Con el **cerebro 1.2** el índice es el cursor del cerebro (el punto más cercano de su propia copia de la ruta). Esa copia descarta los puntos donde la grabación retrocede (glitches). En una ruta limpia los números coinciden; si al cargarla el RPT dice `[Route] saneo de retrocesos: N` con N mayor que 0, los puntos posteriores a un descarte quedan corridos y **el evento puede disparar unos puntos más tarde** *(cuánto: no verificado)*.
+
+##### `player_in_radius`
+
+Dispara cuando **algún jugador real** está a `radius` metros o menos **del vehículo** (distancia en 3D, altura incluida). El círculo se mueve con el vehículo.
+
+- **Campos:** `radius` (decimal, metros). 0 o sin poner = nunca dispara.
+- **Una vez / re-armado:** una vez por corrida.
+- **Ejemplo:**
+  ```json
+  { "wp": 0, "trigger": { "type": "player_in_radius", "radius": 25 }, "actions": [ { "verb": "stop_route" }, { "verb": "resume_route", "delay": 10 } ] }
+  ```
+- **Trampas:** dispara también durante la espera de arranque, si hay alguien cerca del punto de salida.
+
+##### `player_near_waypoint`
+
+Una **zona fija** anclada a un waypoint de la ruta: dispara cuando algún jugador real está a `radius` metros o menos de la posición de ese waypoint, **esté donde esté el vehículo**. Sirve para emboscadas o zonas fuera del camino.
+
+- **Campos:** `wp` (entero: el waypoint que hace de centro; el 0 vale), `radius` (decimal, metros). Un `wp` fuera de la ruta o `radius` 0 = nunca dispara.
+- **Una vez / re-armado:** una vez por corrida.
+- **Ejemplo:**
+  ```json
+  { "wp": 500, "trigger": { "type": "player_near_waypoint", "wp": 500, "radius": 60 }, "actions": [ { "verb": "spawn_guard", "count": 2 } ] }
+  ```
+- **Trampas:** acá el número es la fila del archivo de la ruta tal cual, sin el corrimiento del cerebro 1.2 que puede afectar a `wp_reached`.
+
+##### `player_enter_vehicle`
+
+Dispara cuando **algún jugador real está adentro** del vehículo, en cualquier asiento.
+
+- **Campos:** ninguno.
+- **Una vez / re-armado:** una vez por corrida: **sólo el primero que sube**. Si un jugador ya está adentro cuando se revisan los eventos, dispara enseguida.
+- **Ejemplo** (esperar con el motor apagado hasta que alguien suba; el evento de espera va aparte, ver *Trampas*, abajo):
+  ```json
+  { "wp": 0, "trigger": { "type": "player_enter_vehicle" }, "actions": [ { "verb": "unfreeze_vehicle" }, { "verb": "ui_broadcast", "msg": "Subio un pasajero" } ] }
+  ```
+
+##### `vehicle_health_below`
+
+Dispara cuando la **salud general** del vehículo (de 0 a 1) queda **por debajo** de `threshold`.
+
+- **Campos:** `threshold` (decimal, de 0 a 1; `0.5` = la mitad). 0 o sin poner = nunca dispara.
+- **Una vez / re-armado:** una vez por corrida.
+- **Ejemplo:**
+  ```json
+  { "wp": 0, "trigger": { "type": "vehicle_health_below", "threshold": 0.6 }, "actions": [ { "verb": "freeze_vehicle" }, { "verb": "guard_stop" } ] }
+  ```
+- **Trampas:** **con el vehículo irrompible (el default) casi nunca dispara**: el framework le bloquea el daño a cada tick. Poné `"VehicleInvincible": false` en el header, o un `set_vehicle_mortality` con `"mortal"` antes.
+
+##### `timer`
+
+Dispara cuando pasaron `seconds` segundos **desde que nació el vehículo**. No es desde que arranca a manejar: el reloj incluye la espera de arranque (`SpawnHoldSeconds`), la carga de la ruta y la subida de la tripulación.
+
+- **Campos:** `seconds` (decimal, segundos). 0 = en la primera revisión.
+- **Una vez / re-armado:** una vez por corrida; el reloj vuelve a cero en cada spawn. Si el punto de salida estaba ocupado y el runner esperó, el reloj cuenta desde que el vehículo nació de verdad.
+- **Ejemplo:**
+  ```json
+  { "wp": 0, "trigger": { "type": "timer", "seconds": 600 }, "actions": [ { "verb": "despawn_vehicle" } ] }
+  ```
+- **Trampas:** como los eventos no se revisan mientras la tripulación sube, un timer corto puede salir más tarde que su segundo exacto. Resolución: medio segundo.
+
+---
+
+#### Condiciones ("si pasa X, hacé Y")
+
+En el código existe una clase de **condición** con estos tipos: `AND`, `OR`, `NOT` (combinan otras condiciones), `player_in_radius`, `player_in_vehicle`, `vehicle_health_below`, `wp_reached`, `var_equals` (compara una variable de `set_var`), `engine_running`, `route_stopped` y `vehicle_frozen`. También existe la función que las evalúa.
+
+**Pero no se usan en ningún lado accesible:**
+
+- **Ninguna parte del código llama a esa función.**
+- **Ningún campo del JSON de la ruta acepta una condición.** Un evento tiene sólo `wp`, `trigger` y `actions`; una acción no tiene campos de condición.
+- El verbo `check_once` (con `condition`, `on_true`, `on_false`) **se sacó el 11/06/2026**: tener una acción adentro de otra acción, o una condición adentro de otra, rompía la carga del JSON y la lista `Events` entera no cargaba (ni los eventos simples). Desde entonces la acción es plana.
+
+**Conclusión: un admin no puede usar condiciones desde el JSON de la ruta.** Si escribís una clave `condition` en un evento, se ignora *(no verificado cómo trata el cargador una clave desconocida)*. Por lo mismo, **`set_var` hoy no tiene efecto**: nadie lee sus variables. El "si pasa X, hacé Y" es territorio de Expansion Quests.
+
+---
+
+#### Trampas de los eventos
+
+1. **Editá el `_hdr.json`**, no el `.json` completo. Y después **relanzá la ruta desde el Reproductor**: el respawn automático reusa la ruta en memoria y no ve tus cambios.
+2. **`delay` se cuenta desde el disparo del evento**, no desde la acción anterior. `freeze` + `unfreeze` con `delay: 5` = 5 segundos quieto, aunque en el medio pongas otras acciones demoradas.
+3. **Cada verbo se deshace con su par.** `freeze_vehicle` ↔ `unfreeze_vehicle`; `stop_route` ↔ `resume_route`. **`resume_route` no descongela** y **`unfreeze_vehicle` no levanta un `stop_route`**: mezclarlos deja el vehículo detenido para siempre. `guard_stop` usa el mismo congelado que `freeze_vehicle` y lo suelta al terminar.
+4. **Un `delay` solo no detiene nada.** La espera siempre son dos acciones: una que detiene y su par con `delay`.
+5. **`stop_engine` solo dura medio segundo.** El motor se vuelve a encender a cada tick salvo con el vehículo **congelado**. Esperar con el motor apagado = `freeze_vehicle` + `stop_engine` (con `delay` si es al principio de la ruta); arrancar = `unfreeze_vehicle` (el motor se enciende solo). Con `stop_route` el motor no se puede apagar.
+6. **`ui_broadcast` sin `value` lo ven sólo los admins** (`AdminSteamIDs`). Para los jugadores, elegí `"all"`, `"near"` o `"passengers"` (§13.3).
+7. **`set_var` no tiene efecto**: nadie lee las variables y no hay condiciones usables (ver *Condiciones*, arriba).
+8. **`vehicle_health_below` necesita el vehículo destructible.** Con `VehicleInvincible` en `true` (el default) no le entra daño.
+9. **`set_vehicle_mortality` y `set_driver_mortality`:** sólo `"mortal"`, exacto y en minúscula, los vuelve mortales. Sin `value`, o con `"Mortal"`, quedan **invencibles**. Lo mismo con `set_vehicle_parts`: sólo `"unlocked"` exacto lo desbloquea; con `"Unlocked"` sigue inviolable.
+10. **Cada evento dispara una vez por corrida.** `player_enter_vehicle` sólo ve al **primer** pasajero; `player_in_radius`, al primer jugador que se acerca. En cada spawn todo se re-arma.
+11. **Un evento sin `wp` y sin `trigger` dispara al nacer el vehículo** (es un `wp_reached` en el wp 0).
+12. **Con el cerebro 1.2, `wp_reached` puede disparar unos puntos más tarde** en rutas con glitches de grabación (línea `[Route] saneo de retrocesos: N` con N mayor que 0 en el RPT).
+13. **Luces:** un `lights_on` / `lights_off` manda sobre `LightsMode` hasta el próximo spawn, con los dos cerebros.
+14. **`dismount_guard` no los vuelve a subir.** Si soltás el vehículo se va sin ellos, y cuando el vehículo se despawnea se borran. Para bajar, esperar y volver a subir, usá `guard_stop`. El vehículo tiene que estar detenido para que bajen.
+15. **Los bots de `spawn_guard` no son tripulación**: ni `dismount_guard` ni `guard_stop` los mandan.
+16. **Los errores de nombre se ven en momentos distintos:** un trigger mal escrito avisa **al cargar** la ruta; un verbo mal escrito avisa recién **cuando el evento dispara**. Los nombres distinguen mayúsculas.
+17. **Mientras suben el chofer o la tripulación, los eventos no se revisan.** Con el vehículo congelado, frenado o pausado desde el panel **sí** se revisan: un `timer` puede disparar mientras lo tenés en pausa.
+18. **Las líneas `[EVENT ...]` del log no dicen de qué ruta son.** Con varios vehículos, guiate por el número de evento y el wp.
+19. **Los verbos reservados** (`lock_seat`, `unlock_seat`, `eject_passenger`) y cualquier nombre que no esté en esta referencia **no hacen nada**.
+
+---
+
+## 11. Misiones — BZ_AutoDrive + Quests *(la integración estrella)*
 
 Esta es la pieza más potente del framework: que un vehículo manejado por NPC sea **parte de una misión** — refuerzos que llegan, un convoy que escapa, una emboscada en la ruta. Para eso, BZ_AutoDrive se acopla con **DayZ-Expansion-Quests**.
 
-### 12.1 ¿Por qué dos sistemas? (la división de labor)
+### 11.1 ¿Por qué dos sistemas? (la división de labor)
 
 La clave es que **cada sistema hace lo que sabe hacer**:
 
@@ -547,7 +1416,7 @@ La clave es que **cada sistema hace lo que sabe hacer**:
 
 > *¿Por qué no hace todo el framework?* Un bot que spawnea el framework por su cuenta **no tiene lógica de misión** — matarlo no da nada (ni reward ni progresión). Y sin un Quest, los bots ni "viven" bien (aparecen como maniquíes). **Quest es el único dueño de bots armados con sentido.** Por eso se componen: Quest pone la gente y el sentido; vos ponés el vehículo y el manejo — la pieza que a Quest le falta.
 
-### 12.2 Cómo funciona una misión, de punta a punta
+### 11.2 Cómo funciona una misión, de punta a punta
 
 1. El jugador **acepta el quest** (define dónde y cuántos bots).
 2. Los bots **aparecen** cuando el jugador se acerca a la zona (son "lazy": se materializan por proximidad).
@@ -556,7 +1425,7 @@ La clave es que **cada sistema hace lo que sabe hacer**:
 5. Al llegar (o al dispararse un trigger), los bots **se bajan** — a desplegarse, a campear, a lo que pida la misión.
 6. Cuando la misión termina, el vehículo se **limpia** (no queda dando vueltas).
 
-### 12.3 Ejemplo 1 — "El convoy que huye" *(validado in-game)*
+### 11.3 Ejemplo 1 — "El convoy que huye" *(validado in-game)*
 
 *La idea:* hay un campamento con 5 bots. Si el jugador empieza a matarlos, los sobrevivientes **se escapan en un vehículo**.
 
@@ -572,7 +1441,7 @@ La clave es que **cada sistema hace lo que sabe hacer**:
 
 > El gatillo es el **kill-count del quest** (matar 1). El framework no inventa la lógica — *escucha* al quest y maneja el vehículo.
 
-### 12.4 Ejemplo 2 — "Interceptá el convoy" *(emboscada)*
+### 11.4 Ejemplo 2 — "Interceptá el convoy" *(emboscada)*
 
 *La idea:* un convoy enemigo cruza la zona; el jugador lo embosca.
 
@@ -587,19 +1456,23 @@ La clave es que **cada sistema hace lo que sabe hacer**:
 
 > *Insight de diseño:* esta emboscada es, en el fondo, un **marcador NUMPAD 4 generalizado** — un trigger ("al recibir daño") que dispara una secuencia ("frenar + bajar + combatir"). Hoy viene pre-armado como un modo; la dirección es que lo definas vos en los eventos (§10), sin tocar código.
 
-### 12.5 El lifecycle del vehículo (no dejar autos fantasma)
+### 11.5 El lifecycle del vehículo (no dejar autos fantasma)
 
 En una misión, el vehículo **no debe quedar dando vueltas** al terminar. Cuando el quest marca los objetivos como completos, el framework **limpia** el vehículo (lo despawnea y corta el manejo). Otras políticas posibles: dejarlo como **botín**, dejarlo en sitio para un objetivo encadenado, etc.
 > *Ejemplo:* en el convoy que huye, cuando el jugador finalmente liquida a los 4 en el patio, el quest marca "completado" → el Cobra se despawnea solo. No queda un auto fantasma en el mapa.
 
-### 12.6 Lo que necesitás para armarla
+### 11.6 Lo que necesitás para armarla
 
-- **Dependencia:** requiere **@DayZ-Expansion-Quests**. *(Para publicar el framework solo, esta parte se separa en un complemento opcional, así el core no obliga a tener Quests.)*
+- **Dependencia:** Quests, que ya viene en el Bundle de Expansion y el mod requiere de todas formas (§4).
 - **Tu parte (framework):** grabás la ruta del vehículo + la configurás con el modo de convoy y, si querés, los bots que viajan desde el arranque.
 - **La parte del quest:** definís los bots y la lógica (reward, condiciones) en el editor de Expansion-Quests.
 - **El enganche:** el framework *escucha* cuándo arranca el quest y dónde están sus bots, y desde ahí coordina el vehículo.
 
-### 12.7 — Cómo se escribe (ejemplos de config)
+> **⚠ El vehículo de la misión tiene que ser el que grabaste.** El `VehicleClass` del JSON no es una etiqueta: es **la clase con la que hiciste la toma**. Si armás la misión con un Cobra, la ruta tiene que estar grabada con un Cobra — no con "algo parecido". Cada toma alimenta el *envelope* de **esa** clase (§6C), y ahí es donde el framework aprende cuánto frena y cuánto gira ese vehículo.
+>
+> Si querés la misma escena con otro vehículo, **grabá la ruta con ese vehículo** y apuntá la misión a la ruta nueva. Es más rápido que pelearse con una toma prestada, y el resultado es fiel a la física del auto que el jugador va a ver.
+
+### 11.7 — Cómo se escribe (ejemplos de config)
 
 La parte del framework se configura en el **JSON de la ruta** (`BZBusRoute*.json`). Acá van los ejemplos reales de las dos escenas. *(Los bots y el reward los definís aparte, en el editor de Expansion-Quests.)*
 
@@ -649,15 +1522,15 @@ La parte del framework se configura en el **JSON de la ruta** (`BZBusRoute*.json
     "actions": [
       { "verb": "freeze_vehicle" },
       { "verb": "play_sound", "value": "MiVoz_SoundSet", "delay": 0.5 },
-      { "verb": "resume_route", "delay": 3.0 }
+      { "verb": "unfreeze_vehicle", "delay": 3.0 }
     ]
   }
 ]
 ```
 - `trigger` = cuándo (acá: al llegar al wp 88). `actions` = qué, en orden, con `delay` (segundos) para coreografiar.
-- Triggers disponibles: `wp_reached`, `player_in_radius` (con `radius`), `player_enter_vehicle`, `vehicle_health_below` (con `threshold` 0..1), `timer` (con `seconds`).
+- Triggers disponibles: `wp_reached`, `player_in_radius` (con `radius`), `player_near_waypoint` (con `wp` y `radius`), `player_enter_vehicle`, `vehicle_health_below` (con `threshold` 0..1), `timer` (con `seconds`). Referencia completa en §10.3.
 
-### 12.8 — El hook en código (cómo el framework "escucha" el quest)
+### 11.8 — El hook en código (cómo el framework "escucha" el quest)
 
 La integración es server-side, en dos piezas. **(1)** Un `modded class MissionServer` que avisa al framework cuando arranca un quest:
 ```c
@@ -692,7 +1565,7 @@ void CheckQuestBots() {
 ```
 > **La puerta de entrada:** `QuestPatrolExists(questID, patrols)` te da las patrullas vivas del quest, y `patrol.m_Group` son los bots. Desde ahí el framework los alcanza — son las referencias que necesitás para subirlos al vehículo.
 
-### 12.9 — Cómo embarca los bots (la mecánica + el gotcha)
+### 11.9 — Cómo embarca los bots (la mecánica + el gotcha)
 
 Al dispararse el trigger, el framework agarra los bots vivos del quest y los sube. Lo no-obvio —y que costó horas— es que hay que **pacificarlos primero**: un bot *en combate* no camina a un waypoint (el FSM de eAI exige "sin amenaza"):
 ```c
@@ -733,7 +1606,7 @@ void BoardQuestBots() {
 
 ---
 
-### 12.10 — Ejemplo 3 — "Tomá el bus" (Travel) *(validado in-game)*
+### 11.10 — Ejemplo 3 — "Tomá el bus" (Travel) *(validado in-game)*
 
 El tipo de objetivo más simple de integrar, y el **primero validado más allá de los convoyes**: un objetivo **Travel** (`ObjectiveType` 3) se cumple cuando el jugador **llega a una posición**. Si esa posición es el **final de una ruta** del framework, entonces **viajar en el vehículo cumple el objetivo**. El bus *es* el viaje.
 
@@ -770,7 +1643,7 @@ El tipo de objetivo más simple de integrar, y el **primero validado más allá 
 
 **El hook** (en `OnQuestStart`): al arrancar un quest, el framework escanea las rutas; si alguna declara `QuestTravelID` == ese quest, la carga (`LoadConfigFromPath`) y la spawnea (`RespawnBus`); el `SpawnHoldSeconds` de la ruta hace la espera. Es el **mismo molde** que se extiende después a Escort/VIP (el vehículo lleva al VIP) y Delivery (el vehículo lleva la carga).
 
-### 12.11 — Ejemplo 4 — Escolta al VIP (AIVIP) *(validado in-game)*
+### 11.11 — Ejemplo 4 — Escolta al VIP (AIVIP) *(validado in-game)*
 
 El objetivo que **cierra** la integración: un **AIVIP** (`ObjectiveType` 9, "escoltá al VIP a un lugar"). Expansion spawnea un **VIP** (un NPC eAI, ej. `eAI_SurvivorF_Gabi`); el framework lo **sube a un vehículo** y Boris lo maneja al destino, mientras vos lo **escoltás** (lo protegés en el camino). El VIP llega → objetivo cumplido.
 
@@ -790,7 +1663,7 @@ El objetivo que **cierra** la integración: un **AIVIP** (`ObjectiveType` 9, "es
 **El insight clave — cómo se agarra al VIP.** Acá hubo que leer el código de Expansion: el VIP **NO** está en `QuestPatrolExists()` (esa lista es solo de AICamp/AIPatrol). Está **flageado con `Expansion_IsQuestVIP()`** y sale del enum global **`eAIBase.eAI_GetAll()`**. El framework escanea esa lista, filtra por el flag + proximidad al vehículo, y lo embarca en su propio grupo (sin tocar el grupo del jugador). *(Técnica útil: las `.c` de Expansion se leen como texto adentro del PBO — no hace falta extraer.)*
 
 **El flujo in-game:**
-1. Reclamás `Quest_10` en el NPC (Denis, al lado de la pizarra).
+1. Reclamás `Quest_10` en el NPC que da el quest.
 2. Aparece el **CivilianSedan + Boris** en el inicio de la ruta y espera 35s.
 3. **El VIP** spawnea cerca → el framework lo encuentra (`eAI_GetAll` + `Expansion_IsQuestVIP`) → lo sube caminando.
 4. Boris lo lleva al destino (fin de ruta) → baja → **objetivo cumplido** (con `Autocomplete: 1`, se finaliza solo).
@@ -804,9 +1677,9 @@ El objetivo que **cierra** la integración: un **AIVIP** (`ObjectiveType` 9, "es
 
 **Lo que esto cierra:** con AIVIP validado, los objective types donde el vehículo tiene un rol — **AICamp/AIPatrol, Travel, AIEscort/VIP** — están todos andando. Los demás (Collection, Crafting, etc.) **coexisten** sin conflicto. Eso es la integración Quest completa.
 
-## 13. Controles (las teclas)
+## 12. Controles (las teclas)
 
-El framework usa **solo 3 teclas** — el ciclo de grabación + abrir la UI. Todo lo demás (largar / parar / pausar un vehículo, spawnear vacíos, armar los loggers) se hace **desde el Reproductor** (§14), no con teclas. Las 3 viven en el **menú del juego**: `Opciones → Controles → sección "BZ AutoDrive"`, **rebindeables** como cualquier control de DayZ, y vienen **asignadas por default**:
+El framework usa **solo 3 teclas** — el ciclo de grabación + abrir la UI. Todo lo demás (largar / parar / pausar un vehículo, spawnear vacíos, armar los loggers) se hace **desde el Reproductor** (§13), no con teclas. Las 3 viven en el **menú del juego**: `Opciones → Controles → sección "BZ AutoDrive"`, **rebindeables** como cualquier control de DayZ, y vienen **asignadas por default**:
 
 | Acción (nombre en el menú) | Default | Para qué |
 |---|---|---|
@@ -818,53 +1691,53 @@ El framework usa **solo 3 teclas** — el ciclo de grabación + abrir la UI. Tod
 
 > *Flujo típico:* abrís el panel con `INICIO`; para grabar, `NUMPAD 5` (con `NUMPAD 4` en las paradas/eventos; en los cambios de sentido solo frenás, cambiás de marcha y seguís — se auto-detectan), `NUMPAD 5` de nuevo para cortar; después elegís la ruta en el Reproductor y mirás cómo le va. Tus asignaciones se guardan en tu perfil (`Documents\DayZ\<perfil>.dayz_preset_User.xml`).
 
-> **⚠ Los controles los VE todo el mundo, pero solo funcionan para el admin.** DayZ le muestra la categoría "BZ AutoDrive" en Controles a **todos** los jugadores (registra los inputs de forma global — no se puede ocultar por admin). Pero las teclas **no hacen nada** si no sos admin: el gate es **server-side**, se valida en cada acción contra tu Steam ID (§14.1). Por eso el menú se dejó **mínimo** (3 teclas): un jugador común ve una categoría corta e inerte, no un tablero de debug.
+> **⚠ Los controles los VE todo el mundo, pero solo funcionan para el admin.** DayZ le muestra la categoría "BZ AutoDrive" en Controles a **todos** los jugadores (registra los inputs de forma global — no se puede ocultar por admin). Pero las teclas **no hacen nada** si no sos admin: el gate es **server-side**, se valida en cada acción contra tu Steam ID (§13.1). Por eso el menú se dejó **mínimo** (3 teclas): un jugador común ve una categoría corta e inerte, no un tablero de debug.
 
-> *Nota:* el `ai_run` (la caja negra de Boris) ya **no tiene tecla** — se arma desde el check del Reproductor (§14, §16.1). Las herramientas viejas de tuning/debug (Parking/Reverse/Approach en vivo, SysID, gear markers, spawn slots) se sacaron del menú; las maniobras salen del **intercambio auto-detectado** (cambio de gear) + el editor.
+> *Nota:* el `ai_run` (la caja negra de Boris) ya **no tiene tecla** — se arma desde el check del Reproductor (§13, §15.1). Las herramientas viejas de tuning/debug (Parking/Reverse/Approach en vivo, SysID, gear markers, spawn slots) se sacaron del menú; las maniobras salen del **intercambio auto-detectado** (cambio de gear) al grabar.
 
 ---
 
-## 14. La interfaz (UI)
+## 13. La interfaz (UI)
 
 Un solo panel para el admin — el **Reproductor** — que lo abrís con una tecla (**INICIO/HOME** por default, configurable). Reúne todo en una pantalla: la lista de rutas, lo que se está manejando en vivo, y el spawn de vehículos vacíos. Se divide en tres zonas:
 
-**① ROUTES (izquierda) — tu lista de rutas.** Todas las rutas guardadas. Hacés clic en una y **el NPC la maneja al instante, sin reiniciar el server**. Al seleccionarla, abajo te muestra su **ficha** (vehículo, cantidad de waypoints, distancia, velocidad máx) y un **scrubber** para recorrer la ruta wp por wp. Debajo de la lista, el botón **LOAD & SPAWN** (largar la ruta elegida) y los **checks de logger** (ver abajo).
-> *Ejemplo:* tenés "Bus pueblo", "Taxi centro", "AB - Jeep" en la lista; clic en una y arranca.
+**① ROUTES (izquierda) — tu lista de rutas.** Todas las rutas guardadas. Hacés clic en una para **elegirla** y la largás con **LOAD & SPAWN**: el NPC la maneja al instante, **sin reiniciar el server**. Al seleccionarla, abajo te muestra su **ficha** (vehículo, cantidad de waypoints, distancia, velocidad máx) y un **scrubber** para recorrer la ruta wp por wp. Debajo de la lista, el botón **LOAD & SPAWN** (largar la ruta elegida) y los **checks de logger** (ver abajo).
+> *Ejemplo:* tenés "Bus pueblo", "Taxi centro", "AB - Jeep" en la lista; elegís una, apretás LOAD & SPAWN y arranca.
 
 **② ACTIVE RUNNERS (derecha, arriba) — tu tablero en vivo.** Cada vehículo que se está manejando **ahora** — tus rutas, las de misiones, las del arranque del server — con su **nombre + waypoint** y su **estado** (`DRIVING` / `PAUSED` / `STOPPED`). Por cada uno, cuatro botones: **RST** (reiniciar desde el wp 0 de su ruta, sin recargar), **TP** (teletransportarte al lado para interceptarlo), **II** (pausar / reanudar), **[]** (pararlo y sacarlo). Si hay muchos, la lista **scrollea** con la rueda. Arriba a la derecha, **STOP ALL** para bajar todos de una.
 > *Ejemplo:* ves "Bus pueblo — wp 88/166 — DRIVING". Lo pausás con **II** o te TP al lado para subirte.
 
-**③ ACTIVE SPAWN VEHICLE (derecha, abajo) — los vehículos vacíos que sembraste.** Cada vehículo que spawneaste vacío (con START/HERE/END, ver abajo) aparece acá como una fila —**ruta · wp · posición**— con dos botones: **TP** (ir a su lado) y **ELIMINAR** (borrarlo). Podés dejar **varios** vacíos sembrados por el mapa y manejarlos desde acá. Scrollea si hay más de los que entran.
+**③ ACTIVE SPAWN VEHICLE (derecha, abajo) — los vehículos vacíos que sembraste.** Cada vehículo que spawneaste vacío (con START/HERE/END, ver abajo) aparece acá como una fila —**ruta · wp · posición**— con dos botones: **TP** (ir a su lado) y **DELETE** (borrarlo). Podés dejar **varios** vacíos sembrados por el mapa y manejarlos desde acá. Scrollea si hay más de los que entran.
 
 **La barra de abajo — spawn de vehículos vacíos + scrubber.** Muestra la ficha de la ruta seleccionada + el scrubber, y a la derecha **SPAWN EMPTY VEHICLE AT: START · HERE · END**: spawnea el vehículo de la ruta **vacío y manejable** en el inicio, en el wp del scrubber (**HERE**) o en el final. Sirve para **continuar una grabación** (spawnás el auto donde quedaste y seguís manejando) o para sembrar autos. **Ya no te teletransporta** al vehículo: aparece en la lista **ACTIVE SPAWN VEHICLE** (③) y desde ahí lo TP o lo eliminás.
 
 **Los checks de logger (opt-in, antes de dar play).** Debajo de la lista de rutas hay dos casillas — **`[ ] boris_native`** y **`[ ] ai_run`** — que **tildás ANTES de largar la ruta** (LOAD & SPAWN). Si están tildadas, esa corrida graba su trayectoria **en sincro con el play**:
-- **`ai_run`** — la **caja negra** de Boris (telemetría de la corrida; ver §16.1). Se arma **desde este check** (ya no con tecla) para esa corrida puntual.
-- **`boris_native`** — la **trayectoria server-side** de Boris (misma forma que una grabación humana), para **superponerla contra tu toma en el editor** y ver dónde se desvió (detalle en §16.2).
+- **`ai_run`** — la **caja negra** de Boris (telemetría de la corrida; ver §15.1). Se arma **desde este check** (ya no con tecla) para esa corrida puntual.
+- **`boris_native`** — la **trayectoria server-side** de Boris, en la misma forma que una grabación humana: sirve para compararla con tu toma y ver dónde se desvió (detalle en §15.2).
 > Vienen **destildadas** (no graban nada). Es opt-in por corrida: tildás, das play, y solo esa corrida escribe el log. Sin tildar, uso normal, cero archivos.
 
-> *Nota:* las teclas se rebindean desde el menú de Controles del juego (§13). Los checks arman los loggers desde la propia UI, sin depender de las teclas.
+> *Nota:* las teclas se rebindean desde el menú de Controles del juego (§12). Los checks arman los loggers desde la propia UI, sin depender de las teclas.
 
-### 14.1 — ¿Quién es admin? — configurar `AdminSteamIDs`
+### 13.1 — ¿Quién es admin? — configurar `AdminSteamIDs`
 
 Recién dijimos que los controles y las UIs **"solo tienen efecto para vos (admin)"**. ¿Pero cómo decide el framework quién es admin? Por tu **Steam ID**.
 
 **Cómo te identifica.** El server compara tu Steam ID (el Steam64, también llamado *PlainId*) contra una lista llamada `AdminSteamIDs` en su archivo de settings. Si tu ID está en esa lista, sos admin.
 
-**El archivo.** `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`. Si no existe, lo creás vos. Los dos campos que te importan:
-- `AdminSteamIDs` — lista de strings con los Steam IDs autorizados.
-- `ControlPanelKey` — la tecla que abre el panel (`-1` = INICIO/HOME por default).
+**El archivo.** `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`. El server lo **crea vacío** la primera vez que arranca con el mod: editalo. El campo que te importa:
+- `AdminSteamIDs` — la lista de Steam IDs autorizados. **Cada ID va entre comillas**, como en el ejemplo de abajo: sin comillas el server no lo toma y seguís sin ser admin.
 
-**⚠️ LO MÁS IMPORTANTE (esto es el punto de seguridad):** si `AdminSteamIDs` está **VACÍA, TODOS son admin**. Es cómodo para testing local, pero en un server **PÚBLICO TENÉS que poner tu(s) Steam ID(s)** ahí. Si no lo hacés, **cualquier jugador** puede abrir el panel, spawnear y controlar los vehículos. Es lo **primero** a setear antes de abrir el server al público.
+*(La tecla que abre el panel no se configura acá: se cambia en **Opciones → Controles → BZ AutoDrive**, §12.)*
+
+**⚠️ LO MÁS IMPORTANTE (esto es el punto de seguridad):** si `AdminSteamIDs` está **VACÍA, NADIE es admin** — ni siquiera vos. El panel no abre y todas las acciones se rechazan del lado del server (fail-closed). **Poné tu(s) Steam ID(s) en la lista: es el primer paso, obligatorio, para usar el framework.** Si apretás la tecla del panel y "no pasa nada", mirá el log del server: vas a ver una línea `[Panel] acceso denegado a <tu SteamID>` que te dice exactamente qué editar.
 
 **Ejemplo del JSON:**
 ```json
 {
-  "AdminSteamIDs": ["76561198000000000"],
-  "ControlPanelKey": -1
+  "AdminSteamIDs": ["76561198000000000"]
 }
 ```
-Podés poner varios IDs separados por coma. `ControlPanelKey: -1` = tecla INICIO/HOME.
+Podés poner varios, cada uno entre comillas y separados por coma: `["76561198000000000", "76561198000000001"]`. El server lee el archivo al arrancar: **reinicialo después de editarlo**. Para comprobar que lo tomó, mirá el RPT del arranque: tiene que decir `[Settings] Cargado. Admins: 1` (o la cantidad que pusiste). Si dice `Admins: 0` y aparece `AdminSteamIDs is empty`, el ID no está bien escrito (revisá las comillas).
 
 **Cómo encontrar tu Steam ID** (el Steam64 / *PlainId*): en tu perfil de Steam, en **steamid.io**, o en el **log del server** cuando te conectás.
 
@@ -874,7 +1747,110 @@ Podés poner varios IDs separados por coma. `ControlPanelKey: -1` = tecla INICIO
 
 ---
 
-## 15. Audio (.ogg) — ponerle voz a tus eventos
+### 13.2 — Por qué la ruta tarda unos segundos en arrancar
+
+Al lanzar una ruta, el vehículo aparece y queda unos segundos en **cargando** antes de empezar a manejar. **No es lentitud: es a propósito.**
+
+La ruta y su cinta se cargan **repartidas en muchos cuadros**, para que el servidor no se frene. Cargarlas de golpe congela el servidor **casi dos segundos** (medido: 1,84 s con una ruta de 1.193 waypoints y 19.075 cuadros de cinta), y eso **no lo sufre sólo el vehículo que está arrancando**: se frena todo — el vehículo que ya venía manejando, los bots, y cualquiera que esté jugando.
+
+En un **convoy** el problema se multiplica: el segundo vehículo se lanza **mientras el primero ya circula**, así que cada carga le pega en marcha al que salió antes. Con tres vehículos serían tres congelamientos de casi dos segundos, uno arriba del otro. Y en un servidor de verdad el convoy no está solo: está el **bus de línea** haciendo su servicio permanente, las otras rutas que relanzan solas cada tantos minutos, y lo que cada uno tenga corriendo.
+
+**Hay UNA sola cola de carga para todo el servidor**, con un presupuesto fijo de milisegundos por cuadro. Eso quiere decir que **lanzar cinco rutas de golpe no empeora el servidor**: sólo tarda más en tenerlas todas listas. Las rutas se cargan **por orden de llegada**. La tarjeta aparece en **Active Runners** apenas se aprieta Load, y su línea de estado dice qué está haciendo:
+
+| Estado | Qué significa |
+|---|---|
+| `WAITING wp0 occupied 12s` | el punto de salida está ocupado por otro vehículo: espera a que se libere (re-intenta cada 5 s) y recién ahí crea el suyo, en su lugar exacto. No lo corre al costado: un vehículo que no nace sobre su cinta no la puede seguir |
+| `QUEUED 2` | esperando turno: hay 2 cargas delante |
+| `LOADING 43%` | cargando la ruta y su cinta |
+| `BOARDING CREW 2/3` | ya cargó; espera a que la tripulación se siente |
+| `PREPARING` | subiendo el chofer, o el último segundo antes de arrancar |
+| `DRIVING` / `STOPPED` / `PAUSED` | como siempre |
+
+Si se aprieta Load otra vez sobre una ruta que ya está en marcha, **no se lanza de nuevo** y aparece un aviso que lo dice (`PATRULLA ya esta en marcha (LOADING 43%): no se lanza de nuevo`).
+
+**El porcentaje sale del header de la ruta**: el conversor escribe en el `_hdr.json` cuántas filas tienen el `_wp.csv` y la cinta (`"WpRows"`, `"CintaRows"`). Una ruta convertida antes de esto carga igual, pero muestra `LOADING (8400 rows)` en vez del %. Para completarle el número, reconvertí la ruta con el wizard.
+
+El número se queda quieto un momento al terminar la ruta y sigue con la cinta: es un % de lo leído, no una barra inventada, y no marca 100 hasta que la carga terminó de verdad.
+
+**La perilla** (opcional) va en `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`:
+
+```json
+{
+  "AdminSteamIDs": ["76561198000000000"],
+  "LoadBudgetMsPerFrame": 5.0
+}
+```
+
+- `LoadBudgetMsPerFrame` — milisegundos por cuadro que el servidor le dedica a cargar rutas, **entre todas las que haya en cola**. Default **5.0**, que es lo que cuesta un tick normal del piloto: no se nota.
+- **Más bajo** (2-3): el servidor ni se entera, las rutas tardan más en estar listas.
+- **Más alto** (10-15): arrancan antes, a costa de cuadros más caros. No conviene pasarse: es exactamente la palanca que causaba el problema.
+- `0` o negativo se ignora y vale el default (una perilla mal puesta no puede volver a congelar el servidor).
+
+**Y por qué espera también a la tripulación.** Si la ruta lleva bots de tripulación, el vehículo **no arranca hasta que estén todos sentados**, sean 2, 3 o 10. No es un reloj: es la plaza ocupada. Antes salía a los pocos segundos y los bots lo perseguían a pie hasta la primera parada — y en esa primera etapa no había nadie a bordo para bajarse a defender.
+
+Si alguna plaza no se llena (un bot que murió al aparecer, uno que no encuentra la puerta), **sale igual** cumplido `CrewBoardTimeoutS` y el log dice con cuántas plazas salió:
+
+```
+[MUSTER] plazas completas 3/3 en 4.2 s -> arranca
+[MUSTER] TOPE de 120 s: arranca con 2/3 plazas ocupadas -- 1 bot(s) no subieron
+```
+
+- `CrewBoardTimeoutS` — segundos de espera antes de salir igual; va en el mismo `BZAutoDrive_settings.json`. Default **120**. Es una **red de seguridad, no una perilla de tuning**: tiene que estar lejos de lo que tarda un embarque sano. Si ves `[MUSTER] TOPE` en corridas normales, el problema no es el número.
+
+
+**Si preferís que arranque antes, grabá rutas más cortas:** el costo es proporcional al tamaño de la ruta, no una espera fija. En el log del servidor cada carga deja su número:
+
+```
+[CARGA] PATRULLA LISTA: 1193 wps + 19075 frames de cinta en 264 tajadas / 8200 ms de reloj
+[CARGA] PATRULLA reparto: leer ruta 358 ms · armar ruta 330 ms · leer cinta 1105 ms · armar cinta 12 ms · PEOR TAJADA 6.1 ms
+```
+
+### 13.3 — Notificaciones: quién ve qué
+
+El framework avisa cosas por tres canales, y cada uno tiene su público:
+
+| Canal | Qué | Quién lo ve |
+|---|---|---|
+| **Grabación** | "Recording started", "Stop #N marked", el contador `REC` | sólo el que graba (grabar es de admin: NUMPAD 5 y NUMPAD 4 sólo andan para los admins) |
+| **Avisos automáticos** | las llegadas y los administrativos (abajo) | **sólo los admins** (`AdminSteamIDs`, §13.1), por pantalla o por chat, a tu elección |
+| **Mensajes tuyos** | el verbo `ui_broadcast` en un evento (§10.3) | a quien elijas: los admins, todos, los que están cerca o los pasajeros |
+
+Todo aviso automático queda además en el log del server (`[GLOBAL] …` en el RPT). `log_event` escribe **sólo** ahí: eso no sale nunca a pantalla.
+
+**Lo que ves vos: los avisos automáticos.** Son de dos tipos, y cada tipo se elige por separado en `BZAutoDrive_settings.json` (el mismo archivo de §13.1):
+
+- `AdminArrivalNotifications` — **las llegadas**: llega a una parada y cuánto espera, la distancia a la parada, fin de línea, ruta completa, "salió de la terminal".
+- `AdminSystemNotifications` — **los administrativos**: vehículo detenido, pausa y reanudación, spawn fallido, la seña a Boris.
+
+Cada uno acepta `"toast"` (en pantalla: el default), `"chat"` (en el chat del juego, con el prefijo `BZ AutoDrive:`), `"both"` (las dos cosas) u `"off"` (no sale; queda en el RPT). Si falta la clave, o el valor está mal escrito, vale `"toast"`. El server lee el archivo al arrancar: reinicialo para que tome el cambio.
+
+```json
+{
+  "AdminSteamIDs": ["76561198000000000"],
+  "AdminArrivalNotifications": "chat",
+  "AdminSystemNotifications": "toast"
+}
+```
+
+Los jugadores comunes **nunca** ven estos avisos. Las respuestas del panel (por ejemplo, "is already running: not launched again") te llegan siempre en pantalla: son la respuesta a tu clic.
+
+**Lo que ven los jugadores: lo armás vos, con eventos.** Un jugador común sólo ve lo que le mandes con `ui_broadcast`:
+
+- `value`, **a quién**: `"all"` (todos los conectados), `"near"` (los que están a menos de `radius` metros del vehículo; sin `radius`, 150 m), `"passengers"` (los que van sentados en el vehículo) o `"admins"`. Sin `value`, o con un valor mal escrito, va **sólo a los admins**: un error de tipeo nunca le muestra a los jugadores algo que era para vos.
+- `format`, **por dónde**: `"toast"` (en pantalla, el default), `"chat"` o `"both"`.
+
+Por ejemplo, avisarles a todos, en pantalla, que el bus salió de la terminal (un evento en un waypoint justo después de la salida):
+
+```json
+{ "wp": 3, "actions": [ { "verb": "ui_broadcast", "value": "all", "format": "toast", "msg": "The bus left the terminal" } ] }
+```
+
+Y por chat, a los que van arriba: `{ "verb": "ui_broadcast", "value": "passengers", "format": "chat", "msg": "Next stop: Chernogorsk" }`. Cada jugador lo recibe una vez, y el RPT dice cuántos lo recibieron: `[EVENT n @ wp X] ui_broadcast (all → 3 jugadores, toast): …`.
+
+---
+
+
+## 14. Audio (.ogg) — ponerle voz a tus eventos
 
 Con el verbo `play_sound` (en un evento NUMPAD 4) reproducís un audio **3D pegado al vehículo**. El audio lo ponés vos en tu addon:
 1. Metés tu `.ogg` en tu addon.
@@ -886,27 +1862,34 @@ Con el verbo `play_sound` (en un evento NUMPAD 4) reproducís un audio **3D pega
 
 ---
 
-## 16. Si algo no anda
+## 15. Si algo no anda
 
 Algunos clásicos (el detalle fino + más casos están en el **AI knowledge pack**, ver abajo):
+- **Instalación nueva: el panel no abre y NUMPAD 5 no graba** → todavía no sos admin. El RPT del arranque lo dice: `AdminSteamIDs is empty: nobody is admin…` (o `Admins: 0`). Agregá tu SteamID64 **entre comillas** en `BZAutoDrive_settings.json` y reiniciá (§13.1).
+- **El RPT dice `No routes yet` al arrancar** → todavía no hay ninguna ruta: grabá una (NUMPAD 5) y convertila con el Wizard (§5). Si dice `No default route (BZBusRoute.json): nothing starts at boot; N route(s) available in the panel`, está todo bien: tus rutas están en el panel y ninguna arranca sola al iniciar el server.
 - **El vehículo aparece pero no se mueve** → casi siempre las coordenadas de la ruta no coinciden con el mapa (grabaste en otro mapa). Grabá tu propia ruta en el mapa donde corrés.
-- **No se grabó mi corrida del NPC** → el check **`ai_run`** estaba destildado. Tildalo en el Reproductor *antes* de dar play (§14).
-- **El NPC no entra a una curva cerrada** → es el tramo más exigente (§18); el control **capea la velocidad** solo, pero si el vehículo es **pesado**, lo mejor es **grabar la ruta con ÉL** (nace a su medida). Si es una maniobra cerrada de verdad (galpón, cambio de sentido), va como **reverse** — ver §9.4–9.5.
-- **No suena el audio** → ver §15 (replicación server→cliente).
+- **No se grabó mi corrida del NPC** → el check **`ai_run`** estaba destildado. Tildalo en el Reproductor *antes* de dar play (§13).
+- **El NPC no entra a una curva cerrada** → es el tramo más exigente (§17); el control **capea la velocidad** solo, pero si el vehículo es **pesado**, lo mejor es **grabar la ruta con ÉL** (nace a su medida). Si es una maniobra cerrada de verdad (galpón, cambio de sentido), va como **reverse** — ver §9.4–9.5.
+- **No suena el audio** → ver §14 (replicación server→cliente).
+- **La ruta llegó, pero el final dice `AR x2` o `AR-FISICO x2`** → llegó con ayudas del AutoRecovery (§9.6). Buscá en el RPT las líneas `[AR]` o abrí `profiles/BZ_AutoDrive/AR_log.csv`: te dicen el waypoint y qué pasó. Si siempre es el mismo punto, andá a verlo en el mapa.
+- **La ruta se corta en el mismo lugar cada vez y no hay nada ahí** → mirá la pendiente y la velocidad grabada en ese tramo. Una bajada que se empina de golpe, tomada a alta velocidad, puede hacer que el vehículo toque el terreno con la trompa.
+- **El vehículo aparece hundido y no arranca** → al spawnear, el RPT escribe un bloque **`[SpawnProbe]`** (a los 1,5 s y a los 3,5 s) con la altura del vehículo respecto del piso y cuántas ruedas tocan el suelo. Si dice **`RESUMEN: 0/4 ruedas en contacto`**, nació apoyado sobre la carrocería y no va a poder moverse. Es un caso raro, visto en un solo vehículo de terceros; si te pasa, reportalo con ese bloque.
+- **La ruta vuelve a largarse sola mientras estoy probando otra cosa** → es la **ruta por defecto** del server (o una lanzada por API), que se re-lanza a los `RespawnDelay` segundos (300 por default; `0` vale 60 s, no la apaga — §8). Las que largás desde el Reproductor no se re-lanzan. Para que no moleste mientras probás, pará ese runner con **[]** en el panel.
+- **El vehículo no aparece y el RPT dice `La clase '<X>' EXISTE pero NO ES UN VEHICULO`** → hay packs de "autos" que en realidad son ítems de inventario (autitos de juguete, maquetas). Revisá el `VehicleClass` del header.
 
 > **Este framework viene con un AI knowledge pack:** un documento pensado para pasarle a una IA (Claude/GPT/Gemini) que te asista a configurar tu caso, resolver errores y armar tus rutas. Si te trabás, esa es la vía rápida — la IA tiene todo el contexto del framework cargado.
 
-> **Tip de performance — correr el server en otra PC.** Si iterás mucho (grabás, convertís, probás), conviene **correr el server en una 2da PC** mientras tu PC principal corre el **cliente del juego + el wizard y las herramientas**. Así ninguna de las dos se ahoga y las corridas salen más fluidas (mejor para calibrar). El **deploy** a ese 2do server es: *buildear* el mod → *copiar* el `@BZ_AutoDrive` al 2do server → *sincronizar las rutas* (los JSON). El wizard ya soporta apuntar a ese 2do server: configurás su carpeta en **[6] Configurar paths** y te ofrece copiarte las rutas ahí al convertir.
+> **Tip de performance — correr el server en otra PC.** Si iterás mucho (grabás, convertís, probás), conviene **correr el server en una 2da PC** mientras tu PC principal corre el **cliente del juego + el wizard y las herramientas**. Así ninguna de las dos se ahoga y las corridas salen más fluidas. Para usarlo: *copiás* el `@BZ_AutoDrive` al 2do server (el mismo que usa tu cliente) y configurás su carpeta de rutas en **[6] Configurar paths**: el wizard le copia las rutas al convertir.
 
 ---
 
-### 16.1 — AI logger — la caja negra de Boris (ai_run)
+### 15.1 — AI logger — la caja negra de Boris (ai_run)
 
 Cuando una ruta **no sale como esperabas** y querés saber *por qué*, el framework te deja grabar una **caja negra** de la corrida del NPC. Funciona como el *flight recorder* de un avión: registra, segundo a segundo, lo que Boris hizo mientras manejaba, para que después puedas diagnosticar el problema.
 
 **Qué es.** Un **log de telemetría** de las corridas de Boris. No cambia cómo maneja: solo **observa y anota** (posición, velocidad, marcha, qué pedales apretó, qué modo usó). Es la materia prima para entender un comportamiento raro.
 
-**Es OPT-IN, viene apagado.** Se arma **tildando el check `ai_run` en el Reproductor ANTES de dar play** (§14, ya **no con tecla**) → se graba en sincro con esa corrida puntual. **Si no lo tildás, no se escribe nada.** No es parte del uso diario: un admin que solo quiere sus buses o convoyes andando **no lo necesita**.
+**Es OPT-IN, viene apagado.** Se arma **tildando el check `ai_run` en el Reproductor ANTES de dar play** (§13, ya **no con tecla**) → se graba en sincro con esa corrida puntual. **Si no lo tildás, no se escribe nada.** No es parte del uso diario: un admin que solo quiere sus buses o convoyes andando **no lo necesita**.
 
 **Cuándo usarlo.** SOLO cuando una ruta se porta mal —Boris **se abre en una curva**, **se traba**, **va lento**— y querés entender **por qué**, o cuando estás **afinando el config a mano**. El resto del tiempo, dejalo apagado.
 
@@ -914,41 +1897,41 @@ Cuando una ruta **no sale como esperabas** y querés saber *por qué*, el framew
 
 **Qué registra.** Unas **~27 columnas de telemetría**: la **posición** y el rumbo, la **velocidad real y la objetivo**, el **desvío lateral** (ya calculado), los **inputs** que aplicó (`throttle`, `brake`, `steering`), las **rpm**, la marcha, el **modo activo**, los **marcadores de evento**, y el **waypoint que persigue** (`wp_idx`) en ese instante.
 
-> **⚠ Principio importante — que quede clarísimo:** el `ai_run` es una **MEDICIÓN para calibrar CONTRA tu toma** (un *feedback* funcional de cómo le fue a Boris), **NO una grabación nueva**. **No se lo des al wizard como si fuera una toma** — de hecho el wizard los **filtra a propósito**. ¿Por qué? Porque realimentar la salida de Boris **clona sus propios errores**: la ruta se degrada generación tras generación (es el *model collapse* de Machine Learning — la fotocopia de la fotocopia). La fuente de verdad es siempre **tu** grabación humana; el `ai_run` solo sirve para **medir el desvío** contra esa verdad.
+> **⚠ Principio importante — que quede clarísimo:** el `ai_run` es una **MEDICIÓN para comparar CONTRA tu toma** (un *feedback* funcional de cómo le fue a Boris), **NO una grabación nueva**. **No se lo des al wizard como si fuera una toma** — de hecho el wizard los **filtra a propósito**. ¿Por qué? Porque realimentar la salida de Boris **clona sus propios errores**: la ruta se degrada generación tras generación (es el *model collapse* de Machine Learning — la fotocopia de la fotocopia). La fuente de verdad es siempre **tu** grabación humana; el `ai_run` solo sirve para **medir el desvío** contra esa verdad.
 
 **Cómo sacarle provecho.** Dos caminos:
 - **Con IA (recomendado):** le pasás el `ai_run` **junto con la ruta** a una IA con el **AI Knowledge Pack** cargado, y te lo diagnostica — dónde Boris sufrió y qué ajustar (qué campo del config tocar).
 - **A mano (si sos técnico):** lo abrís (es un CSV) y mirás vos mismo dónde **se desvió**, **se trabó** o **perdió velocidad** — cruzándolo contra tu toma original.
 
-> *Ejemplo:* el bus se abre siempre en la misma curva. Tildás el check **`ai_run`**, corrés la ruta, agarrás el `ai_run_*.csv` del `profiles` del server, se lo das a la IA con la ruta → te dice *"en el wp 340 el `steering` se satura (llega al tope sin alcanzar el giro): subí `CurvatureSteerBoost`"*. Ajustás eso, **no** realimentás el `ai_run` como toma.
+> *Ejemplo:* el bus se abre siempre en la misma curva. Tildás el check **`ai_run`**, corrés la ruta, agarrás el `ai_run_*.csv` del `profiles` del server, se lo das a la IA con la ruta → te dice *"en el wp 340 el volante llega al tope y no alcanza el giro: tu toma pasa esa curva más rápido de lo que este vehículo puede"*. La respuesta suele ser **regrabar ese tramo** (más despacio, o con ese vehículo); **no** realimentás el `ai_run` como toma.
 
 ---
 
-### 16.2 — boris_native — la trayectoria de Boris (para comparar en el editor)
+### 15.2 — boris_native — la trayectoria que manejó Boris
 
 Aparte del `ai_run` (la telemetría de diagnóstico), el framework puede grabar la **trayectoria** de la corrida de Boris: por dónde pasó, a qué velocidad, con qué rumbo — en el **mismo formato que una grabación humana**. Se llama **`boris_native`**.
 
-**Qué es.** Un CSV con la línea que Boris **realmente manejó** (posición, rumbo, velocidad, `throttle`/`brake`/`steering`, marcha, ángulo de rueda), server-side, a ~40 Hz. Como está en el mismo formato que tu `path_`/`frame_`, se puede **cargar en el editor de trayectorias** y **superponerlo contra tu toma** para ver, de un vistazo, dónde Boris siguió tu línea y dónde se abrió.
+**Qué es.** Un CSV con la línea que Boris **realmente manejó** (posición, rumbo, velocidad, `throttle`/`brake`/`steering`, marcha, ángulo de rueda), server-side, a ~40 Hz. Como está en el mismo formato que tu `path_`/`frame_`, se puede **comparar contra tu toma** para ver dónde Boris siguió tu línea y dónde se abrió.
 
 **En qué se diferencia del `ai_run`** — la distinción clave:
-- **`ai_run`** = **telemetría de diagnóstico** (desvío lateral, saturaciones, corredor, pedales) → responde **"por qué"** Boris hizo algo raro. Se lee con la IA / a mano (§16.1).
-- **`boris_native`** = la **trayectoria cruda** (la línea + velocidad, en formato de grabación) → responde **"por dónde"** fue → se **dibuja/superpone** en el editor contra tu toma.
+- **`ai_run`** = **telemetría de diagnóstico** (desvío lateral, saturaciones, corredor, pedales) → responde **"por qué"** Boris hizo algo raro. Se lee con la IA / a mano (§15.1).
+- **`boris_native`** = la **trayectoria cruda** (la línea + velocidad, en formato de grabación) → responde **"por dónde"** fue → se compara contra tu toma.
 
-> Uno **mide**, el otro se **dibuja**. Para **diagnosticar** mirás el `ai_run`; para comparar la línea a ojo, cargás el `boris_native` en el editor sobre tu grabación.
+> Uno **mide**, el otro **muestra el recorrido**. Para **diagnosticar** mirás el `ai_run`; para ver por dónde fue, el `boris_native`.
 
-**Es OPT-IN.** Se arma **tildando el check `boris_native` en el Reproductor ANTES de dar play** (§14). Vive en el **server que corrió a Boris**: `<server>\profiles\BZ_AutoDrive_PathLogger\boris_native_*.csv` (uno por corrida, con timestamp — nunca se pisa).
+**Es OPT-IN.** Se arma **tildando el check `boris_native` en el Reproductor ANTES de dar play** (§13). Vive en el **server que corrió a Boris**: `<server>\profiles\BZ_AutoDrive_PathLogger\boris_native_*.csv` (uno por corrida, con timestamp — nunca se pisa).
 
-> **⚠ Igual que el `ai_run`: es MEDICIÓN, no una toma nueva.** No se lo des al wizard como grabación — realimentar la salida de Boris **clona sus errores** (§16.1, *model collapse*). Sirve para **comparar** contra tu grabación humana (la fuente de verdad), no para regenerar la ruta.
+> **⚠ Igual que el `ai_run`: es MEDICIÓN, no una toma nueva.** No se lo des al wizard como grabación — realimentar la salida de Boris **clona sus errores** (§15.1, *model collapse*). Sirve para **comparar** contra tu grabación humana (la fuente de verdad), no para regenerar la ruta.
 
 ---
 
-## 17. Ideas — qué podés construir (y qué se podría sumar)
+## 16. Ideas — qué podés construir (y qué se podría sumar)
 
 Framework + Quest abren un espacio grande. Estas ideas son para inspirarte: algunas las armás **hoy** con lo que hay; otras son **extensiones** para sumar (verbos/triggers nuevos). La regla: *si lo podés describir como "un vehículo que va de acá para allá y en el camino pasa X", probablemente lo podés armar — o sumar el verbo que falta.*
 
 ### Arquetipos que armás HOY
 - **Transporte público** — bus/taxi con paradas y eventos (§10).
-- **Convoy** — refuerzos, escolta, huida, emboscada (§12).
+- **Convoy** — refuerzos, escolta, huida, emboscada (§11).
 - **Patrulla motorizada** — un vehículo en loop por una zona.
 - **Logística / supply run** — un camión que lleva loot (`add_cargo`) a un punto y lo deja.
 - **Rescate / extracción** — el vehículo llega, sube bots o jugadores, los saca.
@@ -961,7 +1944,7 @@ Framework + Quest abren un espacio grande. Estas ideas son para inspirarte: algu
 - **Cambiar la facción** de los ocupantes en runtime (`set_faction`) — que Boris o su crew cambien de bando a mitad de misión (de neutral a hostil, p. ej.).
 - **Cambio de chofer** (`swap_driver`) — reemplazar al conductor en un punto (baja Boris, sube otro; o pasa a manejar un bot del quest).
 - **Gestos** — saludo, venia, señalar (en el roadmap; todavia sin implementar).
-- **Balizas / luces de emergencia** — balizas en una avería. *(La **bocina y las luces** comunes ya andan: se graban y se reproducen — ver §7 y los modos `HornMode`/`LightsMode` del Apéndice A.2.)*
+- **Balizas / luces de emergencia** — balizas en una avería. *(La **bocina y las luces** comunes ya andan: como verbos de evento — `horn`, `lights_on`, `lights_off` — y como modo de la ruta — `HornMode`/`LightsMode`, Apéndice A.2b.)*
 - **Soltar loot / abrir baúl** — dejar un ítem en un punto; abrir el baúl al llegar.
 - **Llamar refuerzos** — spawnear *otro* vehículo del framework (cadenas de convoy).
 - **Marcador en el mapa** — que el vehículo aparezca en el mapa del jugador (seguir el bus en vivo).
@@ -980,11 +1963,11 @@ Framework + Quest abren un espacio grande. Estas ideas son para inspirarte: algu
 
 ### Framework + cada tipo de objetivo de Quest
 
-La integración se validó in-game con **AICamp/AIPatrol** (los convoyes, §12), **Travel** (§12.10) y **AIEscort/AIVIP** (§12.11) — los tipos donde el vehículo cumple un rol. Los objetivos sin vehículo (Collection, Crafting, etc.) coexisten sin conflicto. La tabla completa:
+La integración se validó in-game con **AICamp/AIPatrol** (los convoyes, §11), **Travel** (§11.10) y **AIEscort/AIVIP** (§11.11) — los tipos donde el vehículo cumple un rol. Los objetivos sin vehículo (Collection, Crafting, etc.) coexisten sin conflicto. La tabla completa:
 
 | Objetivo de Quest | Rol del vehículo (BZ_AutoDrive) | Ejemplo |
 |---|---|---|
-| **AICamp / AIPatrol** ✅ | trae/saca los bots, los embarca y maneja | el convoy que huye, la emboscada (§12) |
+| **AICamp / AIPatrol** ✅ | trae/saca los bots, los embarca y maneja | el convoy que huye, la emboscada (§11) |
 | **AIEscort** ✅ | el vehículo **es lo que se escolta** | "acompañá el convoy de Boris hasta la base"; si llega entero, cumplido |
 | **AIVIP** ✅ | el VIP **viaja en** el vehículo | "protegé al VIP" mientras el NPC lo lleva a zona segura |
 | **Travel** ✅ | el vehículo **te lleva** | "viajá a Cherno" se completa subiéndote al bus que va para allá |
@@ -992,13 +1975,13 @@ La integración se validó in-game con **AICamp/AIPatrol** (los convoyes, §12),
 | **Target** | el target **va en** el vehículo | "eliminá al jefe" que se escapa en el convoy → lo perseguís |
 | **Action / Collection** | el vehículo **deja algo** o **es el lugar de la acción** | inspeccionar el accidente, reparar el camión, recoger el loot que soltó |
 
-> *Lo validado:* el framework "escucha" el quest y aporta el vehículo, sea cual sea el objetivo. Ya andan in-game los **tres ejes donde el vehículo cumple un rol** — **AICamp/AIPatrol** (convoyes, §12.3/§12.4), **Travel** (§12.10) y **AIEscort/AIVIP** (§12.11). Los demás (Delivery, Target, Action/Collection) **reusan el mismo hook** con su propio campo declarativo: el enganche ya existe, falta el caso de uso.
+> *Lo validado:* el framework "escucha" el quest y aporta el vehículo, sea cual sea el objetivo. Ya andan in-game los **tres ejes donde el vehículo cumple un rol** — **AICamp/AIPatrol** (convoyes, §11.3/§11.4), **Travel** (§11.10) y **AIEscort/AIVIP** (§11.11). Los demás (Delivery, Target, Action/Collection) **reusan el mismo hook** con su propio campo declarativo: el enganche ya existe, falta el caso de uso.
 
 > *Para modders:* si se te ocurre una acción o trigger que no está, casi siempre **encaja en el DSL existente** (un verbo nuevo en `ExecuteAction`, un trigger nuevo en la lista). El AI knowledge pack te muestra cómo agregarlo.
 
 ---
 
-## 18. Alcance y límites (qué esperar)
+## 17. Alcance y límites (qué esperar)
 
 Para que sepas qué pedirle al framework y qué no:
 
@@ -1006,33 +1989,94 @@ Para que sepas qué pedirle al framework y qué no:
 - **Alta velocidad:** anda, con **degradación graceful**. Probado hasta ~190 km/h: la línea se afloja un poco con la velocidad (de ~0.2m parado a ~0.8m a +120 km/h) pero **no se rompe** (sin oscilación, 99% dentro de 2m).
 - **Curvas de 90° cerradas:** es el punto más exigente. Salen, pero ahí se nota el vehículo — uno pesado se abre más que uno chico.
 - **El CONTROLADOR generaliza** sobre un **rango amplio de R_min** (de un hatchback chico a un camión) con **una sola config**: la misma traza sirve para todos y el matiz lo pone la física de cada uno.
-- **Maniobras (parking / reversa / K-turn) en varios vehículos:** el cross-vehículo se hace en el **editor** —asignás el vehículo a la traza (§6B, §9.5)— y funciona **siempre que el corte de la maniobra caiga en recta, no en curva** (validado con la misma traza en OffroadHatchback y un CivilianSedan más largo, parking 0.71 m). El **intercambio reversa→forward** —el punto más exigente del control, un K-turn adentro de un galpón— quedó **resuelto y validado en un banco amplio** (Golf FWD, BMW E60, OffroadHatchback, Hatchback FWD, Porsche GT2RS motor-central, Sedan, Toyota 86 RWD y el **camión Truck_01**): **0 rescates de AutoRecovery**, con reglas físicas y **sin constantes por-vehículo**. El intercambio se **auto-detecta del cambio de sentido** (no hace falta marcarlo — §9.4).
-- **Precisión de parada (endpoint) — autoadaptativa:** el freno de parada **ya no usa constantes ni valores por-ruta**; se autoconfigura por **vehículo + piso** — lee el torque de freno del config del auto y el **agarre real de la superficie** bajo Boris (asfalto, tierra…), y es **tracción-aware** (un tracción-delantera recibe ayuda extra para trepar en la subida). Sin tocar ningún parámetro clava el punto final **por debajo de 0.5 m** en la mayoría de los vehículos, y hasta **~1 m** en los más grandes y de wheelbase largo. Validado out-of-sample en un rango amplio de tracciones y tamaños (Toyota 86 RWD **0.04** · Sedan **0.18** · Golf FWD **0.20** · Hatchback FWD **0.23** · Porsche GT2RS **0.33** · Sedan en reversa **0.47** · **camión Truck_01 0.54** · Offroad 0.09–1.15 m), con **crosstrack ~0.3 m** y rumbo al parar **<1°** en autos (~3° en el camión). Incluye el **endpoint tras una curva** —histórico punto débil— hoy resuelto de raíz: el control **sigue tu velocidad grabada** en la aproximación y sólo frena en los últimos ~3 m (SEQ1 a 44 km/h → **0.34 m**). Generaliza leyendo el juego, no una fórmula.
-- **Lo que NO hace:** no inventa rutas (necesita tu grabación o el grafo) ni descubre comportamiento más allá de lo que demostraste. Es determinista e inspeccionable — esa es su gracia.
+- **Maniobras (parking / reversa / K-turn):** el **intercambio reversa→forward** —el punto más exigente del control, un K-turn adentro de un galpón— está **resuelto**: se **auto-detecta del cambio de sentido** que hiciste al grabar (no hace falta marcarlo — §9.4), funciona con reglas físicas y **sin constantes por-vehículo**, y se probó en un banco amplio (Golf FWD, BMW E60, OffroadHatchback, Hatchback FWD, Porsche GT2RS motor-central, Sedan, Toyota 86 RWD y el camión Truck_01) con **0 rescates de AutoRecovery**.
+  **La condición es tuya y es una sola: hacé el cambio de sentido en recta, no en curva** (§9.5). Los ángulos de volante de la reversa son del vehículo, no del camino.
+  **Para la misma ruta en otro vehículo, grabala con ese vehículo** — con una maniobra de por medio es lo único que generaliza.
+- **Precisión de llegada (endpoint).** El freno final se arma con lo que declara el config del vehículo y lo que se midió de él (cuanto más rápido llega, antes se arma: con la distancia de frenado que pide su velocidad real, más un margen), y **estaciona unos 10 cm antes del punto**, a propósito. El objetivo es quedar a menos de **0,25 m** del punto final; al cerrar una maniobra o un cambio de sentido, **0,10 m**. Si el freno final se enganchó y el vehículo quedó entre 0,25 m y **1 m**, la ruta cuenta igual como **completa** (sigue su ciclo normal) y el RPT lo avisa: `[C12] LLEGADA fuera de la tolerancia estricta: <distancia> m`. De una moto a un bus, la misma regla: no se relaja por tamaño, porque el framework tiene que servir para vehículos que todavía no conocemos. Un bus que llega a 0,39 m figura como completo, con ese aviso: el aviso es la señal de que esa llegada no alcanzó la precisión de siempre. **Los números, vehículo por vehículo, en §17.1.**
+- **Qué vehículos probamos.** Más de 40 clases de varios autores: autos, deportivos, 4x4, furgones, buses, camiones (hasta 7,5 m de batalla), militares, tractores y motos (§17.1).
+- **Lo que NO hace:** no inventa rutas (necesita tu grabación) ni descubre comportamiento más allá de lo que demostraste. Es determinista e inspeccionable — esa es su gracia.
 
 > En una frase: **fiel y predecible en el régimen normal; el límite honesto está en lo extremo.**
 
+### 17.1 — La llegada, vehículo por vehículo (medido)
+
+Estos números salen de los logs del servidor de pruebas, **con el cerebro 1.2**. Cada fila es un vehículo y cada "llegada" es una corrida que terminó su ruta; la distancia es la que quedó entre el vehículo y el punto final grabado.
+
+**Cómo leerla:**
+- **La mediana ronda los 0,10-0,20 m a propósito.** El freno final estaciona unos **10 cm antes** del punto: pasarse es peor que quedarse corto. El objetivo es **0,25 m**; entre 0,25 m y 1 m la ruta cuenta como completa, con un aviso en el RPT.
+- **p90** = 9 de cada 10 llegadas quedaron a esa distancia o menos.
+- **Las corridas que no llegaron no están en la tabla**: se cuentan aparte, abajo.
+- Una corrida repetida desde el mismo punto de salida puede dar casi el mismo número: más llegadas no siempre son más variedad.
+
+**Con la llegada en su versión actual (desde el 17/09/2026).** 52 llegadas: mediana **0,11 m**, **87 %** dentro de 0,25 m, ninguna a más de 0,36 m. En ese período, 7 corridas no llegaron (vehículo trabado sin salida, o chofer muerto).
+
+| Tipo | Vehículo (clase) | Llegadas | Mediana | p90 | Dentro de 0,25 m |
+|---|---|---|---|---|---|
+| 4x4 / pickup | `MBM_LandCruiser_Grey` | 21 | 0,18 m | 0,31 m | 67 % |
+| furgón | `MBM_Sprinter_Green` | 1 | 0,10 m | 0,10 m | 100 % |
+| bus | `BZ_ChernoBus_02` | 17 | 0,11 m | 0,18 m | 100 % |
+| bus | `MBM_ApocalypticPAZ_White` | 8 | 0,11 m | 0,11 m | 100 % |
+| bus | `MBM_ApocalypticPAZ_Black` | 4 | 0,11 m | 0,11 m | 100 % |
+| bus | `BZ_ChernoBus` | 1 | 0,11 m | 0,11 m | 100 % |
+
+**Del 2 al 16/09/2026, con una flota mucho más variada.** Todavía faltaban los dos últimos ajustes de la llegada (entrar al freno final a 40 veces por segundo y corregir el desvío lateral en los últimos metros), así que estos números son **los peores esperables**: los de hoy son iguales o mejores. 430 llegadas en 41 vehículos: mediana **0,19 m**, **77 %** dentro de 0,25 m. En ese período, 40 corridas no llegaron.
+
+| Tipo | Vehículo (clase) | Llegadas | Mediana | p90 | Dentro de 0,25 m |
+|---|---|---|---|---|---|
+| auto | `Hatchback_02` | 50 | 0,28 m | 0,57 m | 48 % |
+| auto | `Sedan_02` | 11 | 0,21 m | 0,63 m | 64 % |
+| auto | `MBM_ImprezaWRX_Rusty_Orange` | 4 | 0,83 m | 0,94 m | 0 % |
+| auto | `a_m5` | 3 | 0,13 m | 0,25 m | 100 % |
+| auto | `CivilianSedan` | 3 | 0,11 m | 0,20 m | 100 % |
+| deportivo | `jesko` | 26 | 0,16 m | 0,23 m | 100 % |
+| deportivo | `m4w_Blue` | 7 | 0,25 m | 0,51 m | 57 % |
+| deportivo | `Star_Agera` | 6 | 0,11 m | 0,12 m | 100 % |
+| deportivo | `Gemera` | 6 | 0,21 m | 0,23 m | 100 % |
+| deportivo | `lfa` | 5 | 0,19 m | 0,66 m | 60 % |
+| deportivo | `r32` | 3 | 0,21 m | 0,22 m | 100 % |
+| 4x4 / pickup | `Expansion_Landrover` | 47 | 0,22 m | 0,32 m | 87 % |
+| 4x4 / pickup | `OffroadHatchback` | 5 | 0,22 m | 0,60 m | 60 % |
+| 4x4 / pickup | `MBM_F350_Monster_Red` | 4 | 0,11 m | 0,12 m | 100 % |
+| 4x4 / pickup | `MBM_LandCruiser_Grey` | 3 | 0,16 m | 0,17 m | 100 % |
+| furgón | `MBM_Sprinter_Green` | 13 | 0,10 m | 0,10 m | 100 % |
+| bus | `BZ_ChernoBus` | 39 | 0,22 m | 1,02 m | 54 % |
+| bus | `MBM_ApocalypticPAZ_Yellow` | 11 | 0,11 m | 0,11 m | 100 % |
+| bus | `BZ_ChernoBus_02` | 6 | 0,20 m | 4,65 m | 83 % |
+| bus | `MBM_ApocalypticPAZ_Black` | 6 | 0,12 m | 0,34 m | 83 % |
+| bus | `MBM_ApocalypticPAZ_Blue` | 3 | 0,10 m | 0,10 m | 100 % |
+| camión | `AEC_Matador` | 48 | 0,17 m | 0,37 m | 90 % |
+| camión | `hx58` | 9 | 0,17 m | 0,24 m | 100 % |
+| camión | `Star_Oshkosh_M1083` | 9 | 0,13 m | 0,19 m | 100 % |
+| camión | `MBM_Apocalypse_Truck` | 3 | 0,11 m | 0,11 m | 100 % |
+| militar | `m4_tractor_winter` | 50 | 0,10 m | 0,41 m | 74 % |
+| militar | `Star_APC_Cobra_grey` | 4 | 0,23 m | 0,62 m | 75 % |
+| tractor | `ExpansionTractor` | 30 | 0,22 m | 0,44 m | 67 % |
+
+*Con una o dos llegadas (sin estadística):* `MBM_HarleyDavidsonFatBoy_Black` 0,11 m, `MBM_ImprezaWRX_WRC` 0,11 m, `OffroadHatchback_White` 0,22 m, `PzKpfw_VI_Tiger_camo` 0,52 m, `SVJ` 0,15 m, `Star_Camaro_1969` 0,24 m, `Star_Chevrolet_Z71` 0,10 / 0,17 m, `Star_Porsche_944` 0,11 m, `Toyota_86_RB_Red` 0,22 / 0,71 m, `Truck_01_Covered` 0,11 / 0,19 m, `VW_T6` 0,22 m, `ZiS5_Benzovoz` 0,24 m, `esc` 0,13 m.
+
+> **Los casos que quedan lejos se repiten en el mismo vehículo y la misma ruta.** El `MBM_ImprezaWRX_Rusty_Orange` quedó 0,8 m **de costado** las 4 veces; el `Hatchback_02` tiende a **pasarse** del punto. Si un vehículo tuyo llega siempre corrido, mirá primero cómo termina su toma (§7.1) y probá regrabar ese final.
+
 ---
 
-## 19. Frontera abierta — llevalo más lejos
+## 18. Frontera abierta — llevalo más lejos
 
 Esto es open source por una razón: **llegué hasta acá; el siguiente nivel es tuyo.** Acá está, sin vueltas, dónde está el borde y por dónde se empuja. Si vas a contribuir, arrancá por una de estas.
 
 ### El salto grande: manejo extremo (un "v3")
-*Dónde está hoy:* maneja al régimen **nominal** del vehículo (§18). Drifts, sobreviraje fuerte, contravolante — el receptor del motor no los reproduce con fidelidad.
+*Dónde está hoy:* maneja al régimen **nominal** del vehículo (§17). Drifts, sobreviraje fuerte, contravolante — el receptor del motor no los reproduce con fidelidad.
 *El salto:* override de física propio (saltear el modelo de eAI en esos tramos) o una capa de ML que capture lo que el control clásico no. Es el más grande y el más difícil — y el que abre el manejo "de película".
 
 ### Wizard 100% autónomo
-*Dónde está hoy:* detecta problemas y propone, pero **tu ojo** confirma (el ciclo A/V/R/I).
-*El salto:* que internalice el diagnóstico (bias→`CenterOffset`, saturación→`SteeringScale`, lugging→gear) y **calibre solo**, de la grabación a la ruta lista sin intervención. El esqueleto ya está (la base de heurísticas); falta cerrar el lazo.
+*Dónde está hoy:* convierte sin preguntar y **avisa** lo raro de la toma (trompos, saltos, detenciones sin marca), pero no corrige nada: si la toma tiene un problema, la regrabás vos.
+*El salto:* que te diga **qué tramo regrabar y por qué** antes de que lo corra el NPC — y que mida solo lo que hoy no se puede medir de una toma (el piso de despegue, §6C).
 
 ### Coordinación multi-vehículo
-*Dónde está hoy:* un vehículo por ruta.
+*Dónde está hoy:* varios vehículos pueden correr la misma ruta (un runner por vehículo, Apéndice B.7) y tu mod puede coordinarlos —horarios, cesión de paso—, pero el framework no los coordina entre sí.
 *El salto:* convoyes reales — spacing dinámico, el de atrás sigue al de adelante, reformación si uno cae. Hay técnica prestada de ARMA/RV (breadcrumb + separación de convoy) para inspirarse.
 
 ### El NPC vivo
 *Dónde está hoy:* el chofer maneja, pero es mudo.
-*El salto:* un conductor con LLM que hable, reaccione y hasta dé una misión en el viaje. El diseño ya es provider-agnostic (cambiar de modelo = una línea de config).
+*El salto:* un conductor con LLM que hable, reaccione y hasta dé una misión en el viaje. (No viene nada de esto en el paquete: es una idea abierta.)
 
 ### Más mundos
 - **Trenes** — el caso más fácil: la red *son* los rieles, sin volante ni giros inventados. ~70% cubierto sin tocar nada.
@@ -1046,6 +2090,8 @@ Esto es open source por una razón: **llegué hasta acá; el siguiente nivel es 
 
 Todos los campos del JSON (`BZBusRoute*.json`). Casi todos tienen un default sensato: **solo tocás lo que necesitás**. Convención: un valor `-1` o `0` suele significar *"usá el default del código / desactivado"*.
 
+> **Qué lee cada cerebro.** El cerebro 1.2 (el que corre por defecto) lee **A.1, A.1b, A.2b, A.5, A.6 y A.8**. Los campos de **A.2, A.3, A.4, A.5b, A.5c y A.7** son del cerebro 1.1: sólo actúan si el servidor tiene `CEREBRO_11.txt` con contenido (§4). Se dejan documentados para quien use el 1.1.
+
 ### A.1 Básicos
 | Campo | Default | Qué hace |
 |---|---|---|
@@ -1055,6 +2101,7 @@ Todos los campos del JSON (`BZBusRoute*.json`). Casi todos tienen un default sen
 | `AverageSpeedMS` | `11` | velocidad promedio, para el cálculo de ETA |
 | `SpawnHoldSeconds` | `3` | espera antes de arrancar (`0`=al toque, `30+`=esperar trigger de misión) |
 | `VehicleInvincible` | `true` | irrompible; `false` = destructible (habilita daño/emboscada) |
+| `VehiclePartsLocked` | `true` | **inviolable**: mientras el framework lo maneja, los jugadores no le pueden sacar piezas (ruedas, puertas, batería…); `false` = se pueden sacar, como en cualquier auto. La carga no se toca. Un evento lo cambia (`set_vehicle_parts`) |
 | `DriverInvincible` | `true` | Boris irrompible; `false` = mortal (puede morir en combate / al recibir daño) |
 | `DriverClothing` | `[]` | ropa del **chofer** (classnames a equipar). Vacío = outfit default del framework. Ver §A.1b |
 | `MaxGear` | `6` | marcha máxima de la caja automática (FIRST=2 … SIXTH=7) |
@@ -1073,11 +2120,13 @@ El framework viste a **Boris (el chofer, seat 0)** con un outfit configurable **
 - **Si seteás `DriverClothing` con items:** esa lista **reemplaza** el default por completo (ponés el outfit entero que querés, no se mezcla).
 - Cada classname se equipa con `CreateAttachment` por string: si un classname **no existe o su mod no está cargado**, ese ítem **falla en silencio** (no rompe nada, simplemente no aparece). Usá classnames válidos (de un mod de ropa cargado, o vanilla).
 
-> **Alcance:** esto viste **solo al chofer**. La ropa/loadout de los **bots de convoy/crew** la maneja **Quest (Expansion Quests)**, no el framework — ver §7.8.
+> **Alcance:** esto viste **solo al chofer**. La ropa/loadout de los **bots de convoy/crew** la maneja **Quest (Expansion Quests)**, no el framework — ver §11.7.
 
-### A.2 Velocidad / control de manejo *(avanzado)*
+### A.2 Velocidad / control de manejo *(cerebro 1.1)*
 
-> **El wizard produce el control por default (§9) — normalmente NO tocás estos campos**; quedan acá como **ajuste avanzado**. Por default la ruta convertida usa **tu velocidad grabada** (capeada por la curva) con **modelo inverso**: `FollowPath=false`, `UseInverseModel=true`. Si un modder quiere que Boris **calcule la velocidad por curvatura** en vez de usar la grabada, prende `FollowPath=true`. *(Estos flags eran los viejos "modos 1/2/3", hoy unificados en el control por default — §9.)*
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
+*(Con el 1.1: por default la ruta usa **tu velocidad grabada** (capeada por la curva) con **modelo inverso**; `FollowPath=true` calcula la velocidad por curvatura en vez de usar la grabada. Estos flags eran los viejos "modos 1/2/3".)*
 
 | Campo | Default | Qué hace |
 |---|---|---|
@@ -1094,17 +2143,22 @@ El framework viste a **Boris (el chofer, seat 0)** con un outfit configurable **
 | `TargetSpeedSmoothWindow` | `0` | suaviza la velocidad objetivo (menos oscilación del PID) |
 | `AccelShiftThreshold` | `999` | anti-catapulta: sube gear si acelera de más (`999`=off) |
 
-### A.2b Bocina y luces *(replay del humano — §7, §9)*
+### A.2b Bocina y luces *(§9)*
 | Campo | Default | Qué hace |
 |---|---|---|
-| `HornMode` | `"replay"` | `replay` (toca la bocina donde la grabaste) · `stops` (en cada parada) · `finish` (al llegar al final) · `off` |
-| `LightsMode` | `"auto"` | **`auto`** (default — prende de noche **al arrancar el motor**, 19:00–06:00; ignora lo grabado) · **`off`** (siempre apagadas → **desactiva las luces**, p/ misiones nocturnas sigilosas) · `auto_inverted` (apaga de noche → sigilo) · `replay` (prende/apaga donde lo grabaste) · `on` (siempre) |
+| `HornMode` | `"off"` | `off` (nunca) · `stops` (bocina al terminar cada parada) · `finish` (al llegar al final, si la ruta termina completa). `replay` no suena: la toma no graba la bocina (sólo el verbo `horn`; el server lo avisa al cargar) |
+| `LightsMode` | `"auto"` | **`auto`** (default — prende de noche, 19:00–06:00, y sigue la hora durante la ruta) · **`off`** (siempre apagadas → **desactiva las luces**, p/ misiones nocturnas sigilosas) · `auto_inverted` (apaga de noche → sigilo) · `on` (siempre). `replay` no sirve en esta versión: la toma no graba las luces. Un verbo `lights_on` / `lights_off` manda hasta el próximo spawn |
+
+> **¿Bocina o luces en un punto exacto?** Usá los verbos `horn`, `lights_on` y `lights_off` en un evento (§10).
 
 > **Default `auto`:** todas las tomas prenden los faros solas de noche, sin grabar nada. Las luces se encienden **apenas arranca el motor** (durante el spawn-hold), no a mitad de ruta. Umbral de noche = 19:00–06:00 (hora del mundo del juego).
 > **Desactivar las luces:** poné `"LightsMode": "off"` en el header de la ruta (misión sigilosa nocturna → el vehículo no se delata).
 > Para que las luces se vean, el vehículo necesita **batería + faros (bombillas) instalados** (§7); el framework energiza la batería al spawn, pero los faros tienen que estar en los `Attachments`.
 
-### A.3 Dirección (steering)
+### A.3 Dirección (steering) *(cerebro 1.1)*
+
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
 | Campo | Default | Qué hace |
 |---|---|---|
 | `SteeringScale` | `-1` (auto) | escala del volante; wheelbase corto → bajar (auto lo deriva del wheelbase) |
@@ -1119,7 +2173,10 @@ El framework viste a **Boris (el chofer, seat 0)** con un outfit configurable **
 | `CruiseFFWeight` | `-1` | peso del feedforward de curvatura en cruise (`-1`=0.25) |
 | `CurveThrottleEnabled` (+ `...LookaheadM/StartDeg/FullDeg/MinScale`) | `true` | corta el throttle ANTES de una curva cerrada |
 
-### A.4 Pendientes
+### A.4 Pendientes *(cerebro 1.1)*
+
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
 | Campo | Default | Qué hace |
 |---|---|---|
 | `SlopeCompensationEnabled` | `true` | suma throttle en subida, resta en bajada |
@@ -1127,20 +2184,70 @@ El framework viste a **Boris (el chofer, seat 0)** con un outfit configurable **
 | `SlopeGain` | `1.0` | cuánto compensa (`1`=completo) |
 | `SlopeLateralGain` | `1.0` | corrige el bias lateral que mete la pendiente |
 
-### A.5 AutoRecovery (que siempre llegue)
+### A.5 AutoRecovery — que la ruta no se corte *(ver §9.6)*
+
+Bloques **opcionales** del header/JSON de la ruta. **Sin escribir nada, rigen estos defaults**, que es el comportamiento validado. Si escribís el bloque a medias, los campos que falten toman su default (`{"Physical": {"ReverseM": 4}}` deja `Enabled` en `true` y cambia solo los metros de reversa).
+
+```json
+"AutoRecovery": {
+  "Logical":  { "Enabled": true, "WaitS": 0.5, "MaxAttempts": 3, "CooldownS": 1.0 },
+  "Physical": { "Enabled": true, "ReverseM": 3.0, "ReverseMaxKmh": 5.0, "LadderMaxM": 6.0, "SweepMaxM": 10.0 }
+},
+"BogRecovery": { "Enabled": true, "WindowS": 3.0, "MinProgressM": 0.5, "MaxAttempts": 2 },
+"ManualAR":    { "AdvanceM": 10.0, "GoodLatM": 1.0 }
+```
+
+**`AutoRecovery.Logical` — re-arranque en el lugar** (el cerebro se trabó; el vehículo puede moverse)
+| Campo | Default | Qué hace | Cuándo cambiarlo |
+|---|---|---|---|
+| `Enabled` | `true` | re-arranca en el lugar, sin mover el vehículo | `false` para diagnosticar: la traba queda registrada igual y ves dónde pasa |
+| `WaitS` | `0.5` | segundos detenido antes de actuar | subilo si querés que la detención se note en paradas sin evento de espera |
+| `MaxAttempts` | `3` | intentos en el mismo lugar (radio 8 m); `0` = sin límite | bajalo si preferís que una ruta rota se declare trabada antes |
+| `CooldownS` | `1.0` | pausa mínima entre intentos | subilo si ves intentos encadenados muy seguidos |
+
+**`AutoRecovery.Physical` — la escalera** (choque, quedar cruzado, montado sobre algo, hundido o volcado)
+| Campo | Default | Qué hace | Cuándo cambiarlo |
+|---|---|---|---|
+| `Enabled` | `true` | activa la escalera de §9.6 | `false` en réplica pura, o para ver dónde se traba sin que nada lo destrabe |
+| `ReverseM` | `3.0` | metros de reversa recta del primer paso | subilo con vehículos largos; bajalo en calles angostas |
+| `ReverseMaxKmh` | `5.0` | tope de velocidad de esa reversa | bajalo en convoy o con tránsito detrás |
+| `LadderMaxM` | `6.0` | metros de zonas seguras, contados **desde la primera zona** | subilo para que el AutoRecovery nunca corte la ruta |
+| `SweepMaxM` | `10.0` | metros de barrido cuando el destino está ocupado o el vehículo queda montado | subilo si el obstáculo típico de tu servidor es largo (un camión, una barricada) |
+
+**`BogRecovery` — ahogo del motor** (lo hace el controlador)
+| Campo | Default | Qué hace | Cuándo cambiarlo |
+|---|---|---|---|
+| `Enabled` | `true` | ante un ahogo fuerza **primera** y arranca como en pendiente | `false` deja solo el registro, sin corregir |
+| `WindowS` | `3.0` | segundos con acelerador y sin avanzar antes de decidir | subilo para vehículos pesados de arranque lento |
+| `MinProgressM` | `0.5` | avance que ya cuenta como "avanza" | subilo si el vehículo cabecea mucho al arrancar |
+| `MaxAttempts` | `2` | intentos en el mismo lugar; al agotarse pasa a la escalera | — |
+
+**`ManualAR` — la intervención del operador** (bandera `BZ12_AR_MANUAL.txt`)
 | Campo | Default | Qué hace |
 |---|---|---|
-| `AutoRecoveryEnabled` | `false` | si Boris se traba, lo teleporta adelante |
-| `AutoRecoveryStuckTimeS` | `10` | seg de trabado antes de teleportar |
-| `AutoRecoveryAdvanceWps` | `5` | cuántos wps adelante teleporta |
-| `AutoRecoveryCooldownS` | `8` | mínimo entre teleports (anti-spam) |
-| `AutoRecoveryMaxPerMission` | `0` | `0`=ilimitado, `X`=falla la misión si supera |
-| `StuckAdvanceTimeoutS` | `0` | safety **separada** del AutoRecovery: si no avanza ningún wp por N s, **empuja** el índice (no teleporta). `0`=default 60 s. Corre aunque AutoRecovery esté off; subir mucho para deshabilitar |
+| `AdvanceM` | `10.0` | metros adelante del último punto bien pisado donde re-ubica |
+| `GoodLatM` | `1.0` | desvío lateral máximo para que un punto cuente como "bien pisado" |
 
-> **Filosofía "no salvar a Boris de Boris":** el AutoRecovery viene **OFF** a propósito. Sobre terreno limpio Boris es preciso; si se traba ahí, es un problema de **grabación** (re-grabá el tramo), no algo que el teleport deba tapar. Prendelo solo si querés la garantía absoluta de "siempre llega" (servicio desatendido) asumiendo el salto visual.
+**Ejemplos.**
+```json
+// Servicio de transporte desatendido: que nunca corte la ruta.
+"AutoRecovery": { "Physical": { "LadderMaxM": 20.0, "SweepMaxM": 30.0 } }
 
-### A.5b Obstáculos externos — AR_OnWay *(validado en 5 vehículos)*
-Distinto del AutoRecovery (que cuida a Boris de trabarse **solo**), esto lo cuida del **mundo**: otro vehículo detenido en el camino, o uno que lo choca/empuja. Dos flags independientes; **el wizard los setea** al convertir (te pregunta el perfil).
+// Réplica pura: quiero ver exactamente lo que hace el vehículo, sin ayudas.
+"AutoRecovery": { "Logical": { "Enabled": false }, "Physical": { "Enabled": false } },
+"BogRecovery": { "Enabled": false }
+
+// Convoy: reversa más corta y lenta, por el que viene atrás.
+"AutoRecovery": { "Physical": { "ReverseM": 2.0, "ReverseMaxKmh": 3.0 } }
+```
+
+> **Dónde mirar el resultado:** la línea `[C12] AutoRecovery <ruta> ...` del RPT imprime, una vez por corrida, la configuración que realmente quedó activa. Si creés que un valor no se está aplicando, esa es la línea que lo dice.
+
+### A.5b Obstáculos externos — AR_OnWay *(cerebro 1.1)*
+
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
+Distinto del AutoRecovery (que cuida a Boris de trabarse **solo**), esto lo cuida del **mundo**: otro vehículo detenido en el camino, o uno que lo choca/empuja. Dos flags independientes; el **import de rutas v1** (wizard **[2]**) te pregunta el perfil.
 | Campo | Default | Qué hace |
 |---|---|---|
 | `ObstacleSlow` | `false` | freno **predictivo** ante un vehículo adelante (lookahead que crece con la velocidad y la física del vehículo; frena a su máximo real hasta detenerse antes del obstáculo) |
@@ -1151,19 +2258,34 @@ Distinto del AutoRecovery (que cuida a Boris de trabarse **solo**), esto lo cuid
 | `ObstacleEscapeWaitS` | `6` | seg frenado ante el obstáculo antes de escapar |
 | `ObstacleEscapeResumeKmh` | `10` | velocidad suave al retomar tras el teleport |
 
-> **Perfiles (el import v1 los pregunta; en una toma nueva se setean por config):** **Transporte robusto** = ambos ON (el bus sortea lo que le tapa el camino). **Interceptable** = `ObstacleSlow` ON + `ObstacleEscape` **OFF** (Boris frena lindo ante el que lo bloquea pero **no** se escapa → la misión de interceptación funciona). **Ninguno** = ambos OFF (réplica pura). Requiere `UseInverseModel=true` (el control por default).
+> **Perfiles (el import v1 los pregunta; en una toma nueva se setean por config):** **Transporte robusto** = ambos ON (el bus sortea lo que le tapa el camino). **Interceptable** = `ObstacleSlow` ON + `ObstacleEscape` **OFF** (Boris frena lindo ante el que lo bloquea pero **no** se escapa → la misión de interceptación funciona). **Ninguno** = ambos OFF (réplica pura).
 
-### A.6 Convoy / Quest *(ver §12)*
+### A.5c AutoRecovery clásico por teleport *(cerebro 1.1)*
+
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
+Mecanismo anterior, **independiente** del de A.5 y **apagado** por defecto: cuando el vehículo lleva N segundos trabado, lo teletransporta unos waypoints más adelante. El de A.5 lo cubre sin salto visual; esto queda para quien lo necesite como última red.
+| Campo | Default | Qué hace |
+|---|---|---|
+| `AutoRecoveryEnabled` | `false` | si Boris se traba, lo teleporta adelante |
+| `AutoRecoveryStuckTimeS` | `10` | seg de trabado antes de teleportar |
+| `AutoRecoveryAdvanceWps` | `5` | cuántos wps adelante teleporta |
+| `AutoRecoveryCooldownS` | `8` | mínimo entre teleports (anti-spam) |
+| `AutoRecoveryMaxPerMission` | `0` | `0`=ilimitado, `X`=falla la misión si supera |
+| `StuckAdvanceTimeoutS` | `0` | safety **separada**: si no avanza ningún wp por N s, **empuja** el índice (no teleporta). `0`=default 60 s. Corre aunque el resto esté off; subir mucho para deshabilitar |
+
+### A.6 Convoy / Quest *(ver §11)*
 | Campo | Default | Qué hace |
 |---|---|---|
 | `ConvoyMode` | `""` | `""` / `"flee_on_kill"` / `"ambush_on_damage"` |
-| `Crew` | `[]` | bots que viajan desde el arranque (§12.7) |
-| `Events` | `[]` | nodos de evento (§10, §12.7) |
+| `Crew` | `[]` | bots que viajan desde el arranque (§11.7) |
+| `Events` | `[]` | nodos de evento (§10, §11.7) |
 
-### A.7 Reversa e intercambios — *avanzado*
-*Casi no se tocan: el flujo actual es automático. Están acá por si afinás una maniobra fina.*
+### A.7 Reversa e intercambios — *avanzado (cerebro 1.1)*
 
-> **El flujo hoy es simple.** La **reversa** se auto-detecta del **gear grabado**, la **aproximación** es automática (`ApproachAuto`) y el **cambio de sentido** se **auto-detecta** del cambio de gear forward↔reverse —sin tecla— (§9.4). Los viejos **modos de waypoint marcados a mano** (`parking`, `maniobra`, `approach`) **ya no se producen** — sus campos quedan solo por compatibilidad con tomas viejas (marcados *legacy* abajo).
+> ⚠ **Sólo cerebro 1.1.** Estos campos sólo se leen si el servidor tiene `CEREBRO_11.txt` con contenido (§4). El cerebro 1.2, el que corre por defecto, no los usa.
+
+> **El flujo hoy es simple.** La **reversa** se auto-detecta del **gear grabado**, la **aproximación** es automática y el **cambio de sentido** se **auto-detecta** del cambio de gear forward↔reverse —sin tecla— (§9.4). Los viejos **modos de waypoint marcados a mano** (`parking`, `maniobra`, `approach`) **ya no se producen** — sus campos quedan solo por compatibilidad con tomas viejas (marcados *legacy* abajo).
 | Campo | Default | Qué hace |
 |---|---|---|
 | `DirectReplayFromWaypoint` | `-1` | desde este wp, replay literal de los inputs grabados |
@@ -1185,7 +2307,7 @@ Distinto del AutoRecovery (que cuida a Boris de trabarse **solo**), esto lo cuid
 
 > **Corte de la maniobra en recta (para generalizar — §9.5).** El replay directo (`DirectReplayFromWaypoint`) reproduce **ángulos de volante específicos del vehículo**: si el tramo de reversa empieza **en una curva**, un vehículo con otro wheelbase se abre. Hacé el **cambio de sentido** (frená del todo antes de invertir la marcha, ahí el auto-detect corta el tramo) **donde la trayectoria ya es recta** (la curva la resuelve el control cerrado, agnóstico al vehículo). Ojo con el auto-approach (`ApproachAuto`): puede **frenar de más** si el corte cae en una recta rápida — por eso conviene cortar donde ya venís lento.
 
-> **Intercambio reversa→forward + endpoint autoadaptativo (RESUELTO).** El *cusp* (reversa→forward, el K-turn adentro de un galpón) quedó **validado en un banco amplio de tracciones y tamaños (FWD / RWD / motor-central / 4x4 / camión), con 0 rescates de AutoRecovery** — con reglas físicas (CuspExitHeadingBand + supresión-de-parada con latch anti-"pasitos"), sin constantes por-vehículo. Y el freno de parada del **endpoint final se autoconfigura por vehículo + piso**: `GetMaxBrakeDecel` (torque de freno del config / radio / masa) acotado por el **agarre real de la superficie** bajo Boris, **tracción-aware** → clava el punto **por debajo de 0.5 m** en la mayoría (hasta ~1 m en los más grandes y de wheelbase largo) sin tocar nada. Validado out-of-sample (Toyota 86 RWD **0.04** · Sedan **0.18** · Golf FWD **0.20** · Hatchback FWD **0.23** · Porsche GT2RS motor-central **0.33** · Sedan en reversa **0.47** · camión Truck_01 **0.54** · Offroad 0.09–1.15 m), con crosstrack **~0.3 m** y rumbo al parar **<1°** en autos (~3° en el camión). Incluye el **endpoint tras una curva** (histórico punto débil): el control sigue la velocidad grabada en la aproximación y sólo frena en los últimos ~3 m (SEQ1 a 44 km/h → **0.34 m**).
+> **Intercambio y endpoint del cerebro 1.1.** El *cusp* (reversa→forward) y el freno de parada autoadaptativo del 1.1 se validaron en un banco amplio de tracciones y tamaños. **La precisión de llegada del cerebro 1.2 está en §17.**
 | Campo | Default | Qué hace |
 |---|---|---|
 | `EndpointThrottleCapEnabled` | `true` | activa el corte de gas + freno autoadaptativo en la zona del endpoint final |
@@ -1202,8 +2324,8 @@ Cada entrada de `Waypoints[]`:
 | `targetGear` | marcha (si `follow_recording`) |
 | `mode` | `normal` o `reverse` — la reversa se **auto-detecta del gear** grabado; el cambio de sentido va aparte en `legBreak`. *(Los viejos `parking`/`maniobra`/`approach` ya no se producen.)* |
 | `isStop` / `stopDuration` / `stopRadius` | parada: si es stop, cuánto frena, radio |
-| `targetThrottle/Brake/Steering` | inputs grabados (solo se usan si `hasInputData=1`, replay literal — avanzado) |
-| `hasInputData` | `1` = replay literal de tus inputs (avanzado, mismo vehículo); `0` (default) = control por config |
+| `targetThrottle/Brake/Steering` | pedales grabados (sólo cuentan si `hasInputData=1`; el volante grabado va en la cinta, no acá) |
+| `hasInputData` | `1` = la ruta trae tus pedales grabados — **el wizard siempre escribe 1**, y el cerebro 1.2 los usa como punto de partida (§9); `0` = sin pedales grabados (rutas viejas o importadas de v1) |
 | `name` | etiqueta del punto (las paradas) |
 
 ---
@@ -1219,9 +2341,11 @@ modded class CarScript {
     override void OnInput(float dt) {
         super.OnInput(dt);                    // eAI corre su lógica (incluido ShiftTo(FIRST))
         if (!GetGame().IsServer()) return;
-        BZBusService srv = BZBusService.GetInstance();
-        if (!srv || !srv.IsBusActive(this)) return;
-        // ... acá el framework sobreescribe gear/throttle/steer con SU control ...
+        BZBusService srv = BZBusService.GetRunnerForCar(this);   // el runner DUEÑO de este vehículo
+        if (!srv) return;
+        // (si maneja un jugador real, el framework se hace a un lado)
+        if (srv.SampleDrive12(this, dt)) return;   // cerebro 1.2: Sample a 40 Hz + aplicar los inputs
+        // ... si no, el camino del cerebro 1.1 ...
     }
 }
 ```
@@ -1252,7 +2376,7 @@ private void ExecuteAction(Car car, BZAction action, int evIdx) {
 El `delay` (coreografía) ya lo maneja el dispatcher por vos (`CallLater`). Y listo: el modder ya puede poner `{ "verb": "mi_verbo" }` en sus `Events[]`. *(Para campos nuevos, agregalos a la clase `BZAction` — es plana, no rompe el parser.)*
 
 ### B.3 Agregar un trigger nuevo
-Los triggers se evalúan por `BZTrigger.type`. Sumás el campo que necesite a la clase `BZTrigger` y un `case` en la evaluación (ej. `on_player_shoot` con su condición).
+Los triggers se evalúan por `BZTrigger.type` en `BZBusService.IsTriggerFired`. Sumás el campo que necesite a la clase `BZTrigger`, su rama en `IsTriggerFired` (ej. `on_player_shoot` con su condición) **y el nombre en `TriggerTipoConocido`**: si no, al cargar la ruta avisa que el trigger es desconocido y nunca dispara.
 
 ### B.4 El hook de Quest
 La integración con Expansion-Quests entra por un `modded class MissionServer`:
@@ -1269,7 +2393,6 @@ Desde `OnQuestStart`, el framework **pollea** `ExpansionQuestModule…QuestPatro
 ### B.5 Gotchas de Enforce (los que nos pegaron)
 Enforce no es C# ni C++; estas trampas costaron horas:
 - **No hay ternario** `?:` ni `if` multilínea con `&&` al inicio de línea → "Syntax error". Usá `if/else` o bools intermedios.
-- **No existen** `Math.PI` ni `Math.AbsFloat`.
 - **`new Clase(args)` revienta** → creá vacío y seteá los campos.
 - **No moddees clases del engine** (`CGame`, etc.) → rompe al cargar.
 - **"Formula too complex"** a ~9 operandos con `+` → dividí en varias líneas con `+=`.
@@ -1297,6 +2420,7 @@ srv.RespawnFromPath("BZBusRoute_MiRuta.json");   // spawnea el vehículo y manej
 // (RespawnAs(clase) para cambiar el vehículo en runtime)
 ```
 Tu mod decide **cuándo** (un trigger tuyo, un horario, un evento de tu mod); el framework pone el **manejo**.
+Eso usa el servicio **principal**, que maneja una ruta por vez. Para manejar **varios vehículos a la vez** (una línea de buses, un convoy, varios taxis), usá un runner por vehículo: está todo en **B.7**.
 
 **(b) Extendiéndolo con `modded class`** (B.1–B.4): sumás verbos, triggers o hooks propios sin tocar el código del framework.
 
@@ -1305,7 +2429,126 @@ Tu mod decide **cuándo** (un trigger tuyo, un horario, un evento de tu mod); el
 > *Naming:* el addon se llama **`BZ_AutoDrive`**; el mod-demo del bus (el servicio costero) es contenido aparte que lo usa. Es el nombre que va en `requiredAddons`.
 
 
-### B.7 — Build & deploy your fork
+### B.7 — La API del runner: manejar una flota desde tu mod
+
+Cada `BZBusService` es un **runner**: un vehículo, su chofer y su ruta. El servicio principal (`GetInstance()`) es uno más. Todo esto corre **en el server**, sin RPC. Tu mod lanza runners, les consulta el estado una vez por segundo y decide qué hacer; el framework maneja.
+
+#### B.7.1 — Dos formas de lanzar un vehículo
+
+**A) Un viaje: `BZBusService.PlayRouteByName(string fname, bool holdAtStops = true)`.** Devuelve el runner, o `null` si la ruta no está en la lista del perfil. No duplica: si esa ruta ya está corriendo, devuelve ese runner. Usa el principal si está libre; si no, crea uno nuevo. Un runner por archivo de ruta.
+
+**B) Un servicio: un runner propio por vehículo**, varios sobre la misma ruta:
+```c
+BZBusService r = new BZBusService();
+BZBusService.GetRunners().Insert(r);   // el registro guarda la UNICA referencia fuerte
+r.SetHoldAtStops(true);                // espera en cada parada hasta ResumeFromHold()
+r.SetEtiqueta("101");                  // ANTES de cargar: firma el log como <ruta>#101
+r.RespawnFromPath("BZBusRoute_MiLinea.json");   // carga la ruta, crea vehiculo y chofer en el wp 0 y arranca
+if (!r.RunnerIsActive() && !r.RunnerEsperandoCabecera()) {
+    BZBusService.UnregisterRunner(r);  // no arranco de verdad: limpiar
+    return false;
+}
+// ... consultar el estado (B.7.2) y controlar el viaje (B.7.3) ...
+BZBusService.UnregisterRunner(r);      // al terminar: borra vehiculo y chofer y lo saca del registro
+```
+Lo que tenés que saber:
+- **El registro guarda la referencia.** Un runner que no está en `GetRunners()` se pierde, y su vehículo queda manejando sin que el panel lo vea. `UnregisterRunner` borra primero el vehículo y el chofer, y después lo saca.
+- **`SetEtiqueta` va antes de `RespawnFromPath`**: la carga ya escribe en el log con esa firma.
+- **Si el punto de salida está ocupado** por otro vehículo, el runner **espera** y re-intenta cada 5 s. Mientras tanto no hay vehículo: `RunnerIsActive()` da `false` y `RunnerEsperandoCabecera()` da `true`. **No es una falla**: no lo trates como tal. No hay tope de espera; si el lugar queda ocupado para siempre, qué hacer lo decidís vos.
+- **Qué pasa cuando la ruta se cierra** (`RunnerRouteEnded()`). Depende de cómo terminó y de cómo la lanzaste:
+  - **`ROUTE_COMPLETE` de un runner lanzado con `RespawnFromPath`** (el camino B, y también el Reproductor): el vehículo **se retira** a los `EndHoldSeconds` segundos (0 = en el acto) y el runner **sale del registro**.
+  - **`ROUTE_COMPLETE` de una ruta lanzada con `PlayRouteByName`** (o la ruta por defecto del server): se **re-lanza** a los `RespawnDelay` segundos (`0` vale 60 s).
+  - **`ROUTE_INCOMPLETE` o `STUCK`:** el vehículo **queda quieto**, sin ciclo. Retirarlo, reponerlo o dejarlo es de tu mod.
+  - Con `holdAtStops`, al llegar a la última parada el vehículo queda quieto en el hold hasta que lo sueltes.
+- **Cuál usar:** A para un viaje que dispara otro sistema (un taxi, una misión); B para un servicio con varios vehículos y reglas propias.
+
+#### B.7.2 — Consultar el estado
+
+| Método | Devuelve |
+|---|---|
+| `RunnerIsActive()` | `bool`: el vehículo existe y no está destruido |
+| `RunnerWpIdx()` / `RunnerWpTotal()` | `int`: por qué punto de la ruta va / cuántos tiene |
+| `RunnerPos()` / `RunnerSpeedKmh()` | posición y velocidad del vehículo |
+| `RunnerAtStop()` | `bool`: está cumpliendo una parada |
+| `IsHeld()` | `bool`: detenido en una parada o por `HoldRunner()`, esperando que lo sueltes. El paso de `false` a `true` es "llegó a una parada" |
+| `RunnerIsPaused()` | `bool`: la pausa blanda (`SetPaused`). **No es lo mismo que el hold** |
+| `RunnerRouteEnded()` | `bool`: el cerebro cerró la ruta; desde ahí nadie maneja el vehículo |
+| `RunnerRouteCompleted()` | `bool`: y la cerró llegando (no rendida ni trabada). También es `true` en una llegada con aviso, entre 0,25 m y 1 m |
+| `RunnerEndReason()` | `string`: vacío mientras corre; al cerrar, el motivo (`ROUTE_COMPLETE en wp N ...`, `ROUTE_INCOMPLETE ...`, `STUCK en wp N (escalera del AR agotada: declarado)`) |
+| `RunnerFellBackTo11()` | `bool`: la ruta no se pudo cargar para el cerebro 1.2 y la maneja el 1.1. El vehículo anda igual |
+| `RunnerBloqueado()` | `bool`: el AutoRecovery está tratando de destrabarlo (§9.6). **Es un obstáculo para los demás** |
+| `RunnerBloqueadoMotivo()` / `RunnerBloqueadoDesdeS()` | por qué (con el último choque, si hubo) / desde hace cuántos segundos |
+| `RunnerRecuperando()` / `RunnerRecuperandoQue()` | `bool`: cualquier recuperación en curso (arranque en pendiente, alejarse, re-ubicarse, escalera) / cuál. Responde "¿va a poder moverse ahora?". Siempre que `RunnerBloqueado()` es `true`, éste también |
+| `RunnerChoqueHaceS()` | `float`: segundos desde el último choque de ese vehículo (`-1` si no chocó). Sirve para que **los dos** vehículos de un choque aparezcan, aunque sólo uno quede bloqueado |
+| `RunnerEsperandoCabecera()` / `RunnerEsperandoCabeceraS()` | `bool`: espera que se libere su punto de salida / desde hace cuántos segundos |
+
+Con el cerebro 1.1 (`RunnerFellBackTo11()`), los de bloqueo, recuperación y choque devuelven "nada".
+
+#### B.7.3 — Controlar el viaje
+
+| Método | Qué hace |
+|---|---|
+| `SetHoldAtStops(bool)` | modo "espera en cada parada": ponelo antes de cargar (`PlayRouteByName` lo hace por vos) |
+| `HoldRunner()` | detiene y mantiene quieto el vehículo. Si hay una parada grabada a menos de 8 m, lo deja llegar hasta ella y lo detiene ahí |
+| `ResumeFromHold()` | lo suelta y sigue la ruta |
+| `SetPaused(bool)` | la pausa blanda: congela el manejo (pensada para teletransportar o preparar). No pasa por las paradas |
+| `SetVehiclePartsLocked(bool)` / `VehiclePartsLocked()` | vehículo inviolable o no (lo mismo que `set_vehicle_parts`). Aplica en el acto. Si tu mod entrega el vehículo a un jugador, desbloquealo |
+| `HornBeep()` | un bocinazo corto |
+| `StopRunner()` | termina: borra vehículo y chofer. Para un runner propio usá `UnregisterRunner(r)`, que además lo saca del registro |
+
+⚠ **Un `HoldRunner()` hasta 8 m antes de una parada grabada la da por cumplida**: al soltarlo, el vehículo no vuelve a frenar ahí. Si querés que después de tu detención se cumpla esa parada, detenelo **en** la parada.
+
+#### B.7.4 — Identidad y registro
+
+| Método | Devuelve |
+|---|---|
+| `static BZBusService.GetInstance()` | el servicio principal (también es un runner) |
+| `static BZBusService.GetRunners()` | el registro de runners |
+| `static BZBusService.GetRunnerForCar(EntityAI car)` | el runner dueño de ese vehículo, o `null` |
+| `static BZBusService.UnregisterRunner(BZBusService r)` | borra vehículo y chofer y saca el runner del registro (el principal no se saca nunca) |
+| `GetBus()` / `GetDriver()` | el vehículo y el chofer |
+| `GetRouteName()` | el archivo de la ruta |
+| `SetEtiqueta(string)` / `Etiqueta()` / `NombreLog()` | la etiqueta del vehículo / su firma en el log (`<ruta>#<etiqueta>`) |
+| `GetOrigin()` | de dónde salió (config, taxi, lista, misión) |
+| `GetInstance().IsControlPanelAdmin(string steamId)` | `true` si ese SteamID64 está en `AdminSteamIDs` (§13.1). Si tu mod tiene su propia interfaz de operador, usá esta lista: el dueño del server mantiene una sola |
+
+#### B.7.5 — Eventos
+
+El cerebro emite estos eventos y **el runner los consume él mismo** (la cola es interna: tu mod no la lee). Te sirven para entender el log y los estados de B.7.2:
+
+| Valor | Nombre | Significado | ¿Cierra la ruta? |
+|---|---|---|---|
+| 1 | `ARRIVED` | llegó a una parada intermedia | no |
+| 2 | `ROUTE_COMPLETE` | llegó al final | sí |
+| 3 | `STUCK` | trabado, con la escalera del AutoRecovery agotada | sí |
+| 4 | `ROUTE_INCOMPLETE` | terminó sin llegar: quedó a más de 1 m del punto final, una maniobra no cerró, o un tramo se cerró sin progreso | sí |
+| 5 | `BLOQUEADO` | el AutoRecovery empezó a destrabarlo (un aviso por vez) | **no** |
+
+Tu mod ve lo mismo consultando los métodos de B.7.2 una vez por segundo, que es lo que hacen los mods que ya lo usan.
+
+#### B.7.6 — El log: qué mirar y cómo contarlo
+
+| Línea | Qué es |
+|---|---|
+| `[C12] BLOQUEADO en wp N · <motivo>` / `[C12] BLOQUEO terminado tras X s` | se abre / se cierra un intento de destrabarlo. Por vehículo, tiene que haber tantas de una como de la otra |
+| `[BZDrive] *** CHOQUE #N *** ...` / `... episodio cerrado: K impactos ...` | un choque (uno por episodio: los golpes a menos de 5 s del anterior se cuentan juntos) / el resumen, si hubo más de un golpe |
+| `[BZDrive] *** BACHE #N ***` | una frenada brusca por el terreno, sin contacto: no es un choque |
+| `[C12] FIN: STUCK en wp N (<motivo>: declarado)` | la ruta se cerró trabada, con el motivo real |
+| `[C12] LEG N cerrado · <motivo> · ...` | se cerró un tramo (útil en los cambios de sentido) |
+| `[SpawnGuard] wp0 ocupado ...: el runner ESPERA ...` / `cabecera libre tras T s ...` | espera por el punto de salida ocupado / se liberó |
+| `[SpawnBus] quedo: ...` / `[Continuar] quedo: ...` | dónde quedó el vehículo 3 s después de aparecer, y cuánto se desvió de lo pedido |
+| `[AR] <ruta> wp N · FISICO (<evidencia>) · escalon K: ...` | cada paso de la escalera; también en `AR_log.csv` |
+
+Para contar: los choques **por episodio**, los problemas **por lugar** (agrupá por posición, no por número de waypoint: rutas distintas numeran distinto), y los bloqueos **por vehículo**. ⚠ Los milisegundos del RPT no llevan ceros a la izquierda: `19:44:41.27` es 41,027 s.
+
+#### B.7.7 — Lo que garantiza el framework y lo que es de tu mod
+
+- **El framework garantiza que el vehículo no se quede detenido para siempre**: detecta la traba y la destraba (§9.6), y sólo se rinde con la escalera agotada.
+- **Y que ningún jugador lo deje detenido desarmándolo**: mientras lo maneja, el vehículo viene **inviolable** (`VehiclePartsLocked`): nadie le saca ruedas ni piezas. Si tu mod lo entrega, desbloquealo (`SetVehiclePartsLocked(false)`).
+- **Qué hacer mientras tanto es de tu mod**: dejar de cederle el paso a un vehículo bloqueado, retirarlo, esperarlo, avisar a los jugadores.
+- **Lo que tu mod decide, el framework no lo adivina**: cuándo lanzar, dónde esperar, a quién ceder el paso, cuándo retirar. Por ejemplo, largar un vehículo con el punto de salida ocupado lo deja esperando (B.7.1); decidir no largarlo es de tu mod.
+
+### B.8 — Build & deploy your fork
 
 **Para solo usar el mod:** suscribite en el Workshop — ya viene firmado, no tenés que compilar nada.
 

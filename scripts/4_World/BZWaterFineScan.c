@@ -1,5 +1,5 @@
 // ============================================================================
-//  BZWaterFineScan - AGUA FINA (RIOS). (Sonom4n, 2026-07-14)
+//  BZWaterFineScan - AGUA FINA (RIOS). (un jugador, 2026-07-14)
 //  El scan de agua de BZRailBridgeScan va a 20m: capta el MAR pero los RIOS
 //  (5-15m de ancho) se cuelan entre muestras y quedan PUNTEADOS.
 //  Esto barre SOLO agua a 4m: SurfaceIsPond/IsSea son nativas y baratas (no se
@@ -25,7 +25,7 @@ class BZWaterFineScan {
         inst.m_max = mapSize; inst.m_step = step;
         inst.m_curX = 0; inst.m_curZ = 0;
         inst.m_pond = 0; inst.m_sea = 0; inst.m_probes = 0;
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         inst.m_fw = OpenFile(dir + "water_fine.csv", FileMode.WRITE);
         if (!inst.m_fw) { BZBusLog.Err("[WATERF] no pude crear water_fine.csv"); return; }
         FPrint(inst.m_fw, "x,z,kind\n");

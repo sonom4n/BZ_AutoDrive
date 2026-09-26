@@ -46,7 +46,7 @@ class BZReproductorUI extends UIScriptedMenu {
     private ref array<bool>     m_HelpIsTitle;  // por linea: true = titulo (se pinta cyan)
     private int                 m_HelpTop;      // primera linea visible (scroll de la ventana)
     private const int MAXHL = 25;               // filas de linea en el layout (HelpLine0..24)
-    private static bool  s_HelpEn;   // false = ES (default), true = EN
+    private static bool  s_HelpEn = true;   // true = EN (default: el panel publicado esta en ingles), false = ES
 
     private ref array<ButtonWidget> m_Rows;     // RouteRow0..4
     private Widget       m_RouteSelBg;          // barra de seleccion persistente (detras de la fila elegida)
@@ -75,6 +75,14 @@ class BZReproductorUI extends UIScriptedMenu {
     private ref array<TextWidget>   m_EmpName;
     private ref array<ButtonWidget> m_EmpTp;
     private ref array<ButtonWidget> m_EmpDel;
+    // LA TARJETA EXISTE DESDE EL CLIC. El spawn del vacio carga el JSON en el server de forma
+    // sincrona (segundos con una toma grande) y el panel no se refresca hasta que termina: se volvia a apretar y quedaban dos
+    // vacios encimados. El clic deja una fila LOADING local (ruta + wp) que desaparece cuando el server la lista, o a los
+    // PEND_VIDA_S; un segundo clic sobre la misma ruta y wp con la fila LOADING viva no manda nada (el server tambien lo rechaza).
+    private ref array<string> m_PendRuta;
+    private ref array<int>    m_PendWp;
+    private ref array<float>  m_PendT;
+    private const float PEND_VIDA_S = 15.0;
 
     private int   m_SelRoute;       // indice de fila seleccionada
     private float m_StatusTimer;
@@ -166,6 +174,9 @@ class BZReproductorUI extends UIScriptedMenu {
             if (m_EmpCard.Get(e)) m_EmpCard.Get(e).Show(false);   // arrancan ocultas; RefreshEmpty muestra las activas
         }
         m_EmpScroll = 0;
+        m_PendRuta = new array<string>();
+        m_PendWp = new array<int>();
+        m_PendT = new array<float>();
 
         m_SelRoute      = 0;
         m_StatusTimer   = 0;
@@ -244,7 +255,7 @@ class BZReproductorUI extends UIScriptedMenu {
         string tag = "";
         if (wp <= 0) tag = "   (start)";
         else if (wp >= last) tag = "   (end)";
-        // COORDS del wp del scrubber (2026-08-18, pedido de Sonom4n): las posiciones llegaron con el route-info.
+        // COORDS del wp del scrubber (2026-08-18, pedido de un jugador): las posiciones llegaron con el route-info.
         // Asi el jugador ve DONDE en el mapa cae el scrubber (y donde spawnearia con "SPAWN ACA").
         string coord = "";
         array<float> pxs = BZBusClientManager.s_RIPosX;
@@ -340,7 +351,7 @@ class BZReproductorUI extends UIScriptedMenu {
         array<ref BZRunnerInfo> rs = BZBusClientManager.s_RunnersInfo;
         int n = 0;
         if (rs) n = rs.Count();
-        // COMPACTAR (2026-08-18, pedido de Sonom4n): mostrar SOLO los activos, siempre pegados arriba, sin
+        // COMPACTAR (2026-08-18, pedido de un jugador): mostrar SOLO los activos, siempre pegados arriba, sin
         // huecos. Antes se mapeaba fila = indice crudo -> si terminaba el runner del medio (o el primary
         // inactivo, que nunca se desregistra del multiton) quedaba un agujero. Construimos la lista de
         // INDICES activos en orden; las filas se llenan de esa lista. m_RowRunnerIdx recuerda el indice
@@ -371,10 +382,18 @@ class BZReproductorUI extends UIScriptedMenu {
             if (nAct > MAXR) {
                 int hi = m_RunScroll + MAXR;
                 if (hi > nAct) hi = nAct;
-                suf = "   " + (m_RunScroll + 1) + "-" + hi + " de " + nAct + "  (rueda = scroll)";
+                suf = " · " + (m_RunScroll + 1) + "-" + hi + "/" + nAct + " · wheel = scroll";
             }
             m_RunnersCount.SetText("RUNNERS: " + nAct + suf);
         }
+    }
+
+    // El origen viaja como valor interno ("lista" = cargada desde este panel; el servicio lo compara al terminar la
+    // ruta) y se traduce SOLO al mostrar: el valor no se toca.
+    private static string OrigenVisible(string origen)
+    {
+        if (origen == "lista") return "panel";
+        return origen;
     }
 
     // Puebla una fila: nombre [origen] wp X/Y + estado coloreado.
@@ -382,14 +401,17 @@ class BZReproductorUI extends UIScriptedMenu {
         TextWidget nameW   = m_RunName.Get(i);
         TextWidget statusW = m_RunStatus.Get(i);
         // km/h EN VIVO (2026-08-17): la velocidad viaja en el struct, va en la linea 1 junto al wp.
-        string rowTxt = Pretty(info.name) + "  [" + info.origin + "]  wp " + info.wpIdx + "/" + info.wpTotal;
+        string rowTxt = Pretty(info.name) + "  [" + OrigenVisible(info.origin) + "]  wp " + info.wpIdx + "/" + info.wpTotal;
         rowTxt = rowTxt + "  ·  " + Math.Round(info.kmh).ToString() + " km/h";
         if (nameW) nameW.SetText(rowTxt);
         string st; int col;
-        if (info.paused)         { st = "PAUSED";  col = ARGB(255, 217, 166, 51); }
+        // si el server dice que esta haciendo algo (cola / carga / embarque), eso manda. Azul:
+        // "en curso", distinto del gris de STOPPED, que es lo que se ve cuando algo se trabo.
+        if (info.estado != "")   { st = info.estado; col = ARGB(255, 90, 170, 230); }
+        else if (info.paused)    { st = "PAUSED";  col = ARGB(255, 217, 166, 51); }
         else if (info.kmh > 1.0) { st = "DRIVING"; col = ARGB(255, 77, 191, 102); }
         else                     { st = "STOPPED"; col = ARGB(255, 150, 150, 150); }
-        // COORDENADAS (2026-08-18, pedido de Sonom4n): no entraban en la linea 1 (nombre+wp+kmh saturaban los 672px)
+        // COORDENADAS (2026-08-18, pedido de un jugador): no entraban en la linea 1 (nombre+wp+kmh saturaban los 672px)
         // -> a la linea de ESTADO, que tiene 600px y solo el estado. Formato "ESTADO   ·   X Z".
         st = st + "    ·    " + Math.Round(info.posX).ToString() + " " + Math.Round(info.posZ).ToString();
         if (statusW) { statusW.SetText(st); statusW.SetColor(col); }
@@ -401,9 +423,78 @@ class BZReproductorUI extends UIScriptedMenu {
         }
     }
 
+    // el wp con el que el server va a registrar el vacio (-1 = endpoint = N-1; sin N conocido queda -1 y se
+    // empareja por ruta).
+    private int WpRealDePedido(int wp) {
+        if (wp >= 0) return wp;
+        if (m_ScrubNwp > 0) return m_ScrubNwp - 1;
+        return -1;
+    }
+
+    private bool PendienteViva(string fname, int wpReal) {
+        float ahoraP = GetGame().GetTickTime();
+        for (int p = 0; p < m_PendRuta.Count(); p++) {
+            if (m_PendRuta.Get(p) != fname) continue;
+            if (wpReal >= 0 && m_PendWp.Get(p) >= 0 && m_PendWp.Get(p) != wpReal) continue;
+            if (ahoraP - m_PendT.Get(p) <= PEND_VIDA_S) return true;
+        }
+        return false;
+    }
+
+    // El clic: deja la fila LOADING y manda el pedido; con la fila viva para la misma ruta y wp, no manda nada.
+    private void PedirSpawn(string fname, int wp) {
+        int wpReal = WpRealDePedido(wp);
+        if (PendienteViva(fname, wpReal)) {
+            BZBusLog.Info("[Panel] spawn de " + fname + " wp " + wpReal.ToString() + " ya en LOADING: segundo clic ignorado");
+            return;
+        }
+        m_PendRuta.Insert(fname);
+        m_PendWp.Insert(wpReal);
+        m_PendT.Insert(GetGame().GetTickTime());
+        BZBusClientManager.RequestContinuar(fname, wp);
+        RefreshEmpty();
+    }
+
+    // Los vacios del server + las filas LOADING locales que el server todavia no lista. Una pendiente se retira cuando el server
+    // lista un vacio de la misma ruta y wp (o de la ruta, si el wp era -1 sin N conocido), o cuando vence (PEND_VIDA_S: el spawn
+    // fallo o la carga se rechazo). Las pendientes van DESPUES de las del server: los indices de TP/ELIMINAR no cambian.
+    private array<ref BZEmptyInfo> VaciosConPendientes() {
+        array<ref BZEmptyInfo> lista = new array<ref BZEmptyInfo>();
+        array<ref BZEmptyInfo> es = BZBusClientManager.s_EmptyInfo;
+        int i;
+        if (es) {
+            for (i = 0; i < es.Count(); i++) lista.Insert(es.Get(i));
+        }
+        float ahoraV = GetGame().GetTickTime();
+        for (int p = m_PendRuta.Count() - 1; p >= 0; p--) {
+            bool listada = false;
+            if (es) {
+                for (i = 0; i < es.Count(); i++) {
+                    BZEmptyInfo se = es.Get(i);
+                    if (!se || se.routeName != m_PendRuta.Get(p)) continue;
+                    if (m_PendWp.Get(p) < 0 || se.wpIndex == m_PendWp.Get(p)) { listada = true; break; }
+                }
+            }
+            if (listada || ahoraV - m_PendT.Get(p) > PEND_VIDA_S) {
+                m_PendRuta.RemoveOrdered(p);
+                m_PendWp.RemoveOrdered(p);
+                m_PendT.RemoveOrdered(p);
+                continue;
+            }
+            BZEmptyInfo pe = new BZEmptyInfo();
+            pe.routeName = m_PendRuta.Get(p);
+            pe.wpIndex = m_PendWp.Get(p);
+            pe.posX = 0;
+            pe.posZ = 0;
+            pe.pendiente = true;
+            lista.Insert(pe);
+        }
+        return lista;
+    }
+
     // Fase 2: refresca el sub-panel de vacios desde s_EmptyInfo. Ventana MAXE con scroll.
     private void RefreshEmpty() {
-        array<ref BZEmptyInfo> es = BZBusClientManager.s_EmptyInfo;
+        array<ref BZEmptyInfo> es = VaciosConPendientes();   // los del server + las filas LOADING locales
         int n = 0;
         if (es) n = es.Count();
         int maxScroll = n - MAXE;
@@ -421,9 +512,9 @@ class BZReproductorUI extends UIScriptedMenu {
             if (n > MAXE) {
                 int hi = m_EmpScroll + MAXE;
                 if (hi > n) hi = n;
-                suf = "   " + (m_EmpScroll + 1) + "-" + hi + " de " + n + "  (rueda = scroll)";
+                suf = " · " + (m_EmpScroll + 1) + "-" + hi + "/" + n + " · wheel = scroll";
             }
-            m_SpawnRunCount.SetText("VACIOS: " + n + suf);
+            m_SpawnRunCount.SetText("EMPTY: " + n + suf);
         }
     }
 
@@ -431,10 +522,21 @@ class BZReproductorUI extends UIScriptedMenu {
     private void FillEmptyRow(int i, BZEmptyInfo info) {
         TextWidget nameW = m_EmpName.Get(i);
         if (nameW) {
-            int rx = Math.Round(info.posX);
-            int rz = Math.Round(info.posZ);
-            nameW.SetText(Pretty(info.routeName) + "    wp " + info.wpIndex + "    (" + rx + ", " + rz + ")");
+            if (info.pendiente) {
+                // la fila LOADING, en el azul de "en curso" del; sin TP ni ELIMINAR (todavia no hay vehiculo).
+                string wpTxt = info.wpIndex.ToString();
+                if (info.wpIndex < 0) wpTxt = "FINAL";
+                nameW.SetText(Pretty(info.routeName) + "    wp " + wpTxt + "    LOADING");
+                nameW.SetColor(ARGB(255, 90, 170, 230));
+            } else {
+                int rx = Math.Round(info.posX);
+                int rz = Math.Round(info.posZ);
+                nameW.SetText(Pretty(info.routeName) + "    wp " + info.wpIndex + "    (" + rx + ", " + rz + ")");
+                nameW.SetColor(ARGB(255, 235, 242, 255));   // el color del layout (0.92 0.95 1)
+            }
         }
+        if (m_EmpTp.Get(i)) m_EmpTp.Get(i).Show(!info.pendiente);
+        if (m_EmpDel.Get(i)) m_EmpDel.Get(i).Show(!info.pendiente);
     }
 
     // === Overlay de AYUDA (boton "?") — bilingue ES|EN. Texto ASCII a proposito (sin acentos)
@@ -512,7 +614,7 @@ class BZReproductorUI extends UIScriptedMenu {
         HAddBlank();
         HAddTitle("ACTIVE SPAWN VEHICLE   (derecha, abajo)");
         HAddLine("Los vehiculos que spawneaste VACIOS (START/HERE/END).");
-        HAddLine("Por fila:  TP = ir a su lado,  ELIMINAR = borrarlo.");
+        HAddLine("Por fila:  TP = ir a su lado,  DELETE = borrarlo.");
         HAddLine("Podes sembrar varios y manejarlos desde aca.");
         HAddBlank();
         HAddTitle("SPAWN EMPTY VEHICLE AT   (barra inferior)");
@@ -567,7 +669,7 @@ class BZReproductorUI extends UIScriptedMenu {
         HAddBlank();
         HAddTitle("ACTIVE SPAWN VEHICLE   (bottom right)");
         HAddLine("The vehicles you spawned EMPTY (START/HERE/END).");
-        HAddLine("Per row:  TP = go next to it,  ELIMINAR = delete.");
+        HAddLine("Per row:  TP = go next to it,  DELETE = remove it.");
         HAddLine("Seed several and manage them from here.");
         HAddBlank();
         HAddTitle("SPAWN EMPTY VEHICLE AT   (bottom bar)");
@@ -635,7 +737,7 @@ class BZReproductorUI extends UIScriptedMenu {
         if (m_Footer) {
             int fps = (int)BZBusClientManager.s_ServerFps;
             float msR = Math.Round(BZBusClientManager.s_FrameworkMs * 10.0) / 10.0;
-            m_Footer.SetText("BZ_AutoDrive v1.0  ·  server " + fps + " fps  ·  BZ " + msR + " ms/frame");
+            m_Footer.SetText("BZ_AutoDrive 1.2  ·  server " + fps + " fps  ·  BZ " + msR + " ms/frame");
         }
     }
 
@@ -735,9 +837,9 @@ class BZReproductorUI extends UIScriptedMenu {
         }
         // Botones de spawn (caras metalicas). INICIO=wp0, SPAWN ACA=wp del scrubber, FINAL=-1 (endpoint).
         if (button == 0 && m_RouteFiles && m_SelRoute >= 0 && m_SelRoute < m_RouteFiles.Count()) {
-            if (w == m_GoStartFace)   { BZBusClientManager.RequestContinuar(m_RouteFiles.Get(m_SelRoute), 0); return true; }
-            if (w == m_SpawnHereFace) { BZBusClientManager.RequestContinuar(m_RouteFiles.Get(m_SelRoute), m_ScrubWp); return true; }
-            if (w == m_GoEndFace)     { BZBusClientManager.RequestContinuar(m_RouteFiles.Get(m_SelRoute), -1); return true; }
+            if (w == m_GoStartFace)   { PedirSpawn(m_RouteFiles.Get(m_SelRoute), 0); return true; }
+            if (w == m_SpawnHereFace) { PedirSpawn(m_RouteFiles.Get(m_SelRoute), m_ScrubWp); return true; }
+            if (w == m_GoEndFace)     { PedirSpawn(m_RouteFiles.Get(m_SelRoute), -1); return true; }
         }
         return super.OnMouseButtonDown(w, x, y, button);
     }

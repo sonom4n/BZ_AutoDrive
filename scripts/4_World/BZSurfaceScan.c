@@ -1,5 +1,5 @@
 // ============================================================================
-//  BZSurfaceScan - EXTRACTOR DE GRAFO VIAL DESDE EL MAPA (Sonom4n).
+//  BZSurfaceScan - EXTRACTOR DE GRAFO VIAL DESDE EL MAPA (un jugador).
 //  Idea original (2026-07-06): en vez de manejar cada calle, leer las CARRETERAS
 //  DEL MAPA MISMO. El motor sabe la superficie en cada punto (SurfaceGetType) ->
 //  barremos una grilla, clasificamos ruta vs no-ruta, esqueletizamos.
@@ -15,7 +15,7 @@ class BZSurfaceScan {
     static void ScanOnce(vector center, float half, float step) {
         if (s_Done) return;
         s_Done = true;
-        string path = "$profile:BZ_AutoDrive_PathLogger\\surface_scan.csv";
+        string path = BZCarpetas.PathLogger() + "surface_scan.csv";
         FileHandle f = OpenFile(path, FileMode.WRITE);
         if (!f) { BZBusLog.Err("[SURFSCAN] no se pudo crear " + path); return; }
         FPrint(f, "x,z,surface\n");
@@ -91,7 +91,7 @@ class BZSurfaceScan {
     }
 
     void DiscFinish() {
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         FileHandle fo = OpenFile(dir + m_world + "_surftypes.csv", FileMode.WRITE);
         if (fo) {
             FPrint(fo, "type,count\n");
@@ -127,7 +127,7 @@ class BZSurfaceScan {
         i.m_size = GetGame().GetWorld().GetWorldSize();
         if (i.m_size <= 0) { BZBusLog.Err("[SURFCAP] GetWorldSize invalido"); return; }
         i.m_step = CAP_STEP; i.m_curX = 0; i.m_curZ = 0; i.m_hits = 0;
-        i.m_fo = OpenFile("$profile:BZ_AutoDrive_PathLogger\\" + i.m_world + "_surfroad.csv", FileMode.WRITE);
+        i.m_fo = OpenFile(BZCarpetas.PathLogger() + i.m_world + "_surfroad.csv", FileMode.WRITE);
         if (!i.m_fo) { BZBusLog.Err("[SURFCAP] no pude crear el CSV"); return; }
         FPrint(i.m_fo, "x,z,type\n");
         s_cap = i;

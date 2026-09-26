@@ -274,7 +274,7 @@ class BZInverseModel {
             if (rpm < 1) { outThrottle = 1.0; note = "rpm_too_low"; return; }
             float maxT = Interp(m_TorqueCurve, rpm);
             if (maxT < 1) { outThrottle = 1.0; note = "no_torque"; return; }
-            // TRANSFERENCIA DE PESO EN PENDIENTE (2026-08-07, Sonom4n). En subida el peso se va atras -> el FWD
+            // TRANSFERENCIA DE PESO EN PENDIENTE (2026-08-07, un jugador). En subida el peso se va atras -> el FWD
             // (motriz adelante) DESCARGA sus ruedas motrices -> menos traccion; el RWD las CARGA; el AWD igual.
             // El framework lo ANTICIPA leyendo drive= (m_DriveKind). Sin esto el FWD (Hatchback) bogueaba en la
             // cuesta del galpon donde los AWD trepaban. slope>0 = subida. Clamp para no invertir el signo.

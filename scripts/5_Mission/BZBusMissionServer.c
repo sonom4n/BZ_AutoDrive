@@ -1,13 +1,8 @@
 modded class MissionServer {
     override void OnInit() {
         super.OnInit();
-        // === MARCADOR DE VERSION (dev v1.1) — el PBO v1.0 NO tiene estas lineas. ===
-        // Si ves este banner en el RPT del server, estas corriendo v1.1-dev, NO la v1.0.
-        // (temporal de dev; sacar/ajustar antes del release de v1.1)
-        Print("############################################################################");
-        Print("###   BZ AutoDrive  v1.1-dev   (refactor DriveTowards: GUARDS + PLAN)     ###");
-        Print("###   Si ves esto en el RPT -> corre v1.1-dev (NO la v1.0 publicada)      ###");
-        Print("############################################################################");
+        // el cartel del boot lee la version declarada en config.cpp (CfgMods): una sola fuente, la que el mod publica.
+        Print("[BZ AutoDrive] " + BZAutoDriveVersion.Texto() + " cargado");
         BZBusService.GetInstance().Init();
         BZRouteCleanup.GetInstance().Init();
 

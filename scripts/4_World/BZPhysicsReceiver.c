@@ -6,11 +6,11 @@
 //    posicion = OPEN-LOOP fisico. El engine YA calcula el estado real y lo
 //    expone. Este receiver muestrea TODO el estado observable del vehiculo
 //    cada frame de fisica (EOnPostSimulate) -> observabilidad TOTAL del plant.
-//    Principio (Sonom4n 2026-07-04): "cualquier variable que dejemos afuera es un
+//    Principio (un jugador 2026-07-04): "cualquier variable que dejemos afuera es un
 //    grado de libertad oculto donde Boris puede divergir sin que lo veamos."
 //
 //  OBSERVABLES (superficie completa de la API del motor, verificada en
-//  C:\DayZServer\dta\scripts: car.c, enphysics.c, surfaceinfo.c, object.c):
+//  dta\scripts: car.c, enphysics.c, surfaceinfo.c, object.c):
 //    CUERPO 6DOF: pos, orientacion (yaw/pitch/roll via GetOrientation), vel
 //      lineal descompuesta (long/lat/vert) -> sideslip beta, vel angular
 //      (yaw/pitch/roll rate via dBodyGetAngularVelocity), energia cinetica,

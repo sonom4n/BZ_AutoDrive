@@ -35,6 +35,10 @@ recordings/*.csv
 *.bak
 *.backup
 *.dump
+*_pre_poda_*
+
+# El editor de trayectorias viejo: backup y afuera (ni GitHub ni Workshop). Respaldo en ..\_backup_editor_trayectorias_20260923\
+tools/editor/
 
 # Config per-user del wizard (tiene paths del dev; se regenera portable en la 1ra corrida)
 tools/wizard_config.json

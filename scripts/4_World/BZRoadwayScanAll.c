@@ -1,6 +1,6 @@
 // ============================================================================
 //  BZRoadwayScanAll - CINTA DE CALZADA REAL DE TODO EL MAPA (full resolution).
-//  (Sonom4n, 2026-07-11) La capa del editor sale de los centros p3d (roadscan_map)
+//  (un jugador, 2026-07-11) La capa del editor sale de los centros p3d (roadscan_map)
 //  con ancho ESTIMADO -> forma pobre, espolones, calles con ancho irreal.
 //  El detalle NO viene del tamano de celda: viene de medir el BORDE real de la
 //  calzada por busqueda binaria sobre el ROADWAY LOD (GetSurface), precision
@@ -40,7 +40,7 @@ class BZRoadwayScanAll {
         s_sp.rsd = RoadSurfaceDetection.UNDER;
         s_sr = new SurfaceDetectionResult();
 
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         LoadSeeds(dir + "roadscan_map.csv");
         if (s_x.Count() == 0) { BZBusLog.Err("[RIBBON] sin semillas (falta roadscan_map.csv)"); return; }
 

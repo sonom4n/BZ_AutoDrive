@@ -14,6 +14,7 @@ class BZRunnerInfo {
     float  kmh;
     float  posX;   // 2026-08-17: coordenadas del vehiculo (para ubicarlo en el mapa)
     float  posZ;
+    string estado; // QUEUED / LOADING 43% / BOARDING CREW 2/3 / PREPARING; vacio = el cliente decide
 }
 
 // Fase 2: snapshot client-side de un vehiculo spawneado VACIO (panel ACTIVE SPAWN VEHICLE).
@@ -22,6 +23,7 @@ class BZEmptyInfo {
     int    wpIndex;
     float  posX;
     float  posZ;
+    bool   pendiente;   // fila LOADING local (el clic ya se mando; el server todavia no la lista). No viaja por RPC.
 }
 
 class BZBusClientManager {
@@ -251,6 +253,16 @@ class BZBusClientManager {
             if (!ctx.Read(ri.posX))    break;   // 2026-08-17: coordenadas (al final del bloque, protocolo simetrico)
             if (!ctx.Read(ri.posZ))    break;
             s_RunnersInfo.Insert(ri);
+        }
+        // los estados vienen en un bloque APARTE, despues de TODAS las filas y en el mismo
+        // orden. Solo se leen si las filas llegaron enteras (si no, el flujo ya esta corrido). Un server
+        // viejo no manda el bloque: el Read falla, el estado queda vacio y la tarjeta se ve como antes.
+        if (s_RunnersInfo.Count() == count) {
+            for (int ei = 0; ei < count; ei++) {
+                string estI;
+                if (!ctx.Read(estI)) break;
+                s_RunnersInfo.Get(ei).estado = estI;
+            }
         }
         s_RunnersReceived = true;
     }

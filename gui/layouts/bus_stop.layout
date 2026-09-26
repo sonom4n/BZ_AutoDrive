@@ -35,7 +35,7 @@ PanelWidgetClass Root {
      vexactpos 1
      hexactsize 1
      vexactsize 1
-     text "Bus Costero BrigadaZ"
+     text "BrigadaZ Coastal Bus"
      font "gui/fonts/sdf_RobotoBold18"
      "text halign" left
      "text valign" center
@@ -66,7 +66,7 @@ PanelWidgetClass Root {
      vexactpos 1
      hexactsize 1
      vexactsize 1
-     text "Estado"
+     text "Status"
      font "gui/fonts/sdf_RobotoBold14"
      "text halign" center
      "text valign" center
@@ -82,7 +82,7 @@ PanelWidgetClass Root {
      vexactpos 1
      hexactsize 1
      vexactsize 1
-     text "Ruta"
+     text "Route"
      font "gui/fonts/sdf_RobotoBold14"
      "text halign" center
      "text valign" center
@@ -98,7 +98,7 @@ PanelWidgetClass Root {
      vexactpos 1
      hexactsize 1
      vexactsize 1
-     text "Avisos"
+     text "Notices"
      font "gui/fonts/sdf_RobotoBold14"
      "text halign" center
      "text valign" center

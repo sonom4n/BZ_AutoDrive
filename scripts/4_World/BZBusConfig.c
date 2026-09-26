@@ -9,16 +9,16 @@ class BZWaypoint {
     int   targetGear;       // gear grabado en este tramo (referencia para ShiftTo)
     float targetThrottle;   // throttle 0..1 grabado (cuando hasInputData=true)
     float targetBrake;      // brake 0..1 grabado (cuando hasInputData=true)
-    float targetHandbrake;  // handbrake 0..1 grabado. >0.5 = STOP/transicion explicita del humano (Boris se detiene). Sonom4n 2026-06-12.
+    float targetHandbrake;  // handbrake 0..1 grabado. >0.5 = STOP/transicion explicita del humano (Boris se detiene). un jugador 2026-06-12.
     float targetSteering;   // steering -1..1 grabado. Solo usado en direct replay mode (MANIOBRA).
     string mode;            // Modo de manejo aplicable a este waypoint: "normal" (default, Stanley + cruise), "parking" (direct replay para precision), "maniobra" (futuro). El modder activa modes con toggle keys durante grabacion (NUMPAD + para parking).
     bool  hasInputData;     // true si el waypoint viene del PathLogger nuevo (con throttle/brake reales). Si false, se usa logica derivada.
-    float targetHeading;    // heading_deg grabado (facing del humano). 0 = no disponible. El ModeSnap en reverse lo usa para orientar EXACTO (la geometria se torcia en la curva -> latd -> puerta derecha). Sonom4n 2026-06-24.
-    int   targetHorn;       // bocina grabada en este wp: 0=OFF, 1=SHORT, 2=LONG (ECarHornState). Replay espacial: Boris honkea donde el humano honkeo. Sonom4n 2026-06-27.
-    int   targetLights;     // luces grabadas en este wp: 0=apagadas, 1=encendidas. Replay en LightsMode="replay"; otros modos lo ignoran (auto por hora, on/off fijo). Sonom4n 2026-06-27.
+    float targetHeading;    // heading_deg grabado (facing del humano). 0 = no disponible. El ModeSnap en reverse lo usa para orientar EXACTO (la geometria se torcia en la curva -> latd -> puerta derecha). un jugador 2026-06-24.
+    int   targetHorn;       // bocina grabada en este wp: 0=OFF, 1=SHORT, 2=LONG (ECarHornState). Replay espacial: Boris honkea donde el humano honkeo. un jugador 2026-06-27.
+    int   targetLights;     // luces grabadas en este wp: 0=apagadas, 1=encendidas. Replay en LightsMode="replay"; otros modos lo ignoran (auto por hora, on/off fijo). un jugador 2026-06-27.
     float targetFrontWheel; // FASE 2 (2026-07-04): angulo REAL de rueda EJECUTADO por el humano (WheelGetDirection, deg vs heading). El FF lo comanda directo con PlantUseRecordedWheel -> Boris reproduce lo que las ruedas del humano hicieron, no una version geometrica. 0=no disponible.
-    float corridorHalfWidth; // CORREDOR-BANDA (2026-07-08, modelo Sonom4n): medio ancho del corredor EN ESTE wp. Angosto en recta (mantiene carril), ANCHO en el nodo (room para el giro -> el vehiculo expresa SU curva segun su fisica, no una linea impuesta). 0 = usar la constante CruiseLateralDeadband (rutas viejas). Ver [[project_graph_as_band_corridor]].
-    // CORTE DE TRAMO / INTERCAMBIO (2026-07-21, Sonom4n). DECLARACION EXPLICITA del autor: "aca empieza un
+    float corridorHalfWidth; // CORREDOR-BANDA (2026-07-08, modelo un jugador): medio ancho del corredor EN ESTE wp. Angosto en recta (mantiene carril), ANCHO en el nodo (room para el giro -> el vehiculo expresa SU curva segun su fisica, no una linea impuesta). 0 = usar la constante CruiseLateralDeadband (rutas viejas). Ver [[project_graph_as_band_corridor]].
+    // CORTE DE TRAMO / INTERCAMBIO (2026-07-21, un jugador). DECLARACION EXPLICITA del autor: "aca empieza un
     // tramo nuevo". Boris trata este wp como START POINT: para, resetea el estado de manejo (volante,
     // latches, recovery) y arranca con la rueda derecha, igual que en el spawn de la ruta.
     // POR QUE NO SE INFIERE: un 0 km/h SOLO es una PAUSA en el mismo sentido (ver el diseno de marcas del
@@ -73,6 +73,7 @@ class BZAction {
     string verb;
     ref array<ref BZCargoItem> items = new array<ref BZCargoItem>();  // add_cargo
     string msg;          // log_event / ui_broadcast
+    string format;       // ui_broadcast: "toast" (pantalla, default) | "chat" | "both". Vacio o desconocido = toast
     int    slot = -1;    // lock_seat / unlock_seat / eject_passenger
     string value;        // generico (faccion, target, set_var: valor)
     float  fvalue;       // generico numerico
@@ -81,6 +82,15 @@ class BZAction {
     string loadout;      // spawn_guard: loadout para armarlo (default "BanditLoadout" en codigo)
     int    count;        // spawn_guard: cuantos bots (default 1 en codigo)
     float  delay;        // segundos a esperar antes de ejecutar esta accion (coreografia). 0 = inmediato
+    // guard_stop = la parada con escolta ENTERA (freeze -> despliegue -> espera -> embarque ->
+    // unfreeze). 0 en cualquiera de estos = el default del codigo, asi que {"verb":"guard_stop"} solo ya anda.
+    //   "actions": [ { "verb": "guard_stop", "radius": 8, "holdS": 20, "clearS": 5, "maxS": 120, "boardS": 30 } ]
+    float  radius;       // guard_stop: la CORREA, metros del anillo de patrulla alrededor del vehiculo (8)
+    float  holdS;        // guard_stop: minimo desplegados, aunque no pase nada (20)
+    float  clearS;       // guard_stop: segundos seguidos SIN combate para declarar la zona limpia (5)
+    float  maxS;         // guard_stop: tope duro; pase lo que pase, a los maxS se replieguen y siga (120)
+    float  boardS;       // guard_stop: espera maxima del embarque; el que no llego, se queda (30)
+    float  unreachableS; // guard_stop: combate SIN blanco dentro de la correa -> "no podemos responder" (15)
     // NOTA 2026-06-11: check_once (condition/on_true/on_false) SACADO. Los campos
     // auto-referenciales (BZAction dentro de BZAction, BZCondition dentro de si misma)
     // rompian JsonFileLoader -> el array Events NO cargaba (ni los eventos simples).
@@ -124,8 +134,217 @@ class BZMarkerEvent {
     ref array<ref BZAction> actions = new array<ref BZAction>();
 }
 
+// ★★★ PRESENCIA EXPLICITA DE CLAVES. JsonFileLoader deja los bloques anidados AUSENTES
+// instanciados con TODOS los campos en CERO, sin los inicializadores de la clase. Medido: header de DEMOBUS sin
+// "AutoRecovery" -> Logical.Enabled false · WaitS 0 · MaxAttempts 0 · CooldownS 0 -> la liberacion de paradas
+// quedo APAGADA por defecto y DEMOBUS se volvio a clavar en wp 944. Es la familia de la nota de BZCrewMember
+// ("defaults en codigo"), pero aca "0 = default" no alcanza: false y MaxAttempts 0 son valores VALIDOS, y un
+// {"Enabled": false} escrito seria indistinguible de la ausencia. Por eso se mira el TEXTO del header: cada campo
+// se toma del loader solo si su clave esta escrita; si no, rige el default del codigo (lo aplica el servicio).
+// Mismo enfoque que BZILCCorrections (busqueda de claves en el texto JSON).
+class BZJsonPresencia {
+    // Texto del header. En el JSON full se corta en "Waypoints" (va al final y pesa megabytes).
+    static string LeerHeader(string path)
+    {
+        if (path == "" || !FileExist(path)) return "";
+        FileHandle fhP = OpenFile(path, FileMode.READ);
+        if (fhP == 0) return "";
+        string textoP = "";
+        string lineaP = "";
+        while (FGets(fhP, lineaP) >= 0)
+        {
+            if (lineaP.IndexOf("\"Waypoints\"") >= 0) break;
+            textoP = textoP + lineaP + "\n";
+        }
+        CloseFile(fhP);
+        return textoP;
+    }
+
+    // El objeto {...} que es el valor de "clave", o "" si la clave no esta o su valor no es un objeto.
+    static string Objeto(string texto, string clave)
+    {
+        if (texto == "") return "";
+        string buscadaO = "\"" + clave + "\"";
+        int kO = texto.IndexOf(buscadaO);
+        if (kO < 0) return "";
+        int desdeO = kO + buscadaO.Length();
+        int abreO = texto.IndexOfFrom(desdeO, "{");
+        if (abreO < 0) return "";
+        string entreO = texto.Substring(desdeO, abreO - desdeO);
+        entreO = entreO.Trim();
+        if (entreO != ":") return "";
+        int nivelO = 0;
+        int nO = texto.Length();
+        for (int jO = abreO; jO < nO; jO++)
+        {
+            string cO = texto.Get(jO);
+            if (cO == "{") nivelO = nivelO + 1;
+            else if (cO == "}")
+            {
+                nivelO = nivelO - 1;
+                if (nivelO == 0) return texto.Substring(abreO, jO - abreO + 1);
+            }
+        }
+        return "";
+    }
+
+    static bool Tiene(string objeto, string clave)
+    {
+        if (objeto == "") return false;
+        return objeto.IndexOf("\"" + clave + "\"") >= 0;
+    }
+
+    // el ESCALAR crudo de una clave del header, por texto (sin JsonFileLoader): lo que sigue a `"clave":`
+    // hasta la coma, la llave o el fin de linea, sin comillas ni espacios. "" si la clave no esta. Sirve a los DOS
+    // consumidores del hdr (BZBusService y el reproductor directo), que no comparten el objeto de config.
+    static string Valor(string texto, string clave)
+    {
+        if (texto == "") return "";
+        string buscadaV = "\"" + clave + "\"";
+        int kV = texto.IndexOf(buscadaV);
+        if (kV < 0) return "";
+        int desdeV = kV + buscadaV.Length();
+        int dosV = texto.IndexOfFrom(desdeV, ":");
+        if (dosV < 0) return "";
+        int nV = texto.Length();
+        int finV = dosV + 1;
+        while (finV < nV)
+        {
+            string cV = texto.Get(finV);
+            if (cV == "," || cV == "}" || cV == "\n" || cV == "\r") break;
+            finV = finV + 1;
+        }
+        string valV = texto.Substring(dosV + 1, finV - dosV - 1);
+        valV = valV.Trim();
+        valV.Replace("\"", "");
+        return valV.Trim();
+    }
+
+    // El texto entre [ y ] del valor de "clave" (una lista JSON de strings o numeros, sin listas anidadas), o "" si la clave
+    // no esta o su valor no es una lista. Mismo esquema que Objeto: la clave con sus comillas, ':' y el corchete.
+    static string Lista(string texto, string clave)
+    {
+        if (texto == "") return "";
+        string buscadaL = "\"" + clave + "\"";
+        int kL = texto.IndexOf(buscadaL);
+        if (kL < 0) return "";
+        int desdeL = kL + buscadaL.Length();
+        int abreL = texto.IndexOfFrom(desdeL, "[");
+        if (abreL < 0) return "";
+        string entreL = texto.Substring(desdeL, abreL - desdeL);
+        entreL = entreL.Trim();
+        if (entreL != ":") return "";
+        int cierraL = texto.IndexOfFrom(abreL + 1, "]");
+        if (cierraL < 0) return "";
+        return texto.Substring(abreL + 1, cierraL - abreL - 1);
+    }
+}
+
+// ★ AUTORECOVERY v2. Claves en INGLES (regla del usuario: "tiene que ser para todos").
+//   "AutoRecovery": { "Logical":  { "Enabled": true, "WaitS": 0.5, "MaxAttempts": 3, "CooldownS": 1.0 },
+//                     "Physical": { "Enabled": false } }
+// Logical  = re-arranque EN EL LUGAR cuando el cerebro se traba y el vehiculo SI puede moverse.
+//   WaitS: segundos detenido antes de actuar · MaxAttempts: por lugar (0 = sin limite) · CooldownS: entre intentos.
+// Physical = trabas FISICAS. Enabled default TRUE desde
+// (el usuario: "el AR viene activado por defecto"), validada in-game con obstaculo real (811/813/817/819);
+//   ponerlo en false es el modo diagnostico: el vehiculo queda trabado y la traba se registra igual.
+//   hasta validarlo in-game (el detector registra igual). Con true: ESCALERA por lugar -> (1) maniobra: reversa
+//   ReverseM metros y re-encarar manejando (solo con todas las ruedas en el piso) · (2) re-ubicar en el ultimo punto
+//   bien pisado (una batalla atras del choque), bien orientado · (3) zonas seguras +2, +3, ... metros adelante del
+//   punto trabado, hasta LadderMaxM. Agotada la escalera (6 m por defecto) el tramo se abandona como siempre;
+// quien prefiera que el AR nunca corte la toma sube LadderMaxM (decision de uso, ). ReverseMaxKmh:
+// tope de velocidad de la reversa (: sin tope llego a 13,5 km/h y 4,9 m; con otro vehiculo atras es otro
+//   choque). Cada escalon queda en el RPT y en AR_log.csv (tipo FISICO).
+// la PRIMERA zona segura es largo/2 + 1,5 m (la primera pose en la que el paragolpes trasero pasa el punto
+//   trabado: con el PAZ de 7,66 m, +2..+6 caian MONTADAS sobre el obstaculo) y de ahi +1 m; LadderMaxM se mide desde esa
+//   primera zona. Un destino RECHAZADO (ocupado, montado, sin reversa) no consume escalon: se barre +1 m con su propio
+//   tope SweepMaxM (metros de barrido).
+//   "Physical": { "Enabled": false, "ReverseM": 3.0, "ReverseMaxKmh": 5.0, "LadderMaxM": 6.0, "SweepMaxM": 10.0 }
+// Sin el bloque, el servicio usa estos mismos defaults. Los AutoRecovery* planos de 1.1 (teleport) son OTRA cosa.
+// ⚠ Los inicializadores de abajo son DOCUMENTACION: el loader no los aplica a bloques ausentes (ver BZJsonPresencia).
+class BZAutoRecoveryLogicalConfig {
+    bool  Enabled = true;
+    float WaitS = 0.5;
+    int   MaxAttempts = 3;
+    float CooldownS = 1.0;
+}
+
+class BZAutoRecoveryPhysicalConfig {
+    bool  Enabled = true;
+    float ReverseM = 3.0;
+    float ReverseMaxKmh = 5.0;
+    float LadderMaxM = 6.0;
+    float SweepMaxM = 10.0;
+}
+
+// ★ AHOGO DEL MOTOR: es del CONTROLADOR, no del AR.
+//   "BogRecovery": { "Enabled": true, "WindowS": 3.0, "MinProgressM": 0.5, "MaxAttempts": 2 }
+// Enabled: fuerza PRIMERA (gear 2) + arranque tipo HILLSTART cuando el motor se ahoga (default true desde
+// validado in-game; con false el DETECTOR registra igual). WindowS: segundos con gas aplicado y sin avanzar antes de
+//   decidir. MinProgressM: avance sobre la ruta que ya cuenta como 'avanza'. MaxAttempts: por lugar; al agotar
+//   queda registrado como [AR] FISICO (ahogo persistente).
+class BZBogRecoveryConfig {
+    bool  Enabled = true;
+    float WindowS = 3.0;
+    float MinProgressM = 0.5;
+    int   MaxAttempts = 2;
+}
+
+class BZAutoRecoveryConfig {
+    ref BZAutoRecoveryLogicalConfig Logical;
+    ref BZAutoRecoveryPhysicalConfig Physical;
+}
+
+// ★ AR MANUAL: re-ubicacion de ULTIMO RECURSO pedida por el operador (bandera BZ12_AR_MANUAL.txt con el
+// nombre de la ruta; el boton del panel llega despues sobre la misma funcion del servidor).
+//   "ManualAR": { "AdvanceM": 10.0, "GoodLatM": 1.0 }
+// AdvanceM: metros de cinta ADELANTE del ultimo punto bien pisado donde se re-ubica (acotado al leg actual).
+// GoodLatM: error lateral maximo contra la polilinea para que un punto cuente como "bien pisado".
+// Sin el bloque, estos mismos defaults (presencia de clave, ver BZJsonPresencia).
+// + 843: QUIEN PUEDE MANEJAR, y que pasa cuando no queda nadie.
+//   "Drivers": { "Mode": "list", "Seats": [1, 3] }
+// Mode: "any" (DEFAULT: cualquier bot del Crew puede tomar el volante) · "driver" (solo el chofer original:
+//       un tiro bien puesto inmoviliza al convoy y el vehiculo queda de botin) · "list" (los asientos de Seats).
+// Sin el bloque, "any" -- decision del usuario en. La sucesion es POR ASIENTO: los candidatos ya van
+// todos a bordo, asi que "el mas cercano" no distingue nada.
+// ⚠ Para que esto exista en una mision hace falta ademas `DriverInvincible: false`: con el default (true) al
+// chofer no se lo puede matar y la rama entera nunca corre.
+class BZDriversConfig {
+    string Mode = "any";
+    ref array<int> Seats;
+}
+
+// politica del DESPLIEGUE de la escolta.
+//   "Deploy": { "IgnoreInfected": false }
+// IgnoreInfected (default TRUE, decision del usuario): los infectados y la escolta se ignoran MUTUAMENTE --
+// el guardia no los toma de blanco y el infectado no lo toma a el. Sin esto, cualquier zombie suelto entretiene
+// a un guardia y le cuesta un bot a la mision (medido: "dos se entretuvieron matando zombies y el vehiculo
+// partio sin ellos"). En false, los infectados son parte de la mision como cualquier otra amenaza.
+class BZDeployConfig {
+    bool IgnoreInfected = true;
+}
+
+class BZManualARConfig {
+    float AdvanceM = 10.0;
+    float GoodLatM = 1.0;
+}
+
 class BZBusRouteConfig {
     int    RespawnDelay   = 300;
+    // cuantas filas tienen el _wp.csv y el _cinta.csv. Las escribe el CONVERSOR (que es el
+    // unico que lo sabe gratis: las acaba de escribir) y dan el DENOMINADOR del % de carga del panel.
+    // Enforce no expone el tamanio de un archivo, asi que sin esto habria que leerlo dos veces.
+    // Ausentes (rutas convertidas antes) = 0 = "no se sabe": el panel muestra filas leidas, sin %.
+    int    WpRows = 0;
+    int    CintaRows = 0;
+    // (el usuario, 22/09): EL CREEP VIAJA EN LA TOMA. Lo escribe el conversor derivado del
+    // coast2 de ESTA toma y el motor lo prefiere por sobre el envelope suelto (un archivo aparte puede faltar --18 de 38
+    // eran stubs-- o estar desincronizado --el _02 era copia--; uno que viaja adentro, no). CreepSource vacio = no viaja
+    // (toma vieja): el motor deriva del coast2 del envelope, si no hay, cuentas chist2/nocreep, y si no, el prior.
+    float  CreepKmh = 0;
+    string CreepSource = "";     // coast2 | chist2 | nocreep | prior | no-medido
+    int    CreepSamples = 0;
+    float  CoastAtRest = 0;      // decel medida a v->0 (m/s2): el numero es auditable
     float  AverageSpeedMS = 11.0;    // ~40 km/h en m/s, usado para calcular ETA
     // Secuencia de inicio: SPAWN -> hold N seg -> PLAY. Configurable por ruta.
     //   3.0 (default) - bus normal, 3s para sentar driver y calentar motor
@@ -159,11 +378,11 @@ class BZBusRouteConfig {
     string LightsMode = "auto";
     // Estrategia de bocina (espejo de LightsMode). El claxon GRABADO (targetHorn) SIEMPRE se
     // reproduce por replay espacial; HornMode controla solo el bocinazo AUTOMATICO:
-    //   "replay" (default) - NADA automatico, solo lo grabado. (Antes honkeaba en CADA parada de TODA ruta.)
+    //   "off" (default)    - nunca automatico; queda el verbo horn de una marca.
     //   "stops"            - bocinazo corto en cada parada.
-    //   "finish"           - bocinazo corto SOLO al final de la ruta ("llegamos").
-    //   "off"              - nunca.
-    string HornMode = "replay";
+    //   "finish"           - bocinazo corto SOLO al final de la ruta ("llegamos"); en 1.2 suena en el ROUTE_COMPLETE.
+    //   "replay"           - solo lo grabado; la toma NO graba bocina, asi que equivale a "off" y el server lo avisa al cargar.
+    string HornMode = "off";
     string VehicleClass   = "ExpansionBus";       // override si el bus no esta registrado
     string DriverClass    = "eAI_SurvivorM_Boris";
     // Estado inicial del vehiculo: true = IRROMPIBLE (default â€” sobrevive al
@@ -171,6 +390,13 @@ class BZBusRouteConfig {
     // daÃ±o, habilita escenarios on_crashed). Switcheable en runtime con el verbo
     // set_vehicle_mortality (action de un marker NUMPAD 4).
     bool VehicleInvincible = true;
+    // VEHICULO INVIOLABLE: mientras el runner lo maneja, ningun jugador puede sacarle piezas (ruedas, puertas, bateria,
+    // bujia, radiador...). Con el vehiculo parado (parada, meseta, fin de ruta) el motor las deja soltar como en cualquier
+    // auto, y dos ruedas menos es un vehiculo detenido para siempre: la garantia del framework. Ademas "quitar rueda"
+    // competia con "subir" en la puerta del conductor. La carga (botin) no se toca: sigue accesible; subir/bajar y PONER
+    // piezas tampoco. Switcheable en runtime con el verbo set_vehicle_parts ("unlocked" = se pueden sacar; cualquier otro
+    // valor = bloqueadas) y por API (SetVehiclePartsLocked). Si la recompensa es el vehiculo, un evento lo desbloquea.
+    bool VehiclePartsLocked = true;
     // Boris mortal o no (espejo de VehicleInvincible). Antes hardcoded true en el codigo;
     // ahora per-ruta. El verbo set_driver_mortality lo flipea en runtime.
     bool DriverInvincible = true;
@@ -219,7 +445,7 @@ class BZBusRouteConfig {
     float  ThrottleCatchupGain = 0.08;     // throttle extra por km/h de deficit (0.08 -> deficit 11 = 0.88)
     float  ThrottleCatchupDeadband = 2.0;  // km/h por debajo del target antes de engancharse
     float  ThrottleCatchupCap = 1.0;       // throttle maximo que puede forzar el catch-up
-    // ARRANQUE DERECHO EN CADA TRAMO (2026-07-21, idea de Sonom4n: "el intercambio tendria que ser como si
+    // ARRANQUE DERECHO EN CADA TRAMO (2026-07-21, idea de un jugador: "el intercambio tendria que ser como si
     // volviera a empezar"). MEDIDO en la grabacion humana, en la parada previa a la reversa: 2,35 s
     // detenido con el input de volante en 0.000 CLAVADO y la rueda entre 1,6 y 2,1 grados. El humano NO
     // toca el volante estando parado: para derecho, espera, y arranca derecho.
@@ -228,7 +454,7 @@ class BZBusRouteConfig {
     // Resultado: 12 s clavado al salir de la reversa donde el humano ya iba a 50 km/h.
     // Por que en el arranque de RUTA no pasa: SpawnBus llama a OrientBusToNext y le fija el rumbo al path.
     // En el intercambio no lo alinea nadie. Esto le da a cada tramo el mismo trato que al arranque.
-    // FILTRO POR SENTIDO DE CIRCULACION (2026-07-21, idea de Sonom4n: "como si Boris necesitara no solo la
+    // FILTRO POR SENTIDO DE CIRCULACION (2026-07-21, idea de un jugador: "como si Boris necesitara no solo la
     // traza sino el flujo hacia donde corre, una linea flechada... como la corriente electrica").
     // La traza tiene POLARIDAD. Al buscar "el waypoint mas cercano", se descarta todo candidato cuyo
     // sentido de circulacion se oponga al del waypoint actual: un punto que apunta al reves NO es un
@@ -241,7 +467,7 @@ class BZBusRouteConfig {
     // Umbral en grados: >90 para no descartar candidatos legitimos en una curva de 90 (una traza opuesta
     // da ~180). 0 = filtro apagado.
     float  PathFlowFilterDeg = 120.0;
-    // TRACER DEL CONTROLADOR (2026-07-21, Sonom4n): Boris loguea que seccion del pipeline toca el control en
+    // TRACER DEL CONTROLADOR (2026-07-21, un jugador): Boris loguea que seccion del pipeline toca el control en
     // cada tick (cerca del intercambio/endpoint, a baja vel). Corriendo varias situaciones, las secciones
     // que NUNCA aparecen son codigo muerto -> se borran con prueba. Es la herramienta de la depuracion.
     bool   ControlTraceEnabled = false;
@@ -265,7 +491,7 @@ class BZBusRouteConfig {
     // 4-7 m sin que Boris se haya ido -> la recovery se apodera del control justo en la curva y lo escupe
     // rotado ~45 deg respecto del intercambio. false = manda el pure-pursuit solo.
     bool   OffPathRecoveryEnabled = true;
-    // EL INTERCAMBIO ES UNA POSE, NO UN PUNTO (2026-07-21, Sonom4n: "esos puntos tienen que tener impreso
+    // EL INTERCAMBIO ES UNA POSE, NO UN PUNTO (2026-07-21, un jugador: "esos puntos tienen que tener impreso
     // wp + orientacion"). El tramo se daba por completado solo por distancia y velocidad -> Boris lo
     // cerraba estando TORCIDO (medido al salir de la reversa: -11 deg el M3, -5 el Sedan, +23 el
     // CivilianSedan) y arrancaba el tramo siguiente desde una pose que no era la grabada. El humano
@@ -293,7 +519,7 @@ class BZBusRouteConfig {
     float  SurfaceSenseUpMinKmh = 28.0;    // subida solo actua abajo de esto (peldaÃ±os/trepadas son a baja vel)
     // BAJADA (simetrico): conservador -> NO forzar gas (la gravedad ya acelera). Capea el throttle en
     // descenso proporcional a la pendiente, para que el catch-up/InverseModel no empujen cuesta abajo.
-    // El freno de sobrevelocidad (OverspeedCut) ya frena si se pasa. Sonom4n: "bajada, conservador de velocidad".
+    // El freno de sobrevelocidad (OverspeedCut) ya frena si se pasa. un jugador: "bajada, conservador de velocidad".
     float  SurfaceSenseDownThresh = 0.04;  // grade de descenso a partir del cual capea (~2.3Â°)
     float  SurfaceSenseDownFactor = 3.0;   // cuanto baja el cap por unidad de grade (mas empinado -> menos gas)
     // Attachments a aplicar al spawnear el vehiculo. Lista de classnames de
@@ -354,7 +580,7 @@ class BZBusRouteConfig {
     // stops reales isStop) -> mantiene momentum, cruza la curva sin clavarse. 0 = off. ~11 rec. Combina
     // con abrir la curva (curvature-limit R~8) para que sea manejable a esa velocidad sin understeer.
     float FollowPathMinKmh = 0.0;
-    // HONRAR LA VELOCIDAD PINTADA/GRABADA HASTA EL STOP (2026-07-13, pedido de Sonom4n: "si lo dibujo a 8, respetalo"):
+    // HONRAR LA VELOCIDAD PINTADA/GRABADA HASTA EL STOP (2026-07-13, pedido de un jugador: "si lo dibujo a 8, respetalo"):
     // el perfil de velocidad es la ley (dibujado O grabado). Cuando ON: (a) NO aplica el floor de MinKmh (la decel
     // fina dibujada 4,3,2,1 se respeta, no la reescribe a 5), (b) NO usa la cinematica de parking (que impone su
     // propia velocidad de approach -> el punch/overshoot del endpoint), (c) el InverseModel sigue apuntando a la
@@ -408,19 +634,19 @@ class BZBusRouteConfig {
                                         // el control al OJO y colapsaba la velocidad (ignora la grabada); a 3m el ojo
                                         // gobierna la aproximacion (sigue la velocidad grabada) y el universal solo
                                         // clava los ultimos 3m. Probado FT/REVCURVA/SEQ. Sincroniza con el template.
-    // TECHO DE THROTTLE EN EL ENDPOINT FINAL (2026-08-05, Sonom4n). Ver el bloque endpointThrCap en BZBusService.c.
+    // TECHO DE THROTTLE EN EL ENDPOINT FINAL (2026-08-05, un jugador). Ver el bloque endpointThrCap en BZBusService.c.
     // En la zona de glide del ULTIMO wp, los pisos de throttle (revApproach/DeadZoneInverse/BreakawayRamp) se
     // apilaban a ~0.29 y aceleraban a Boris (bajada) a 13 km/h -> sobrepaso 1.66m (Golf). nearCheckpoint no los
     // suprime porque esta muerto (StopBrakeControllerEnabled=false). Con esto: MOVIENDOSE (>EndpointGlideMaxKmh)
     // throttle=0 (coast -> el FRENO UNIVERSAL clava); des-clavando (<MaxKmh) capeado al EndpointKick. Solo el
     // endpoint final; no toca cusp/checkpoints/arranque.
     bool  EndpointThrottleCapEnabled = true;
-    // PARADA PRECISA EN LOS INTERCAMBIOS (2026-08-16, Sonom4n): extiende el zone de parada del endpoint (freno
+    // PARADA PRECISA EN LOS INTERCAMBIOS (2026-08-16, un jugador): extiende el zone de parada del endpoint (freno
     // autoadaptativo + corte de gas) a las piernas FORWARD que terminan en un legBreak/intercambio -> Boris CLAVA
     // la pose del intercambio en vez de sobrepasarla (antes cerraba flojo por min-aprox y arrancaba la reversa
     // 7-11m desplazada -> embrollo/AR). true = reusa la precision del endpoint en cada intercambio. false = viejo.
     bool  EndpointStopAtIntercambio = true;
-    // DECEL EFECTIVO DE PARADA DEL ENDPOINT FINAL (2026-08-05, Sonom4n: "el knob que empareja a todos esta en los
+    // DECEL EFECTIVO DE PARADA DEL ENDPOINT FINAL (2026-08-05, un jugador: "el knob que empareja a todos esta en los
     // vehiculos"). El freno del cap usa brake = v^2/(2*d*decel). 0 = DERIVAR AUTOMATICO del EndpointBrakeDecel
     // del fingerprint (que el framework MIDE del recording de CADA vehiculo -> generaliza a cualquier mod de
     // autos sin conocerlo) por EndpointStopDecelFactor. >0 = override manual fijo. Solo SUMA freno (no toca a
@@ -431,7 +657,7 @@ class BZBusRouteConfig {
     // (la entrada al galpon tiene cuesta -> con 0.42 fijo Boris no trepaba y quedaba corto -> AR). Slope la mide
     // el framework (SampleTerrainY). El freno de parada del endpoint tambien acredita la gravedad (a_need-9.8*sin).
     float EndpointClimbGain = 2.5;
-    // FACTOR DE TREPADA PARA FWD (2026-08-07, Sonom4n: "esto tiene que anticiparlo el framework leyendo la traccion").
+    // FACTOR DE TREPADA PARA FWD (2026-08-07, un jugador: "esto tiene que anticiparlo el framework leyendo la traccion").
     // El framework lee drive= del config (via InverseModel.GetDriveKind). El FWD (unico que boguea en la cuesta del
     // galpon; los AWD trepan) recibe el creep del endpoint x este factor para des-clavar/trepar. AWD/RWD sin cambio.
     float FwdClimbFactor = 1.6;
@@ -458,7 +684,7 @@ class BZBusRouteConfig {
     // InverseModel suma slopeForce=Mass*G*slope al freno. Con gain=1.0 (full) sobre-frenaba y paraba ~0.8m CORTO ->
     // esta ganancia dosifica cuanta pendiente ve el iman (0=ignora, 1=full fisica). Muestreo = 2m ANTES del endpoint.
     float EndpointSlopeBrakeGain = 0.5;   // CONGELADO (30/07): 0.5 clava a ~0.11-0.30m parado; 0.4 no mejoró
-    // KICK del creep / PISO DE MOVIMIENTO (2026-07-26, Sonom4n: "el tema es NO DEJAR QUE BORIS SE DETENGA").
+    // KICK del creep / PISO DE MOVIMIENTO (2026-07-26, un jugador: "el tema es NO DEJAR QUE BORIS SE DETENGA").
     // En el endpoint tras curva Boris llega lento y el creep de 0.14 lo deja coast-ear hasta 0 -> parado en
     // gear alto no arranca (medido SEQ1: 6s a throttle 0.13 sin moverse). PREVENTIVO: mientras le falte llegar,
     // si la velocidad cae por debajo de KickExitKmh se le da un empujon firme -> nunca baja a 0, llega en
@@ -467,17 +693,17 @@ class BZBusRouteConfig {
     float EndpointKickExitKmh  = 1.6;   // piso de velocidad: por debajo, empuja (preventivo, no reactivo)
     bool  DriveStateDump = false;       // AUDITORIA (temporal): vuelca el estado de control por frame a drive_state.csv
     // Creep de reversa al intercambio: empuja el ORIGEN al punto con FUERZA PROPORCIONAL A LA PENDIENTE
-    // (2026-07-22, Sonom4n). throttle = ZonaMuerta + g*sin(theta)/a_full, con a_full = aceleracion de traccion
+    // (2026-07-22, un jugador). throttle = ZonaMuerta + g*sin(theta)/a_full, con a_full = aceleracion de traccion
     // MEDIDA EN RUNTIME del vehiculo (no del config; el Sedan tenia enginePower=0). Sedan medido: zona
     // muerta ~0.37, a_full ~3.1 -> para 13% pide 0.78. El creep anterior usaba 0.68 y no trepaba.
     bool  ReverseEndpointCreep = true;
     float StopBrakeAFull       = 3.1;   // a_full RUNTIME del vehiculo (m/s^2). TODO: del envelope per-vehiculo
     float StopBrakeDeadzone    = 0.37;  // zona muerta de throttle medida (abajo de esto no acelera)
-    // MATAR EL CRAWL (2026-07-22, Sonom4n): dentro de esta distancia a un checkpoint, el StopBrake slope-aware es
+    // MATAR EL CRAWL (2026-07-22, un jugador): dentro de esta distancia a un checkpoint, el StopBrake slope-aware es
     // el UNICO controlador longitudinal -> se apagan coastBand y revApproach, que capean el gas ("pila de
     // parches") y hacen que Boris se arrastre desde lejos sin llegar. Asi carga el envion y frena seco cerca.
     float CheckpointSoleBrakeM = 18.0;
-    // CORRECTOR DE VOLANTE contra la TOMA (2026-07-22, Sonom4n): vigila tick a tick el comando de volante de Boris
+    // CORRECTOR DE VOLANTE contra la TOMA (2026-07-22, un jugador): vigila tick a tick el comando de volante de Boris
     // vs el GRABADO (targetFrontWheel del humano en el punto proyectado) y, cuando se desvia mas que el margen,
     // da un NUDGE intermitente hacia el grabado. Corrige anomalias como el volante-izquierda al arrancar la
     // reversa (Boris -9deg vs humano 0deg). Solo a BAJA velocidad (no cruise, que anda bien). Es un CORRECTOR,
@@ -491,7 +717,7 @@ class BZBusRouteConfig {
     float SteerCorrectorOnLineM = 0.5;    // SOLO corrige el volante si Boris esta a <esto de la traza (ON-LINE):
                                           // ahi un desvio de volante es ESPURIO (anomalia). Si esta mas lejos,
                                           // el volante DEBE corregir la posicion -> no lo forzamos hacia el grabado.
-    // CORRECTOR DE VELOCIDAD contra la TOMA (2026-07-23, Sonom4n): en TODO momento (incluso cruise) Boris monitorea
+    // CORRECTOR DE VELOCIDAD contra la TOMA (2026-07-23, un jugador): en TODO momento (incluso cruise) Boris monitorea
     // su velocidad vs la grabada (targetSpeed del punto proyectado). Si se PASA, corrige con un poquito de freno
     // PROPORCIONAL al exceso, capado. CLAVE: constante, SIN traqueteo -> proporcional + RAMPA (rate-limit), NO
     // por umbral on/off (que se sentiria como que empuja el vehiculo de a ratos). Complementa el acelerador base
@@ -505,22 +731,22 @@ class BZBusRouteConfig {
     float SpeedCorrectorThrCap    = 0.30;  // "un poquito de gas": tope del gas correctivo (floor sobre la base)
     float SpeedCorrectorRateMax   = 0.03;  // maximo cambio por tick (freno Y gas) -> RAMPA suave (anti-traqueteo)
     // CHECKPOINT (intercambio/endpoint): no cerrar el tramo hasta que el creep clave el ORIGEN a <esto del
-    // punto (2026-07-22, Sonom4n: "tenemos que llegar a menos de 0.5"). Sin esto el tramo cerraba a 1.4-2.5m
+    // punto (2026-07-22, un jugador: "tenemos que llegar a menos de 0.5"). Sin esto el tramo cerraba a 1.4-2.5m
     // (LegDoneTolM) ANTES de que el creep terminara -> el intercambio no clavaba como el endpoint.
-    float CheckpointCloseTolM  = 0.2;    // el iman del intercambio reptea+centra hasta esta dist antes de avanzar (era 0.4 -> se cortaba a 0.66m; el endpoint va a 0.05 y clava 0.083). Bajado para que el intercambio clave como el endpoint (Sonom4n: "el intercambio ES un checkpoint donde mi vel grabada es 0, igual que el endpoint")
-    // CHECKPOINT SNAP (2026-07-22, Sonom4n): la fisica llega al vecindario del punto (piso de ruido ~0.15-0.42m
+    float CheckpointCloseTolM  = 0.2;    // el iman del intercambio reptea+centra hasta esta dist antes de avanzar (era 0.4 -> se cortaba a 0.66m; el endpoint va a 0.05 y clava 0.083). Bajado para que el intercambio clave como el endpoint (un jugador: "el intercambio ES un checkpoint donde mi vel grabada es 0, igual que el endpoint")
+    // CHECKPOINT SNAP (2026-07-22, un jugador): la fisica llega al vecindario del punto (piso de ruido ~0.15-0.42m
     // MEDIDO: 2 runs del mismo build difieren eso -> el motor es estocastico). Para las poses que necesitan
     // PRECISION (puerta angosta, arbol del pickup) un deslizamiento CINEMATICO frame-by-frame completa el
     // residuo a la pose EXACTA grabada (pos+rumbo), en ~0.8s a velocidad de creep con ease-in-out -> invisible
     // (NO es un snap seco). Solo con Boris detenido en hill-hold; solo si el residuo < cap (no enmascara fallas
     // gruesas: si quedo a 5m es error de manejo, no se tapa). Prototipo global; luego gateable por checkpoint.
-    bool  CheckpointSnapEnabled = false;   // DESCARTADO (2026-07-22, Sonom4n): el snap de POSICION se ve como
+    bool  CheckpointSnapEnabled = false;   // DESCARTADO (2026-07-22, un jugador): el snap de POSICION se ve como
                                            // deslizamiento (movio el auto con el volante torcido en interc1,
                                            // y tiro a Boris atras en la subida). Vamos por SNAP DE CONTROLES
                                            // (volante+pedal, la fisica maneja). Codigo queda por si se revisita.
     float CheckpointSnapCapM    = 1.5;   // solo completa residuos < esto; mas = falla real de manejo (no snap)
     float CheckpointSnapSecs    = 0.8;   // duracion del deslizamiento (ease-in-out) -> a velocidad de creep
-    // TOLERANCIA ESCALADA POR PENDIENTE (2026-07-22, Sonom4n): "mientras mas inclinado el terreno, menos
+    // TOLERANCIA ESCALADA POR PENDIENTE (2026-07-22, un jugador): "mientras mas inclinado el terreno, menos
     // aproximacion tiene que tener, porque apenas baja la velocidad no le da para forzar la llegada". En
     // pendiente fuerte Boris NO puede trepar el ultimo tramo desde casi-parado -> si le exigimos 0.4m
     // oscila (trepa, toca, cierra, el forward lo dispara). tol_efectiva = CheckpointCloseTolM + factor*|grade|.
@@ -538,14 +764,14 @@ class BZBusRouteConfig {
     // asi el overspeed-cut y el catchup dejan de pelear alrededor del target. 0 = off. Opt-in.
     float ApproachCoastBand = 0.0;      // km/h de banda muerta alrededor del target (ej 2.5)
     float ApproachCoastHold = 0.18;     // throttle maximo dentro de la banda (hold suave, sin catchup)
-    // CONTROL LONGITUDINAL POR LOOKAHEAD (2026-07-17, idea de Sonom4n): en vez del patchwork reactivo
+    // CONTROL LONGITUDINAL POR LOOKAHEAD (2026-07-17, idea de un jugador): en vez del patchwork reactivo
     // (overspeed-cut + catchup + throttle-gap peleando -> saltitos), UN target de velocidad continuo que
     // MIRA ADELANTE. Para cada wp en la ventana calcula la vel que Boris puede tener AHORA y aun frenar
     // COMODO a la de ese wp: vAllow = sqrt(vWp^2 + 2*a*d). El MINIMO de la ventana = target. Luego UNA ley:
     // freno FISICO si sobra, gas si falta, coast en la banda. Misma fisica que el freno universal del
     // endpoint, pero continua. Runtime -> generaliza. Va ULTIMO (pisa el patchwork). Opt-in.
-    bool  UseSpeedLookahead = true;   // DEFAULT (2026-07-17): control longitudinal por lookahead (idea de Sonom4n). Cierra el 5% longitudinal. Validado NUEVO03: cruise 1 flip/4869 ticks, endpoint 0.086m, 0 zigzag.
-    // El OJO escala con la velocidad (Sonom4n): la distancia que mira = SU distancia de frenado v^2/(2a) x margen.
+    bool  UseSpeedLookahead = true;   // DEFAULT (2026-07-17): control longitudinal por lookahead (idea de un jugador). Cierra el 5% longitudinal. Validado NUEVO03: cruise 1 flip/4869 ticks, endpoint 0.086m, 0 zigzag.
+    // El OJO escala con la velocidad (un jugador): la distancia que mira = SU distancia de frenado v^2/(2a) x margen.
     // A 80 km/h mira ~120m; a 10 km/h ~2m. Mas alla de eso no hace falta ver: siempre frena a tiempo.
     float SpeedLookaheadMinM = 6.0;       // piso de la ventana (a baja velocidad no mirar menos que esto)
     float SpeedLookaheadMargin = 1.3;     // margen sobre la distancia de frenado (1.3 = 30% extra)
@@ -565,7 +791,7 @@ class BZBusRouteConfig {
     // planto 8.5 m antes del endpoint y 5.5 m antes del intercambio. Ahora BZVehicleEnvelope MIDE la
     // decel de coasteo del vehiculo (aspecto 2) y el control pregunta "si suelto, llego?": si lo que
     // falta supera el planeo, sostiene gas en vez de coastear. Con datos del vehiculo, no constantes.
-    // POSE EN LAS TRANSICIONES (2026-07-20, Sonom4n: "los puntos de transicion son objetivos de wp o de
+    // POSE EN LAS TRANSICIONES (2026-07-20, un jugador: "los puntos de transicion son objetivos de wp o de
     // alineacion tambien?"). Una transicion NO es una coordenada: es POSICION + ORIENTACION. Para cambiar
     // de sentido hay que llegar al lugar Y apuntando a donde vas a salir. Medido en 3 corridas: Boris
     // ENTRA bien alineado (+2 deg) pero SALE entre 30 y 160 deg torcido y sigue viaje mal apuntado, porque
@@ -625,7 +851,7 @@ class BZBusRouteConfig {
     // sale de targetFrontWheel/plant-gain (reproduce tu rueda ejecutada) -> traza tu arco. Generaliza por plant-gain.
     bool  RevUseRecordedWheel = true;
     float RevWheelLeadM       = 0.0;    // lead posicional del volante grabado (0 = en el punto exacto; la reversa es densa/localizada, no anticipar)
-    // SUB-CONTROLADOR DE MANIOBRA (2026-08-16, Sonom4n): DUEÑO de las piernas que terminan en intercambio (legBreak).
+    // SUB-CONTROLADOR DE MANIOBRA (2026-08-16, un jugador): DUEÑO de las piernas que terminan en intercambio (legBreak).
     // Secuencia predictiva por fuera del cruise/endpoint: marcha fija (mata flip-flop) + volante = tu front-wheel
     // grabado (traza tu arco) + freno predictivo autoadaptativo -> clava <0.5m sobre tu pose. Reproduce tu movimiento
     // con fisicas y generaliza (decel/gain por-vehiculo). Ver ManeuverControl en BZBusService.c.
@@ -639,7 +865,7 @@ class BZBusRouteConfig {
     float ManeuverZoneM          = 15.0;  // dist del intercambio para enganchar. El tramo-completo (999) zigzagueaba en las RECTAS (replay open-loop + cross-track oscila a velocidad); el cruise normal es mas suave ahi. 15 = cubre el approach al intercambio (llegar on-line) sin manejar la recta larga
     float ManeuverLaunchStraightKmh   = 1.5;  // clamp anti-scrub SOLO FORWARD: hasta esta vel se acota el volante para romper inercia (un pesado parado con la rueda cruzada NO despega). En reversa NO aplica (el pre-steer despega bien)
     float ManeuverLaunchStraightSteer = 0.15; // tope de volante mientras despega forward (gentil, sin full-lock que traba el arranque por scrub)
-    // VELOCIDAD FIEL (2026-08-16, Sonom4n "velocidad+trayectoria -> los endpoints caen solos"): objetivo = tu vel
+    // VELOCIDAD FIEL (2026-08-16, un jugador "velocidad+trayectoria -> los endpoints caen solos"): objetivo = tu vel
     // GRABADA, acotada por el freno universal para parar en la pose. Baja velocidad, alta precision.
     float ManeuverSpeedLeadM      = 0.5;  // (legacy) lead de lectura de velocidad; ahora se usa el lookahead anticipatorio
     float ManeuverSpeedLookaheadM = 8.0;  // PURE-PURSUIT DE VELOCIDAD: mira este tramo adelante en tu perfil y toma la vel que permite decelerar a lo que viene (se anticipa al giro lento; el ojo del cruise)
@@ -651,10 +877,10 @@ class BZBusRouteConfig {
     float ManeuverCoastZoneM      = 8.0;  // el coast solo se aplica a menos de esta dist de la pose (el giro brusco del approach); en el patio (mas lejos) el volante variable lo toggleaba = pasitos
     float ManeuverLaunchMinGapM   = 0.8;  // si esta parado y a mas de StopTol+esto de la pose, despega (arranque de tramo) sin importar la vel grabada
     float ManeuverLaunchKmh       = 0.5;  // el DESPEGUE (thr=1) solo dispara bajo esta vel = parado REAL. Antes 1.0 -> gateaba (cada bajon a <1 en maniobra lenta tiraba thr=1); los 0.5-1 los maneja el chase-vTgt suave
-    // HILL-START (2026-08-17, Sonom4n): en subida el thr=1 solo no despega desde parado -> revolucionar contra el handbrake y soltar (pico de torque)
+    // HILL-START (2026-08-17, un jugador): en subida el thr=1 solo no despega desde parado -> revolucionar contra el handbrake y soltar (pico de torque)
     float ManeuverHillStartSlope  = 0.06; // sin(pitch) minimo para activar el hill-start (0.06 ~ 3.4 grados de subida)
     float ManeuverHillHoldTicks   = 8.0;  // (legacy, sin uso) el hold ahora es por RPM (rpmClutch), no por tiempo
-    float ManeuverHillReleaseRpm  = 3000.0; // piso de RPM para soltar el handbrake en el hill-start (Sonom4n soltaba a ~3600). Se usa max(rpmClutch, esto) -> per-vehiculo con piso
+    float ManeuverHillReleaseRpm  = 3000.0; // piso de RPM para soltar el handbrake en el hill-start (un jugador soltaba a ~3600). Se usa max(rpmClutch, esto) -> per-vehiculo con piso
     float ManeuverHillGraceTicks  = 40.0; // ticks (@2Hz = 20s) de margen: el AR NO dispara durante el hill-start; despues es la red
     float ManeuverStopDecelFactor = 0.85; // margen del freno universal para el cap de velocidad (MISMO que el endpoint, que frenaba bien)
     float ManeuverSpeedGain       = 0.12; // throttle por km/h de deficit al perseguir la velocidad objetivo
@@ -662,22 +888,22 @@ class BZBusRouteConfig {
     float ManeuverSlopeThrottleGain = 1.0; // feedforward de gravedad al acelerar en SUBIDA (trepar fiel; el freno slope-aware ya usa la pendiente)
     float ManeuverCreepKmh          = 1.5; // vel minima de reptado hasta la pose mientras signed>StopTol (acotada por vAllow); evita pararse corto cuando vRec lee 0
     float ManeuverCreepHoldM        = 2.5; // a menos de esta dist de la pose, ManeuverControl le pide a UpdateLegBounds que NO cierre por min-aprox (deja que EL clave preciso). Solo cerca -> no traba el arranque
-    // CROSS-TRACK (2026-08-16, Sonom4n "velocidad Y trayectoria"): pega a Boris a la linea grabada (no solo copia el volante).
+    // CROSS-TRACK (2026-08-16, un jugador "velocidad Y trayectoria"): pega a Boris a la linea grabada (no solo copia el volante).
     float ManeuverCrossTrackGain = 0.50; // correccion por metro de offset lateral (0.65 no ayudo claro el residuo lateral; el lateral se ataca mejor de otra forma la proxima)
     float ManeuverCrossTrackMax  = 0.60; // tope de la correccion
     float ManeuverCrossTrackSign = 1.0;  // signo de la correccion (flip a -1.0 si empuja para el lado equivocado)
     float ManeuverCrossTrackFullKmh = 3.0; // vel a la que el cross-track llega a full; a v~0 se anula (pre-steer/despegue limpio, sin over-steer)
-    // ARCO LATERAL EN EL CREEP-IN (2026-08-17, Sonom4n "el iman con arco lateral"): centra el residuo lateral de los stops
+    // ARCO LATERAL EN EL CREEP-IN (2026-08-17, un jugador "el iman con arco lateral"): centra el residuo lateral de los stops
     float ManeuverLateralArcM     = 2.5;  // zona del arco lateral. OJO: a creep-speed el volante ROTA mas que TRASLADA, y con full-lock en 2.5m Boris solo traslada ~0.34m -> el boost fuerte SOBRE-ROTA (wp52 2.43m/11.9deg). Centrar el lateral necesita mas distancia (approach), no el creep-in
     float ManeuverLateralArcBoost = 1.0;  // 1.0 = arco DESACTIVADO (sobre-rotaba). El lateral se ataca sobre el approach, no aca
     float ManeuverLateralArcMax   = 0.60; // = CrossTrackMax -> sin efecto
     float ManeuverCrossTrackRevScale = 0.60; // en REVERSA el cross-track. Ahora el arco viene del RUMBO (no del volante), asi que el cross-track puede corregir POSICION sin romper la forma -> subido para centrar la reversa (era 0.30 = arco ancho ~1.2m off)
-    // DIRECCION POR RUMBO (2026-08-16, Sonom4n "interpretar tu grabacion tal cual = seguir tu POSE, no copiar el volante"):
+    // DIRECCION POR RUMBO (2026-08-16, un jugador "interpretar tu grabacion tal cual = seguir tu POSE, no copiar el volante"):
     // steer para igualar tu heading grabado (estable a v~0 como el cruise sigue el camino), en vez del front-wheel FF.
     bool  ManeuverUseHeading    = true;  // true = seguir tu RUMBO grabado; false = copiar tu front_wheel (fallback)
     float ManeuverHeadingSteerK = 0.033; // ganancia de volante por grado de error de rumbo (30 deg -> ~full lock)
     float ManeuverHeadingLeadM  = 2.0;   // (legacy) reemplazado por el dual-lookahead corto+largo
-    // DUAL LOOKAHEAD DE RUMBO (2026-08-16, Sonom4n "uno largo y uno corto, que calcule entre uno y otro y le de tiempo a ejecutar"):
+    // DUAL LOOKAHEAD DE RUMBO (2026-08-16, un jugador "uno largo y uno corto, que calcule entre uno y otro y le de tiempo a ejecutar"):
     float ManeuverHeadingLeadShortM = 1.0; // lead CORTO = precision (no deriva)
     float ManeuverHeadingLeadLongM  = 5.0; // lead LARGO = anticipa el giro (Boris arranca a girar antes, tiene TIEMPO de completarlo alineado)
     float ManeuverHeadingLongWeight = 0.5; // blend entre el corto y el largo (0=solo corto, 1=solo largo)
@@ -732,7 +958,7 @@ class BZBusRouteConfig {
     float ClimbAssistSlope = 0.10;
     float ClimbAssistMinKmh = 10.0;
     float ClimbAssistThrottle = 0.95;
-    // GUARD DE STOP PARA CLIMBASSIST (2026-08-05, Sonom4n). ClimbAssist solo mira slope+velocidad, sin conciencia
+    // GUARD DE STOP PARA CLIMBASSIST (2026-08-05, un jugador). ClimbAssist solo mira slope+velocidad, sin conciencia
     // del stop de fin de tramo. En la rampa (subida) del galpon disparaba 0.95 en los ultimos ~2.5m y lanzaba a
     // Boris PASADO el endpoint (Hatchback +1.26m). Dentro de este radio del m_LegEnd (que SIEMPRE es una parada),
     // ClimbAssist NO dispara -> trepa la aproximacion pero suelta antes del stop, y el freno de endpoint clava
@@ -830,6 +1056,16 @@ class BZBusRouteConfig {
     float AutoRecoveryStuckTimeS = 10.0;     // segundos de "stuck" antes de teleport
     int   AutoRecoveryAdvanceWps = 5;        // cuantos wps adelante teleportar
     float AutoRecoveryCooldownS = 8.0;       // minimo entre teleports (evita spam)
+    // AUTORECOVERY v2 (re-arranque en el lugar, controlador 1.2). Ver BZAutoRecoveryConfig arriba.
+    ref BZAutoRecoveryConfig AutoRecovery;
+    // C1: ahogo del motor (controlador). Ver BZBogRecoveryConfig arriba.
+    ref BZBogRecoveryConfig BogRecovery;
+    // AR manual (re-ubicacion por bandera/boton). Ver BZManualARConfig arriba.
+    ref BZManualARConfig ManualAR;
+    // 843: quien puede manejar y en que orden se sucede. Ver BZDriversConfig arriba.
+    ref BZDriversConfig Drivers;
+    // politica del despliegue de la escolta. Ver BZDeployConfig arriba.
+    ref BZDeployConfig Deploy;
     int   AutoRecoveryMaxPerMission = 0;     // 0 = ilimitado, X = falla mision si supera
     // Safety SEPARADA del AutoRecovery: si no avanza ningun wp por N segundos, fuerza
     // un avance de indice (NO teleporta, solo empuja el wp). Corre aunque AutoRecovery
@@ -923,7 +1159,7 @@ class BZBusRouteConfig {
     // exacta del recording. Garantiza entry consistente para maniobras precisas.
     // CRITICO para parking real (puerta de casa, galpon) donde 0.5m de drift rompe.
     // Imperceptible a baja velocidad (cap ~20 km/h en parking/maniobra).
-    // DEFAULT false (Sonom4n 2026-07-03, "mata el snap, no quiero que lo atrape"): el teleport de
+    // DEFAULT false (un jugador 2026-07-03, "mata el snap, no quiero que lo atrape"): el teleport de
     // alineacion es un parche que ademas ni se dispara si Boris esta lejos (MaxDist 0.5m; venia
     // 3.43m off). El control genuino (parking tight + reverse rear-steer que clava el heading a 0.7deg)
     // posiciona SOLO, sin teleport. Reversible por _hdr. Ver [[project_snap_minimize_visual_teleport]].
@@ -966,7 +1202,7 @@ class BZBusRouteConfig {
     float ReverseStanleyK = -1;
     // Piso de velocidad (m/s) para la correccion lateral Stanley en reverse. La correccion
     // K*offset/v explota a baja velocidad (1/v) -> zigzag -> espiral. Pisar v a este minimo
-    // la mantiene suave aunque Boris se frene. -1 = usar 2.0 del codigo. (Sonom4n 2026-06-24)
+    // la mantiene suave aunque Boris se frene. -1 = usar 2.0 del codigo. (un jugador 2026-06-24)
     float ReverseStanleyMinSpeed = -1;
     // === MODELO BICICLETA EN REVERSE (rear-steer archetype, 2026-06-12) ===
     // Wheelbase = distancia entre ejes (m). Usado por el feedforward de curvatura
@@ -1033,7 +1269,7 @@ class BZBusRouteConfig {
     // con MISMO offset -> corregir por angulo temprano evita la diagonal que raspa la puerta.
     // Mas chico = corrige el angulo antes (mas fiel al heading grabado). 0 = default 4 grados.
     float ReverseHeadingDeadbandDeg = 0;
-    // === PURE-PURSUIT DE REVERSE (aislado, 2026-08-10, Sonom4n) ===
+    // === PURE-PURSUIT DE REVERSE (aislado, 2026-08-10, un jugador) ===
     // La reversa es NON-MINIMUM-PHASE + rear-steer: un volante chico desvia MUCHO (mas sensible que
     // forward) -> las ganancias de forward sobre-corrigen. El replay+Stanley acumula/satura en la curva
     // -> el LAZO (ver ai_run FT_03). Lo reemplaza un pure-pursuit GEOMETRICO (memoryless, indep. de
@@ -1100,7 +1336,7 @@ class BZBusRouteConfig {
     float PlantSteerGain        = 85.1;   // front_wheel_deg = gain * cmd_steer (medido por rueda real)
     float PlantUndersteerK      = 0.90;   // yaw_real / yaw_bicicleta (compensacion understeer)
     float PlantFeedbackScale    = 1.0;    // multiplicador al Stanley cuando el FF exacto carga (1=igual, <1=afloja)
-    // PURE-PURSUIT COMO FEEDBACK DE ERROR PURO (2026-07-25, Sonom4n + Kapania&Gerdes). La variante que la teoria
+    // PURE-PURSUIT COMO FEEDBACK DE ERROR PURO (2026-07-25, un jugador + Kapania&Gerdes). La variante que la teoria
     // dejo sin probar: FF grabado PRIMARIO (peso pleno, lleva la curva) + el PURE-PURSUIT como correccion,
     // pero restandole su propia componente de curvatura del camino para NO doblarla. feedback = ppReal - ppNominal
     // (real = desde Boris; nominal = desde su proyeccion en la linea con rumbo tangente) = puro error, medido con
@@ -1108,7 +1344,7 @@ class BZBusRouteConfig {
     // steering = ffSteer + PlantFeedbackScale * (ppReal - ppNominal). Requiere UsePlantFeedforward ON, UsePurePursuit
     // OFF (para que el bloque pp no lo pise). En la linea feedback~0 -> FF puro (100% tu volante). false = intacto.
     bool  UsePurePursuitAsFeedback = false;
-    // CROSS-TRACK EXPLICITO del modo aditivo (2026-07-25, Sonom4n + deep-research). El feedback del corredor
+    // CROSS-TRACK EXPLICITO del modo aditivo (2026-07-25, un jugador + deep-research). El feedback del corredor
     // corrige RUMBO pero su termino de POSICION queda ~0 (elige el segmento cercano al INDICE, no al punto
     // real -> con indice de-synced no ve el drift). Boris queda PARALELO a la linea pero corrido (medido T1:
     // rumbo ~0 pero offset 2m). Este termino computa el offset FRESCO al punto mas cercano de la traza
@@ -1135,7 +1371,7 @@ class BZBusRouteConfig {
     // rueda EJECUTADO por el humano (grabado en targetFrontWheel via WheelGetDirection). Boris reproduce
     // lo que las ruedas del humano hicieron. Requiere UsePlantFeedforward + toma grabada con Fase 2.
     bool PlantUseRecordedWheel = false;
-    // LEAD POSICIONAL del volante grabado (2026-07-25, Sonom4n). Con PlantUseRecordedWheel Boris comanda tu
+    // LEAD POSICIONAL del volante grabado (2026-07-25, un jugador). Con PlantUseRecordedWheel Boris comanda tu
     // volante en su posicion REAL, pero la rueda fisica TARDA en llegar al angulo (slew) -> ATRASA ~2wp
     // (medido T1: entra tarde, sobre-rota +4, corta adentro -1.25m). Leemos el volante grabado desde N
     // metros ADELANTE de la posicion de Boris -> comando el angulo antes, la rueda slewea, y llega justo
@@ -1185,21 +1421,21 @@ class BZBusRouteConfig {
     // Es el path-follower clasico de robotica y literalmente como Arma no se escapa. Reemplaza el steering
     // FF+Stanley cuando esta ON (forward normal; la velocidad la sigue manejando FollowPath+InverseModel).
     bool  UsePurePursuit = false;
-    // BLEND FF COMPLEMENTARIO SOBRE EL PURE-PURSUIT (2026-07-25, Sonom4n). El pure-pursuit da estabilidad pero
+    // BLEND FF COMPLEMENTARIO SOBRE EL PURE-PURSUIT (2026-07-25, un jugador). El pure-pursuit da estabilidad pero
     // ADELANTA ~2wp (corta el codo, geometrico). Le sumamos una dosis CHICA del volante GRABADO, leido N
     // metros ADELANTE para compensar la fase, que SOSTIENE la curva donde el pp suelta. Externo/complementario:
     // el pp queda intacto (columna estable), esto se nudgea encima -> volante = pp + w*(grabado_adelantado - pp).
     // Peso bajo -> el pp manda (no diverge como el FF puro). NO toca la ley de control.
     float PurePursuitFFBlend = 0.0;   // 0 = pp puro; ~0.4 = nudge hacia el volante grabado
     float PurePursuitFFLeadM = 0.0;   // metros adelante para leer el volante grabado (0 = posicion real, contra el lead del pp)
-    // GATE POR CURVATURA (2026-07-25, Sonom4n): el blend SOLO en curva. En recta el volante grabado es ~0 y el
+    // GATE POR CURVATURA (2026-07-25, un jugador): el blend SOLO en curva. En recta el volante grabado es ~0 y el
     // blend mete un limit-cycle (zigzag/bulto que vaga de lugar). Se activa cuando |volante grabado| supera
     // este umbral (grados), con rampa de 0 (umbral) a full (2x umbral). 0 = sin gate (blend siempre).
     float PurePursuitFFMinWheelDeg = 0.0;
     // Ld = distancia de lookahead (m). CORTO = tracking pegado (pero <~1.5*wheelbase oscila); largo = suave
     // pero corta curvas. Speed-scaled: Ld = max(este, 0.4s * v). ~5m base recomendado.
     float PurePursuitLookaheadM = 5.0;
-    // BANDA DE SALIDA DEL CUSP reversa->forward (2026-08-05, Sonom4n). Ver CuspExitActive() en BZBusService.c.
+    // BANDA DE SALIDA DEL CUSP reversa->forward (2026-08-05, un jugador). Ver CuspExitActive() en BZBusService.c.
     // Saliendo de reversa a forward 'normal' a <CuspExitKmh, pure-pursuit satura el volante (steer~1/Ld con
     // v~0: el indice avanza, el auto no, el vector al punto de mira gira y el steer se dispara y oscila
     // tope-a-tope -> clavado -> AR). Mientras haya un wp reversa/parking dentro de los ultimos CuspExitMaxWps,
@@ -1208,7 +1444,7 @@ class BZBusRouteConfig {
     bool  CuspExitHeadingBand = true;
     float CuspExitKmh = 5.0;    // umbral de velocidad: por debajo, banda activa
     int   CuspExitMaxWps = 8;   // cuantos wps despues del cusp dura la banda
-    // SUPRESION DE EMPUJE EN EL CUSP DE REVERSA (2026-08-05, Sonom4n). Ver el bloque cuspStopSup en BZBusService.c.
+    // SUPRESION DE EMPUJE EN EL CUSP DE REVERSA (2026-08-05, un jugador). Ver el bloque cuspStopSup en BZBusService.c.
     // En el endpoint de la reversa el breakaway/coastBand empujaban throttle hacia el wp forward y lanzaban a
     // Boris 9-22m pasado el cusp -> la pierna cerraba torcida -> clavado (Golf/E60). Mientras la pierna activa
     // siga siendo reversa y Boris este a <CuspStopSuppressM del endpoint con gear FORWARD metido, se corta el
@@ -1236,7 +1472,7 @@ class BZBusRouteConfig {
     // clava el volante contra el vaivÃ©n del tick a alta velocidad SIN tocar el modo edit perfecto de abajo. 0 =
     // aplica a toda velocidad (comportamiento previo). ~50 -> solo en la recta rapida.
     float SteerRateLimitMinKmh = 0.0;
-    // SEGUIR LA TRAZA COMO LINEA GRABADA (2026-07-11, pedido de Sonom4n): la busqueda del wp mas cercano del
+    // SEGUIR LA TRAZA COMO LINEA GRABADA (2026-07-11, pedido de un jugador): la busqueda del wp mas cercano del
     // pure-pursuit usa [idx-30, idx+5] (backward-biased, alcanza ~18m atras) -> en un CRUCE/LOOP donde la
     // traza pasa cerca de si misma, salta a un wp cercano-pero-de-otra-parte de la secuencia -> Boris "se va
     // a la interseccion". Con esto ON la ventana es ESTRECHA y forward-biased ([idx-5, idx+15]) anclada al
@@ -1278,7 +1514,7 @@ class BZBusRouteConfig {
     float SteerBrakeDampMinKmh = 20.0;    // abajo de esto no amortigua (viene lento, entra a curva)
     float SteerBrakeDampFullKmh = 45.0;   // arriba de esto = lock pleno (recta segura)
     float SteerBrakeDampAlpha = 0.12;     // fuerza del lock a FullKmh+ (bajo = mÃ¡s clavado)
-    // MICROTICKS DE CENTRADO (2026-07-12, pedido de Sonom4n: "como hago yo, con microticks, no volante continuo"):
+    // MICROTICKS DE CENTRADO (2026-07-12, pedido de un jugador: "como hago yo, con microticks, no volante continuo"):
     // en RECTA a velocidad Boris se va lento del centro (drift) y el pursuit (Ld largo 8.5 + tick 500ms) recentra
     // demasiado despacio -> el offset crece hasta bogueo/AR (NUEVO03: picos 6-17m). Un humano no sostiene un angulo
     // continuo: da TOQUES chicos hacia la linea y suelta (asi el tren no lava). Implementado como corrector de
@@ -1384,18 +1620,49 @@ class BZBusRouteConfig {
 // ============================================================================
 class BZAutoDriveSettings {
     // SteamIDs autorizados a abrir el Control Panel y ejecutar sus acciones.
-    // Vacio = permitido a todos (modo testing/local). Con IDs = solo esos (server publico).
+    // ⚠ FAIL-CLOSED: vacio = NADIE es admin — ni el dueño. Poner tu
+    // SteamID64 aca es el PRIMER PASO obligatorio para usar el framework. (Antes
+    // era "vacio = todos": un server publico recien bajado quedaba con el panel
+    // abierto a cualquiera hasta editar el JSON.)
     ref array<string> AdminSteamIDs = new array<string>();
     // Tecla que abre el Control Panel. -1 = KC_HOME (default). Otro = ese KeyCode
     // de DayZ (KC_END=207, KC_INSERT=210, KC_DELETE=211, etc).
+    // la tecla del panel vive en Controles (inputs.xml, accion UABZAutoDrivePanel). Este campo queda solo para que un
+    // settings viejo que lo traiga siga cargando, y NO se escribe en un settings nuevo.
+    [NonSerialized()]
     int ControlPanelKey = -1;
     // Parada a demanda por gesto: el player hace OK (pulgar) enfrente del bus -> Boris frena 10s.
     // Default OFF: el admin lo prende a sabiendas (no es regla silenciosa). ON = aplica a TODAS
     // las tomas. Documentado en el manual de controles (seccion gestos).
     bool HailGestureEnabled = false;
+    // AVISOS AUTOMATICOS a los admins (AdminSteamIDs): POR DONDE les llegan, en dos tipos que se eligen por separado:
+    //   AdminArrivalNotifications  los de LLEGADA: llega a una parada, "leaving in Ns", distancia, fin de linea, ruta
+    //                              completa, "left <terminal>";
+    //   AdminSystemNotifications   los ADMINISTRATIVOS: vehiculo detenido, pausa/reanuda, spawn fallido, la sena a Boris.
+    // Valores: "toast" (pantalla, default) | "chat" | "both" | "off". Vacio, ausente o desconocido = "toast". Con "off"
+    // no salen ni a pantalla ni al chat, pero la copia [GLOBAL] sigue en el RPT. Los avisos del panel (la respuesta a un
+    // clic) van siempre por pantalla al admin que lo uso. El verbo ui_broadcast NO depende de esto: lo que ven los
+    // jugadores lo arma el admin con eventos (capacidad del framework, intencion del que lo usa).
+    string AdminArrivalNotifications = "toast";
+    string AdminSystemNotifications = "toast";
     // SCAN MAPA-COMPLETO AL BOOT (2026-07-08): si true, el server al arrancar (sin cliente, sin Boris)
     // dispara el scan de la red vial entera tras RoadScanBootDelaySec (el mundo estatico ya esta cargado
     // en un dedicated). Escribe roadscan_map.csv. Setear en BZAutoDriveSettings.json y bootear A headless.
     bool  RoadScanOnBoot = false;
     float RoadScanBootDelaySec = 45.0;
+    // ★★★ CARGA PROGRESIVA DE RUTAS. Milisegundos por cuadro que el server le dedica
+    // a cargar rutas y cintas. Es un presupuesto GLOBAL: no importa cuantas rutas se lancen a la
+    // vez, entre todas gastan esto y nada mas. Mas bajo = el server ni se entera, pero las rutas
+    // tardan mas en estar listas; mas alto = arrancan antes, a costa de cuadros mas caros.
+    // 5 ms es el default y equivale a un tick normal del controlador. 0 o negativo = se ignora y
+    // vale el default (una perilla mal puesta no puede volver a congelar el server).
+    float LoadBudgetMsPerFrame = 5.0;
+    // ★★★ TOPE DEL GATE DE MUSTER. Segundos que el vehiculo espera a que se llenen
+    // TODAS las plazas declaradas antes de arrancar. Cumplido el tope sale igual y el log dice
+    // cuantas plazas quedaron vacias: un bot trabado no puede dejar una ruta sin salir para siempre.
+    // Subirlo si se usan tripulaciones grandes (se crean de a 1 por segundo y caminan hasta la
+    // puerta). 0 o negativo = se ignora y vale el default.
+    // ⚠ Es una RED DE SEGURIDAD, no una perilla de tuning: tiene que estar LEJOS de lo que tarda un
+    // embarque sano. Si en el log ves [MUSTER] TOPE en corridas normales, el problema no es el numero.
+    float CrewBoardTimeoutS = 120.0;
 }

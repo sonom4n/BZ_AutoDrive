@@ -16,7 +16,7 @@ class BZRoadScan {
         if (step <= 0)   step = 8.0;
         if (radius <= 0) radius = 6.0;
 
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         FileHandle fo = OpenFile(dir + "roadscan_objects.csv", FileMode.WRITE);
         if (!fo) { BZBusLog.Err("[ROADSCAN] no se pudo crear roadscan_objects.csv"); return; }
         FPrint(fo, "type,scenery,building,x,z,yaw,bw,bl,debug\n");
@@ -86,7 +86,7 @@ class BZRoadScan {
         inst.m_hits = 0;       inst.m_probes = 0;
         inst.m_objs = new array<Object>;
         inst.m_prox = new array<CargoBase>;
-        string dir = "$profile:BZ_AutoDrive_PathLogger\\";
+        string dir = BZCarpetas.PathLogger();
         inst.m_fo = OpenFile(dir + "roadscan_map.csv", FileMode.WRITE);
         if (!inst.m_fo) { BZBusLog.Err("[MAPSCAN] no se pudo crear roadscan_map.csv"); return; }
         FPrint(inst.m_fo, "x,z,yaw,debug\n");

@@ -24,6 +24,7 @@ class BZServerProbe {
     private int    m_Frames;
     private float  m_TCum;
     private Car    m_Car;
+    private Car    m_CarFallido;   // el auto cuya apertura fallo: no se reintenta por cuadro; al bajarse, se olvida
 
     private const int FLUSH_EVERY = 30;
 
@@ -47,8 +48,10 @@ class BZServerProbe {
         if (!realPlayer && bsrv && bsrv.WantsBorisNative()) borisCar = true;   // OPT-IN (2026-08-09): solo graba boris_native si el check del reproductor estaba tildado al dar play
         if (!realPlayer && !borisCar) {
             if (m_Open) Close();
+            m_CarFallido = null;   // nueva sesion de manejo = un intento nuevo (una linea, no una por cuadro)
             return;
         }
+        if (!m_Open && car == m_CarFallido) return;   // la apertura fallo en esta sesion: ya se aviso, no se insiste
         // OTRO AUTO (2026-07-13): si el que grabábamos sigue con runner (multi-instancia real), no lo pisamos.
         // Pero si ya NO tiene runner (RESET/respawn/despawn — caso remoto: Boris sale, no te podés subir, RESET x4),
         // cerramos su archivo y pasamos al auto ACTUAL. Antes esto `return`eaba -> el logger quedaba pegado al 1er
@@ -65,6 +68,7 @@ class BZServerProbe {
             if (borisCar) fn = "boris_native_" + BuildTimestamp() + ".csv";
             Open(car, fn);
         }
+        if (!m_Open) return;   // fallo la apertura: sin buffer que crezca por cuadro ni flush que falle
         if (dt <= 0) return;
         m_TCum += dt;
         WriteRow(car, dt);
@@ -77,10 +81,11 @@ class BZServerProbe {
         m_TCum   = 0;
         m_Frames = 0;
         m_Buf    = "";
-        m_Path   = "$profile:BZ_AutoDrive_PathLogger\\" + fname;
+        m_Path   = BZCarpetas.PathLogger() + fname;   // la carpeta se crea ANTES de abrir (no existe en una instalacion nueva)
         FileHandle f = OpenFile(m_Path, FileMode.WRITE);
         if (!f) {
-            BZBusLog.Err("[ServerProbe] no se pudo crear " + m_Path);
+            BZBusLog.Err("[ServerProbe] no se pudo crear " + m_Path + " (no se reintenta hasta la proxima vez que alguien maneje este auto)");
+            m_CarFallido = car;
             return;
         }
         FPrint(f, "t_cum,dt,throttle,brake,steering,gear,handbrake,x,y,z,heading,speed_kmh,rpm,front_wheel_deg\n");
