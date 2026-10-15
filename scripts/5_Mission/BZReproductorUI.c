@@ -11,6 +11,14 @@
 class BZReproductorUI extends UIScriptedMenu {
 
     static BZReproductorUI s_Instance;
+    // cuando se cerro por su tecla (GetGame().GetTime(), ms): la mision no lo reabre en ese mismo toque
+    static int s_CerradoMs = -100000;
+    // cuando se abrio (GetGame().GetTime(), ms; lo fija OnShow): en los 250 ms siguientes ninguna tecla lo cierra. Es la
+    // guarda simetrica de s_CerradoMs: el panel puede abrirse desde la tecla cruda (OnKeyPress de la mision) y la accion
+    // puede disparar en el mismo cuadro; sin esto ese mismo toque lo cerraria.
+    static int s_AbiertoMs = -100000;
+    // por que se cierra (lo fija quien lo cierra; vacio = el motor u otro menu): solo para la linea de diagnostico
+    static string s_CierrePor = "";
 
     private ButtonWidget m_CloseBtn;
     private ButtonWidget m_LoadSpawnBtn;
@@ -20,6 +28,8 @@ class BZReproductorUI extends UIScriptedMenu {
     private static bool  s_LogAi;
     private TextWidget   m_PreviewText;   // preview de la toma seleccionada (vehiculo/N wps/dist/vel max)
     private int          m_RIVer;         // ultima version de info recibida que ya pinté
+    private int          m_RechazoVer;    // ultimo rechazo de spawn vacio ya atendido (BZBusClientManager.s_SpawnRechazoVer)
+    private string       m_InfoPedidaDe;  // la ruta cuya info ya se pidio: la rueda del mouse no la vuelve a pedir
     private Widget       m_ScrubTrack;    // scrubber: base clickeable de la barra
     private Widget       m_ScrubFill;     // relleno (ancho = progreso); su borde derecho marca la posicion
     private int          m_ScrubWp;       // wp elegido con el scrubber (0..N-1)
@@ -175,6 +185,7 @@ class BZReproductorUI extends UIScriptedMenu {
         }
         m_EmpScroll = 0;
         m_PendRuta = new array<string>();
+        m_RechazoVer = BZBusClientManager.s_SpawnRechazoVer;
         m_PendWp = new array<int>();
         m_PendT = new array<float>();
 
@@ -196,12 +207,19 @@ class BZReproductorUI extends UIScriptedMenu {
 
     // m_SelRoute es el indice GLOBAL en m_RouteFiles (no la fila visible). El highlight cae
     // en la fila (routeIdx - m_RouteScroll) si esta dentro de la ventana.
-    private void SelectRoute(int routeIdx) {
+    // pedirSiempre = false (la rueda del mouse): si la ruta es la misma que la ultima pedida, solo repinta. Cada pedido hace
+    // que el server relea el _hdr y el _wp.csv entero de la ruta, y la rueda pedia uno por muesca (medido: 20 en 3 s). Al
+    // abrir el panel, al llegar la lista y en cada clic (aunque sea sobre la misma ruta: refresca una toma reconvertida
+    // con el panel abierto) se pide como siempre.
+    private void SelectRoute(int routeIdx, bool pedirSiempre = true) {
         m_SelRoute = routeIdx;
         RenderRoutes();   // repinta marcador ">" + color de la fila elegida (DayZ pisa SetColor en ButtonWidget -> el marcador es la senal confiable)
         // pedir info de la toma para el PREVIEW (llega async -> Update la pinta cuando cambia s_RIVer)
         if (m_RouteFiles && routeIdx >= 0 && routeIdx < m_RouteFiles.Count()) {
-            BZBusClientManager.RequestRouteInfo(m_RouteFiles.Get(routeIdx));
+            string rutaSel = m_RouteFiles.Get(routeIdx);
+            if (!pedirSiempre && rutaSel == m_InfoPedidaDe) return;   // misma ruta: ni pedido, ni "loading info...", ni scrubber a cero
+            m_InfoPedidaDe = rutaSel;
+            BZBusClientManager.RequestRouteInfo(rutaSel);
             if (m_PreviewText) m_PreviewText.SetText("loading info...");
             m_Dragging = false;
             m_ScrubNwp = 0;
@@ -439,6 +457,20 @@ class BZReproductorUI extends UIScriptedMenu {
             if (ahoraP - m_PendT.Get(p) <= PEND_VIDA_S) return true;
         }
         return false;
+    }
+
+    // retira las filas LOADING de una ruta y wp (wp < 0 de cualquiera de los dos lados = cualquier wp de esa ruta)
+    private void RetirarPendiente(string ruta, int wp) {
+        bool quito = false;
+        for (int p = m_PendRuta.Count() - 1; p >= 0; p--) {
+            if (m_PendRuta.Get(p) != ruta) continue;
+            if (wp >= 0 && m_PendWp.Get(p) >= 0 && m_PendWp.Get(p) != wp) continue;
+            m_PendRuta.RemoveOrdered(p);
+            m_PendWp.RemoveOrdered(p);
+            m_PendT.RemoveOrdered(p);
+            quito = true;
+        }
+        if (quito) RefreshEmpty();
     }
 
     // El clic: deja la fila LOADING y manda el pedido; con la fila viva para la misma ruta y wp, no manda nada.
@@ -700,12 +732,27 @@ class BZReproductorUI extends UIScriptedMenu {
 
     override void Update(float timeslice) {
         super.Update(timeslice);
+        // SU tecla lo cierra desde aca: en la 1.30, con el menu abierto, la mision ya no ve UAInput.LocalPress(). Con
+        // check_focus=false (la misma firma en 1.29 y 1.30; es lo que hace DigitalCodeLockUI de la 1.30)
+        // MEDIDO en la 1.30 (cliente, seis aperturas): con el menu abierto esta accion NO dispara, el menu NO recibe
+        // OnKeyDown y la mision no ve la accion; lo unico que llega es la tecla CRUDA al OnKeyPress de la mision, que es
+        // quien cierra ahi (BZBusMissionGameplay). Este camino queda para la 1.29.
+        if (GetGame().GetInput().LocalPress("UABZAutoDrivePanel", false) && GetGame().GetTime() - s_AbiertoMs > 250) {
+            CerrarPorTecla();
+            return;
+        }
         if (m_Dragging) SeekFromMouse();   // seguimiento continuo de la manija del scrubber
         m_StatusTimer += timeslice;
         if (m_StatusTimer >= 0.33) {
             m_StatusTimer = 0;
             BZBusClientManager.RequestRunners();
             BZBusClientManager.RequestEmptyList();   // Fase 2: snapshot de vacios ~3Hz
+        }
+        // el server no hizo un spawn vacio (lugar ocupado, ruta que no cargo): su fila LOADING se retira ya, sin esperar a
+        // que venza
+        if (BZBusClientManager.s_SpawnRechazoVer != m_RechazoVer) {
+            m_RechazoVer = BZBusClientManager.s_SpawnRechazoVer;
+            RetirarPendiente(BZBusClientManager.s_SpawnRechazoRuta, BZBusClientManager.s_SpawnRechazoWp);
         }
         // La lista llega async (RPC roundtrip). Cuando cambia el count, repoblar las filas.
         if (BZBusClientManager.s_RouteListReceived) {
@@ -746,6 +793,8 @@ class BZReproductorUI extends UIScriptedMenu {
         GetGame().GetInput().ChangeGameFocus(1);
         GetGame().GetMission().PlayerControlEnable(false);
         SetFocus(layoutRoot);
+        s_AbiertoMs = GetGame().GetTime();
+        if (BZDiag.On()) BZBusLog.Info("[Reproductor] ABIERTO");
     }
 
     override void OnHide() {
@@ -753,6 +802,13 @@ class BZReproductorUI extends UIScriptedMenu {
         GetGame().GetInput().ChangeGameFocus(-1);
         GetGame().GetMission().PlayerControlEnable(true);
         if (s_Instance == this) s_Instance = null;
+        if (BZDiag.On())
+        {
+            string porQue = s_CierrePor;
+            if (porQue == "") porQue = "otro: el motor u otro menu";
+            BZBusLog.Info("[Reproductor] CERRADO (" + porQue + ")");
+        }
+        s_CierrePor = "";
     }
 
     // Refresca el label de los 2 checks segun el estado persistente (el color en ButtonWidget no es confiable
@@ -770,6 +826,7 @@ class BZReproductorUI extends UIScriptedMenu {
 
     override bool OnClick(Widget w, int x, int y, int button) {
         if (w == m_CloseBtn) {
+            s_CierrePor = "boton";
             GetGame().GetUIManager().HideScriptedMenu(this);
             return true;
         }
@@ -923,7 +980,7 @@ class BZReproductorUI extends UIScriptedMenu {
         } else {
             m_RouteScroll -= wheel;
             RenderRoutes();           // clampea y repinta la ventana de rutas
-            SelectRoute(m_SelRoute);  // re-highlight la fila seleccionada si sigue visible
+            SelectRoute(m_SelRoute, false);  // re-highlight la fila seleccionada si sigue visible (sin volver a pedir su info)
         }
         return true;
     }
@@ -935,10 +992,22 @@ class BZReproductorUI extends UIScriptedMenu {
     // que corre siempre y no depende del foco del menu (confiable, pedido del usuario).
     override bool OnKeyDown(Widget w, int x, int y, int key) {
         if (key == KeyCode.KC_ESCAPE) {
+            s_CierrePor = "ESC";
             GetGame().GetUIManager().HideScriptedMenu(this);
             return true;
         }
+        // red: la tecla por defecto (INICIO) cierra aunque la accion no llegue, salvo escribiendo en un campo
+        if (key == KeyCode.KC_HOME && !EditBoxWidget.Cast(w)) {
+            CerrarPorTecla();
+            return true;
+        }
         return super.OnKeyDown(w, x, y, key);
+    }
+
+    void CerrarPorTecla() {
+        s_CerradoMs = GetGame().GetTime();
+        s_CierrePor = "tecla";
+        GetGame().GetUIManager().HideScriptedMenu(this);
     }
 
     override bool UseKeyboard() { return true; }

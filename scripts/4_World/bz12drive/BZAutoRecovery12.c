@@ -601,6 +601,18 @@ class BZAutoRecovery12
         return m_NFis + m_NFisAcc;
     }
 
+    // las intervenciones fisicas CON accion (maniobra, re-ubicacion): las que invalidan un COMPLETE. Un FISICO declarado
+    // sin accion (Physical.Enabled false) no movio nada.
+    int NFisicosAcc()
+    {
+        return m_NFisAcc;
+    }
+
+    string ListaFisAcc()
+    {
+        return m_ListaFisAcc;
+    }
+
     string ResumenFin()
     {
         string res = "";

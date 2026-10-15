@@ -28,6 +28,22 @@ class BZPathLogService {
     private float  m_LastModeBannerTime; // para banner persistente parking/reverse (cada 3s)
     static const float MODE_BANNER_INTERVAL_S = 3.0;
     private string m_RecordingMode = "normal"; // toggle key: NUMPAD + (KC_ADD). Cuando esta en "parking" los waypoints capturados quedan tagged para que el framework use el handler de direct replay.
+    // el vehiculo del jugador (auto o moto), por la fabrica; se rehace si el jugador cambia de vehiculo
+    private ref BZVehiculo m_VJug;
+    private Object m_VJugDe;
+
+    private BZVehiculo VehiculoDelJugador() {
+        Man jug = GetGame().GetPlayer();
+        if (!jug) return null;
+        Object padre = Object.Cast(jug.GetParent());
+        if (!padre) return null;
+        if (!m_VJug || m_VJugDe != padre) {
+            m_VJugDe = padre;
+            m_VJug = BZVehiculoFabrica.De(padre);
+        }
+        return m_VJug;
+    }
+
     private string m_RecordingModeBeforeReverse = "normal"; // memoria del modo previo cuando se entra a reverse — al toggle reverse OFF se restaura este modo (compose semantico: parking + reverse vuelve a parking, no a normal)
 
     // -------------------------------------------------------------------------
@@ -104,10 +120,8 @@ class BZPathLogService {
     private bool   m_GearRangeInited;
 
     private void WriteGearRangeSample(string markType) {
-        Man player = GetGame().GetPlayer();
-        if (!player) return;
-        Car car = Car.Cast(player.GetParent());
-        if (!car) return;
+        BZVehiculo vGr = VehiculoDelJugador();
+        if (!vGr) return;
 
         // Inicializar archivo si es la primera marca
         if (!m_GearRangeInited) {
@@ -124,12 +138,12 @@ class BZPathLogService {
             }
         }
 
-        int   gear        = car.GetGear();
-        float speedKmh    = car.GetSpeedometerAbsolute();
-        float rpm         = car.EngineGetRPM();
-        float redlineRpm  = car.EngineGetRPMRedline();
+        int   gear        = vGr.Marcha();
+        float speedKmh    = vGr.KmhAbs();
+        float rpm         = vGr.Rpm();
+        float redlineRpm  = vGr.RpmCorte();
         float t           = GetGame().GetTickTime();
-        string vehicleClass = car.GetType();
+        string vehicleClass = vGr.T().GetType();
 
         // Split de string para evitar "Formula too complex"
         string line = "" + t + "," + gear + "," + speedKmh + "," + rpm;
@@ -156,11 +170,8 @@ class BZPathLogService {
         // apretar 5 (jugador dentro del auto). El sidecar header_ se deriva de este nombre
         // (path_->header_ en WriteVehicleHeader), asi que sigue apareado. A pie -> path_<fecha>.csv.
         string vehTag = "";
-        Man startPlayer = GetGame().GetPlayer();
-        if (startPlayer) {
-            Car startCar = Car.Cast(startPlayer.GetParent());
-            if (startCar) vehTag = startCar.GetType();
-        }
+        BZVehiculo startV = VehiculoDelJugador();
+        if (startV) vehTag = startV.T().GetType();
         string nameCore = "path_" + BuildTimestamp();
         if (vehTag != "") nameCore = nameCore + "_" + vehTag;
         m_FilePath        = BZCarpetas.PathLogger() + nameCore + ".csv";
@@ -188,11 +199,8 @@ class BZPathLogService {
 
         // Companion frame-by-frame (2026-07-05): mismo trigger, stream a resolucion
         // de fisica (frame_<ts>_<veh>.csv apareado a este path_). Solo si hay auto.
-        Man frPlayer = GetGame().GetPlayer();
-        if (frPlayer) {
-            Car frCar = Car.Cast(frPlayer.GetParent());
-            if (frCar) BZFrameRecorder.GetInstance().Start(frCar, nameCore);
-        }
+        BZVehiculo frV = VehiculoDelJugador();
+        if (frV) BZFrameRecorder.GetInstance().Start(frV, nameCore);
 
         BigNotif("Recording started");
         BZPathLog.Info("Start: " + m_FilePath);
@@ -231,8 +239,7 @@ class BZPathLogService {
         vector dir;
         float  speedKmh = 0.0;
 
-        Object parent = Object.Cast(player.GetParent());
-        Car    car    = Car.Cast(parent);
+        BZVehiculo vs = VehiculoDelJugador();
         int    gear     = 0;
         float  brake    = 0;
         float  throttle = 0;
@@ -250,31 +257,26 @@ class BZPathLogService {
         float  frontWheelDeg = 0;
         float  sideslipDeg   = 0;
         float  yawRate       = 0;
-        if (car) {
-            pos      = car.GetPosition();
-            dir      = car.GetDirection();
-            speedKmh = car.GetSpeedometerAbsolute();
-            gear     = car.GetGear();
-            // Si alguno de estos getters no compila en esta version del juego,
-            // el build va a fallar y los sacamos / reemplazamos por GetController().
-            brake    = car.GetBrake();
-            throttle = car.GetThrottle();
-            steering = car.GetSteering();
-            rpm        = car.EngineGetRPM();
-            redlineRpm = car.EngineGetRPMRedline();
-            linVel    = GetVelocity(car);
-            wdir0     = car.WheelGetDirection(0);            // angulo REAL de la rueda delantera (ejecutado)
-            vector angVelH = dBodyGetAngularVelocity(car);
+        if (vs) {
+            Transport trS = vs.T();
+            pos      = trS.GetPosition();
+            dir      = trS.GetDirection();
+            speedKmh = vs.KmhAbs();
+            gear     = vs.Marcha();
+            brake    = vs.FrenoLeido();
+            throttle = vs.GasLeido();
+            steering = vs.VolanteLeido();
+            rpm        = vs.Rpm();
+            redlineRpm = vs.RpmCorte();
+            linVel    = GetVelocity(trS);
+            wdir0     = vs.RuedaDireccion(0);                // angulo REAL de la rueda delantera (ejecutado)
+            vector angVelH = dBodyGetAngularVelocity(trS);
             yawRate   = angVelH[1];                          // rad/s
-            clutch    = car.GetClutch();
-            handbrake = car.GetHandbrake();
-            // FASE 2a (horn+lights): bocina + luces viven en CarScript (no en Car base).
-            // Casteo aparte a CarScript. NO ternario en concat (rompe Enforce) -> uso if.
-            CarScript cs = CarScript.Cast(parent);
-            if (cs) {
-                hornState = cs.BZBus_GetCarHornState();
-                if (cs.IsScriptedLightsOn()) lightsVal = 1;
-            }
+            clutch    = vs.EmbragueLeido();
+            handbrake = vs.ManoLeida();
+            // FASE 2a (horn+lights): bocina + luces viven en la cascara del framework (CarScript); la moto da 0
+            hornState = vs.BocinaEstado();
+            if (vs.LucesPrendidas()) lightsVal = 1;
         } else {
             pos = player.GetPosition();
             dir = player.GetDirection();
@@ -284,7 +286,7 @@ class BZPathLogService {
         if (heading < 0) heading += 360.0;
 
         // FASE 2: angulo REAL de rueda vs heading (lo que Boris debe reproducir) + sideslip del cuerpo.
-        if (car) {
+        if (vs) {
             float wheelH = Math.Atan2(wdir0[0], wdir0[2]) * Math.RAD2DEG;
             float dAngW  = wheelH - heading;
             while (dAngW > 180.0)  dAngW -= 360.0;
@@ -354,21 +356,20 @@ class BZPathLogService {
             BZPathLog.Err("WriteVehicleHeader: no se pudo crear " + headerPath);
             return;
         }
-        Man player = GetGame().GetPlayer();
-        Car car;
-        if (player) car = Car.Cast(player.GetParent());
-        if (!car) {
+        BZVehiculo vh = VehiculoDelJugador();
+        if (!vh) {
             FPrint(h, "NO_VEHICLE_AT_START\n");
             CloseFile(h);
             return;
         }
+        Transport car = vh.T();
         FPrint(h, "vehicleClass=" + car.GetType() + "\n");
         FPrint(h, "mass=" + dBodyGetMass(car) + "\n");
-        FPrint(h, "engineRPMIdle=" + car.EngineGetRPMIdle() + "\n");
-        FPrint(h, "engineRPMMax=" + car.EngineGetRPMMax() + "\n");
-        FPrint(h, "engineRPMRedline=" + car.EngineGetRPMRedline() + "\n");
-        FPrint(h, "gearsCount=" + car.GetGearCount() + "\n");
-        FPrint(h, "wheelCountPresent=" + car.WheelCountPresent() + "\n");
+        FPrint(h, "engineRPMIdle=" + vh.RpmRalenti() + "\n");
+        FPrint(h, "engineRPMMax=" + vh.RpmMax() + "\n");
+        FPrint(h, "engineRPMRedline=" + vh.RpmCorte() + "\n");
+        FPrint(h, "gearsCount=" + vh.CuentaMarchas() + "\n");
+        FPrint(h, "wheelCountPresent=" + vh.RuedasPresentes() + "\n");
 
         // === ATTACHMENTS CAPTURE (2026-06-08) ===
         // Captura los attachments REALES del vehiculo al iniciar la grabacion.
@@ -392,7 +393,8 @@ class BZPathLogService {
         // maxSteeringAngle vive en SimulationModule > Steering del config. Es la mitad
         // del radio minimo de giro: R_min = wheelbase / tan(maxSteeringAngle). Relaciona
         // el INPUT (volante 0-1) con el giro real de rueda para ESTE vehiculo.
-        float maxSteer = GetGame().ConfigGetFloat("CfgVehicles " + car.GetType() + " SimulationModule Steering maxSteeringAngle");
+        // la moto trae una TABLA por velocidad (maxSteeringAngle[]): el mayor. Un escalar (autos) sale igual que antes
+        float maxSteer = vh.MaxVolanteDeg();
         FPrint(h, "maxSteeringAngle=" + maxSteer + "\n");
 
         // === RECEPTOR: wheelbase desde posiciones de ruedas (2026-06-10) ===
@@ -401,12 +403,12 @@ class BZPathLogService {
         // 0 client-side, wheelbase sale 0 y lo movemos server-side. Es la otra mitad de R_min.
         vector fwd = car.GetDirection();
         vector vpos = car.GetPosition();
-        int wcount = car.WheelCount();
+        int wcount = vh.Ruedas();
         float minProj = 99999.0;
         float maxProj = -99999.0;
         int wgood = 0;
         for (int wi = 0; wi < wcount; wi++) {
-            vector wpos = car.WheelGetContactPosition(wi);
+            vector wpos = vh.RuedaContactoPos(wi);
             if (wpos[0] == 0 && wpos[1] == 0 && wpos[2] == 0) continue;
             wgood++;
             float proj = (wpos[0] - vpos[0]) * fwd[0] + (wpos[2] - vpos[2]) * fwd[2];
@@ -418,6 +420,14 @@ class BZPathLogService {
         if (wheelbase < 0) wheelbase = -wheelbase;
         FPrint(h, "wheelCount=" + wcount + "\n");
         FPrint(h, "wheelbase=" + wheelbase + "\n");
+        // DayZ 1.30: el tipo (auto/moto), la marcha neutral (auto 1, moto 0), si hay reversa y la inclinacion maxima
+        // (moto); el conversor los usa para no leer la N de la moto como reversa
+        FPrint(h, "vehicleKind=" + vh.Tipo() + "\n");
+        FPrint(h, "neutralGear=" + vh.MarchaNeutral() + "\n");
+        int conReversa = 0;
+        if (vh.TieneReversa()) conReversa = 1;
+        FPrint(h, "hasReverse=" + conReversa + "\n");
+        FPrint(h, "maxLeanAngle=" + vh.MaxInclinacionDeg() + "\n");
 
         CloseFile(h);
         BZPathLog.Info("Vehicle header written: " + headerPath + " (attachments: " + attCount + ")");
@@ -428,11 +438,9 @@ class BZPathLogService {
     // baul tiene algo. csv_to_route mapea stopNum -> N-esima parada -> wp -> CargoEvents.
     // v1: items SUELTOS top-level + cantidad. No captura nesting ni armas equipadas.
     private void CaptureCargoSnapshot(int stopNum) {
-        Man player = GetGame().GetPlayer();
-        if (!player) return;
-        Car car = Car.Cast(player.GetParent());
-        if (!car) return;
-        CargoBase cargo = car.GetInventory().GetCargo();
+        BZVehiculo vc = VehiculoDelJugador();
+        if (!vc) return;
+        CargoBase cargo = vc.T().GetInventory().GetCargo();
         if (!cargo) return;
         int cnt = cargo.GetItemCount();
         if (cnt <= 0) return;
@@ -485,12 +493,9 @@ class BZPathLogService {
         if (now - m_LastFeedbackTime < FEEDBACK_INTERVAL_S) return;
         m_LastFeedbackTime = now;
 
-        Man player = GetGame().GetPlayer();
         float speedKmh = 0.0;
-        if (player) {
-            Car car = Car.Cast(player.GetParent());
-            if (car) speedKmh = car.GetSpeedometerAbsolute();
-        }
+        BZVehiculo vf = VehiculoDelJugador();
+        if (vf) speedKmh = vf.KmhAbs();
 
         float km = m_TotalDistance / 1000.0;
         string msg = "REC | " + m_SampleCount + " pts | " + string.Format("%.2f", km) + " km | " + string.Format("%.0f", speedKmh) + " km/h";
@@ -503,14 +508,22 @@ class BZPathLogService {
     private void BigNotif(string msg) {
         PlayerIdentity id = GetIdentity();
         if (id)
+#ifdef DZ_Expansion_Core_Preload
             ExpansionNotification("[PATH LOGGER]", msg).Create(id);
+#else
+            NotificationSystem.AddNotificationExtended(5, "[PATH LOGGER]", msg, "");
+#endif
         BZPathLog.Info(msg);
     }
 
     private void SmallNotif(string msg) {
         PlayerIdentity id = GetIdentity();
         if (id)
+#ifdef DZ_Expansion_Core_Preload
             ExpansionNotification("[PATH]", msg).Create(id);
+#else
+            NotificationSystem.AddNotificationExtended(2, "[PATH]", msg, "");
+#endif
     }
 
     private PlayerIdentity GetIdentity() {

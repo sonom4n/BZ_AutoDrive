@@ -35,5 +35,6 @@ enum BZBusRPC {
     RECEIVE_ROUTE_INFO,      // Servidor -> Cliente: (fname, vehiculo, N wps, distancia m, vel max km/h) para el preview del reproductor.
     REQUEST_EMPTY_LIST,      // Cliente -> Servidor: pide el snapshot de vehiculos spawneados VACIOS (panel Vacios, ~3Hz). Solo admin.
     RECEIVE_EMPTY_LIST,      // Servidor -> Cliente: array de vacios {routeName, wpIndex, posX, posZ}.
-    REQUEST_EMPTY_CTL        // Cliente -> Servidor: accion sobre un vacio por indice (0=teleport player, 1=eliminar). Solo admin.
+    REQUEST_EMPTY_CTL,       // Cliente -> Servidor: accion sobre un vacio por indice (0=teleport player, 1=eliminar). Solo admin.
+    RECEIVE_CONTINUAR_RECHAZADO // Servidor -> Cliente: el spawn vacio pedido NO se hizo (fname, wpIndex): el panel retira su fila LOADING. Va al final: los ids anteriores no cambian.
 }

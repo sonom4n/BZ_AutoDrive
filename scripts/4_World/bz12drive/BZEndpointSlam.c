@@ -468,7 +468,7 @@ class BZEndpointSlam
             m_LogAReq = 0;
             return;
         }
-        float aMax = m.MaxBrakeDecel(surfKind);
+        float aMax = m.MaxBrakeDecelEndpoint(surfKind);   // techado por la frenada medida en la toma
         if (aMax < 0.5) aMax = 0.5;
         // ⚠⚠ EL FRENO NO ES LO UNICO QUE FRENA, Y ESTE ERA EL UNICO MODULO QUE LO IGNORABA.
         //

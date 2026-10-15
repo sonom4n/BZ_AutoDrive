@@ -6,6 +6,72 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.2.1
+
+**DayZ 1.30, las motos, y un framework mucho más exacto.** La 1.2 publicada no compila en la 1.30: la 1.2.1 corre en las dos versiones con un solo PBO. Además trae las motos (experimental) y una tanda grande de precisión: cada ruta se da por completa solo si termina bien de verdad, y el vehículo sigue tu línea también en los cambios de sentido y en las paradas.
+
+### DayZ 1.30
+
+- **Probado el día del lanzamiento (15/10)** en la 1.30 estable, sin Expansion y con Expansion 1.9.79: chofer eAI en autos y en motos, y el retiro con un jugador sentado de pasajero (el vehículo espera a que se baje).
+- **Nuevo: un solo PBO para la 1.29 y la 1.30.** El mismo archivo compila y corre en las dos versiones.
+- **Cambiado: las luces usan el sistema nuevo de la 1.30.** En la 1.29 siguen como antes.
+- **Corregido: retirar un vehículo con alguien sentado.** En la 1.30, borrar un vehículo ocupado tira el server. El framework espera a que quede vacío antes de retirarlo. Si el que está sentado es un jugador, el vehículo queda frenado y no se borra hasta que se baje.
+- **Corregido: la lista de rutas en la 1.30.** Con la 1.2 salía vacía. Necesita que el server arranque con un `-profiles` **relativo** (p. ej. `-profiles=profiles`): con una ruta absoluta la 1.30 no deja listar archivos, y el RPT lo avisa al arrancar (`DayZ 1.30 cannot list files under an absolute -profiles path…`).
+- **Nuevo: las motos (experimental).** El Moped y la Enduro de la 1.30 no son autos (no usan CarScript) y tienen un conductor propio: freno delantero y trasero por separado (sin reversa en la moto), una ley de inclinación y amortiguación medida para cada moto, y llegadas de 1-3 cm. **Caminar con la moto** (bajarse y empujarla, hacia adelante o hacia atrás) se graba y se reproduce con la animación. Si una moto se traba, retrocede caminando 3 m y reintenta. Ver el manual, §9B.
+- **Mejorado: la moto a alta velocidad sigue tu línea.** Una moto tarda medio segundo en inclinarse cuando gira el manubrio; corregirla como a un auto la hacía oscilar y abrirse en las curvas rápidas (hasta 3,7 m). Arriba de 65 km/h ahora corrige inclinándola según la curva del camino que viene. Medido con la Enduro hasta 120 km/h: desvío máximo 0,4-0,56 m en toda la ruta.
+- **Mejorado: el final de la moto.** Frena al punto midiendo, en esa misma frenada, cuánto frena de verdad la moto. Llega a 3-4 cm también entrando rápido (antes se podía pasar hasta 0,7 m).
+- **Mejorado: caminar con la moto.** Si en la toma la doblaste mientras la empujabas (sacarla marcha atrás y encararla para otro lado), el NPC reproduce ese giro y corrige si se corre de la línea. Al terminar de caminar arranca a fondo, después de respetar la espera que hayas hecho.
+- **Corregido: el velocímetro que no da un número.** En la 1.30, un vehículo recién aparecido puede tener el velocímetro sin un valor válido durante unos segundos (lo vimos en el M1025, de caja automática), y la ruta quedaba trabada en el arranque. Ahora el framework usa la velocidad real del vehículo mientras dure y lo avisa en el RPT: `[Velocimetro] GetSpeedometerAbsolute no da un numero … el framework usa la velocidad del cuerpo`.
+
+### Cuándo una ruta está completa (el veredicto)
+
+- **Cambiado: `ROUTE_COMPLETE` es estricto.** Una ruta cuenta como completa solo si se cumplen las tres: el vehículo quedó **quieto a 0,25 m o menos** del punto final de la toma, **no chocó contra ningún objeto** y **el AutoRecovery no tuvo que moverlo** (maniobra o reubicación). Los re-arranques suaves del AutoRecovery no la invalidan, pero se listan. La red de 1 m de la 1.2 ya no aprueba.
+- **Cambiado: el fin de ruta se decide con el vehículo QUIETO.** El `FIN` y los eventos de fin salen cuando el vehículo se detuvo (a lo sumo unos 3 s después de llegar), con la línea `REPOSO tras T s: a X m de la pose final (longitudinal …, lateral …)`. Lo mismo para las motos.
+- **Nuevo: el motivo de un `ROUTE_INCOMPLETE`**, en la misma línea: a cuánto quedó, contra qué chocó y en qué punto, o qué intervención física hizo el AutoRecovery.
+
+### Conducción: más exacta
+
+- **Mejorado: la frenada final.** El freno del config del vehículo resultó optimista (8,5 m/s² declarados contra 5,5 reales en un Sedan). Ahora el final de la ruta se planea con **la frenada que mediste vos en la toma** (`FRENADA de la toma` en el log), y cada cambio de sentido con la de ese punto (`FRENADA del cusp`). Llegadas: 0,10-0,15 m en todas las rutas de prueba. La frenada de la toma ahora se mide también en paradas cortas (desde 8 km/h).
+- **Mejorado: los cambios de sentido.** El vehículo sigue tu línea también a baja velocidad y en reversa: al cambiar de marcha queda a centímetros del punto (antes, 0,5-1 m pasado o corrido) y el tramo de reversa arranca en su lugar. En los últimos metros antes de cada cambio de marcha corrige el desvío lateral con más fuerza.
+- **Corregido: las paradas grabadas en medio de un tramo.** Se cumplen por el tiempo que grabaste y el vehículo sigue; nunca lo retienen. Y el tramo se da por terminado recién en tu **última** parada antes de cambiar de marcha, no en una anterior.
+- **Nuevo: el freno al final de cada tramo.** Si la toma se termina (o sigue a paso de hombre sin freno) con el vehículo todavía rodando, el framework frena hasta el punto del cambio de marcha.
+- **Corregido: gas y freno a la vez.** Cuando la toma frena, el framework ya no suma gas para alcanzar una velocidad grabada.
+- **Mejorado: tomas con correcciones de posición.** Si mientras grababas el server te corrigió la posición hacia atrás (un "tirón"), el vehículo ya no sigue ese retroceso.
+
+### Grabación y Wizard
+
+- **Corregido: el reloj del grabador.** Las tomas nuevas guardan el tiempo real. Una toma con el reloj roto (grabada con versiones anteriores) no se convierte y el Wizard lo dice.
+- **Nuevo: avisos de la toma** al convertir, en el idioma del Wizard: `(!) La toma tiene N retroceso(s) grabado(s)` (el server te corrigió la posición al grabar: si el NPC se desvía ahí, regrabá ese tramo) y `(!) En N cambio(s) de marcha el vehiculo avanzo sin freno antes de cambiar` (al grabar, mantené el freno pisado hasta poner la otra marcha). Los choques de la toma también se avisan.
+- **Cambiado: el punto de un cambio de sentido** se pone donde el vehículo quedó quieto en la toma, no donde bajó de 1 km/h. Vale para las rutas que convertís con esta versión.
+- **Cambiado: las tomas nuevas graban más datos por cuadro** (inclinación, contactos, reloj real). Por eso una parte grabada con la 1.2 no se une con una de la 1.2.1 en **[3] Merge de tramos**: grabá todas las partes con la misma versión.
+
+### El panel
+
+- **Corregido: en la 1.30, el panel se cierra con INICIO** (o la tecla que le asignes en Controles), igual que se abre. **ESC** también lo cierra, sin abrir la pausa del juego.
+- **Corregido: después de cerrarlo con ESC, INICIO lo vuelve a abrir al primer intento.** En la 1.30 había que apretar la tecla dos veces.
+- **Nuevo: SPAWN EMPTY VEHICLE revisa que el lugar esté libre.** Si ya hay un vehículo en ese punto, no crea nada y lo avisa en pantalla: `Spawn point occupied by <clase> (N m away)`.
+- **Mejorado: cuando un spawn vacío no se puede hacer** (lugar ocupado, una ruta que no carga o no tiene waypoints, una clase que no existe), el aviso sale en pantalla y la fila `LOADING` desaparece en el acto. Antes quedaba 15 s esperando.
+- **Corregido: la rueda del mouse sobre la lista de rutas.** Cada muesca le volvía a pedir al server la ficha de la ruta, y el server releía la ruta del disco. Ahora la pide solo el clic, y el scrubber ya no vuelve al principio cuando girás la rueda.
+
+### Logs y diagnóstico
+
+- **Nuevo: `Diagnostics`** en el settings (apagado por defecto): con el diagnóstico apagado el RPT de un server con rutas en marcha baja más del 90 %. Quedan las líneas de carga, fin, errores y AutoRecovery.
+- **Nuevo: cajas negras opcionales** (`BlackBox`, apagado por defecto), con rotación: `BlackBoxKeepPerRoute` guarda las últimas N por ruta (10 por defecto).
+- **Mejorado: la línea de un choque** (`*** CHOQUE ***`) dice contra qué fue (la clase del objeto, o el terreno), en qué zona del vehículo y qué ruedas tocaban el piso justo antes.
+- **Mejorado: cuando el framework detiene un vehículo por seguridad** (`SAFE_STOP`), el log dice por qué.
+- **Nuevo: el aviso de las rutas de formato viejo** (sin `_wp.csv`). Una ruta así se carga entera de una vez y congela el server mientras la lee. Ahora el RPT lo dice, y también a los admins conectados (según `AdminSystemNotifications`): `route <archivo> is in the old format (no _wp.csv): loading it froze the server for N s…`. Volvé a convertir la toma con el Wizard y la ruta carga de a partes.
+- **Corregido: `[LOADTIME]` da los milisegundos reales.** Hasta la 1.2 el número salía 10.000 veces más grande.
+- **Nuevo: el diagnóstico del panel.** Con `Diagnostics` en 1, el log del cliente de un admin registra cuándo se abre y se cierra el panel y por qué (`[Reproductor] ABIERTO` / `CERRADO (tecla|ESC|boton|otro)`). Sirve si la tecla no responde.
+
+### Para mods que usan AutoDrive (la API del runner)
+
+- **Cambiado:** el fin de ruta (`PollEvent`, `RunnerRouteEnded/Completed/EndReason`) llega en el reposo, hasta ~3,5 s después de la llegada, y `RunnerRouteCompleted()` usa el veredicto estricto.
+- **Nuevo:** `RunnerReposoFinM()`, la distancia en reposo con la que se decidió (autos y motos).
+- **Cambiado: campos nuevos en el log y en las cajas negras.** La línea `LEG n cerrado` suma el lateral (`lat`, entre `remFr` y `rem`) y la distancia a la última parada grabada de la fase; las cajas negras del auto suman columnas (contactos y `frenoFin`). Si una herramienta tuya las lee por posición, revisala.
+- **Cambiado: la caja negra de la moto suma cuatro columnas al final** (`roll_des`, `mezcla`, `w_cmd`, `vol_cam`); las anteriores no se mueven.
+
+---
+
 ## v1.2
 
 **Un cerebro de manejo nuevo: reproduce tu manejo y aprende de tus tomas.** Es el cambio más grande desde la 1.0. El framework sigue leyendo el config del vehículo, pero ahora además **reproduce lo que hiciste en cada punto del camino** y **mide** cómo se comporta cada vehículo, en vez de suponerlo.
@@ -39,6 +105,8 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 - **Nuevo: si el punto de salida está ocupado**, el vehículo espera a que se libere (`WAITING` en el panel) en vez de aparecer corrido al costado.
 - **Mejorado: cargar una ruta ya no produce tirones.** La carga se reparte en trozos de ~1 ms por cuadro; antes un solo cuadro podía llevarse hasta 75 ms.
 - **Mejorado: el panel de vehículos vacíos.** La tarjeta aparece apenas apretás (con `LOADING`), y un segundo clic ya no crea un vehículo encimado.
+- **Corregido: la instalación desde cero.** El framework crea sus carpetas del perfil. Antes, en un server nuevo, el registro de un jugador manejando intentaba escribir en una carpeta que no existía, en cada cuadro.
+- **Nuevo: avisos de arranque para una instalación nueva.** `AdminSteamIDs is empty: nobody is admin…` si todavía no hay admins, y `No routes yet…` si no hay ninguna ruta. Ya no se genera una ruta de plantilla.
 
 ### El vehículo en la ruta
 

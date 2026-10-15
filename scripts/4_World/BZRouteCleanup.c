@@ -100,6 +100,17 @@ class BZRouteCleanup {
         return path;
     }
 
+#ifndef DabsFramework
+    // sin Dabs Framework no hay SuppressedObjectManager: el barrido borra en el server sin la supresion de Dabs, y los
+    // clientes pueden seguir viendo el objeto. Se dice una vez.
+    private static bool s_AvisoSinDabs;
+    private void AvisarSinDabs() {
+        if (s_AvisoSinDabs) return;
+        s_AvisoSinDabs = true;
+        BZBusLog.Warn("[BZ AutoDrive] Dabs Framework not loaded: route cleanup deletes objects on the server only (clients may still see them)");
+    }
+#endif
+
     private int SweepAt(vector center) {
         array<Object>    objects = new array<Object>;
         array<CargoBase> proxies = new array<CargoBase>;
@@ -109,7 +120,14 @@ class BZRouteCleanup {
         foreach (Object obj : objects) {
             if (!obj) continue;
             if (Matches(obj.GetType())) {
+#ifndef DAYZ_1_29
+                if (BZRetiro.Ocupantes(obj) > 0) continue;   // 1.30: nunca un vehiculo con alguien sentado
+#endif
+#ifdef DabsFramework
                 GetDayZGame().GetSuppressedObjectManager().Suppress(obj);
+#else
+                AvisarSinDabs();
+#endif
                 GetGame().ObjectDelete(obj);
                 count++;
             }

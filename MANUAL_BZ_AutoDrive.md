@@ -19,6 +19,7 @@
 7. Cómo grabar bien
 8. El servicio de bus permanente
 9. Cómo maneja el NPC (sigue tu línea y tu velocidad)
+9B. DayZ 1.30 — qué cambió en los vehículos, y las motos *(experimental)*
 10. Eventos y secuencias
 11. Misiones — integración con Quests
 12. Controles (teclas)
@@ -223,7 +224,7 @@ La ficha se mide sola cuando terminás la toma como dice §7.1, y **el wizard no
 
 #### [3] Merge de tramos — continuar una grabación
 ¿Grabaste una ruta larga **en partes** (te desconectaste, paraste a descansar, la seguiste otro día)? Esta opción une esas partes en **una sola toma**:
-- Elegís los `frame_*.csv` de las partes (dos o más, **en cualquier orden**): el wizard los encadena **por dónde empieza y termina cada una**, no por la hora. El final de una parte tiene que estar **a menos de 8 m** del comienzo de la siguiente, y todas tienen que ser **del mismo vehículo**.
+- Elegís los `frame_*.csv` de las partes (dos o más, **en cualquier orden**): el wizard los encadena **por dónde empieza y termina cada una**, no por la hora. El final de una parte tiene que estar **a menos de 8 m** del comienzo de la siguiente, y todas tienen que ser **del mismo vehículo** y **de la misma versión**: una parte grabada con la 1.2 no se une con una de la 1.2.1 (la 1.2.1 graba más datos por cuadro).
 - Una parte repetida (mismo comienzo y mismo final) se descarta con aviso; las marcas de NUMPAD 4 de cada parte se conservan.
 - Le ponés un nombre a la toma unida y el wizard te ofrece **convertirla en ruta** en el acto (igual que **[1]**).
 > Para que empalme bien, **empezá cada parte donde terminó la anterior**: pará el vehículo, cortá la grabación, y al retomar arrancá desde ese mismo punto.
@@ -324,7 +325,7 @@ la cinta      se carga por tajadas; es la fase mas larga
 
 ### Preguntas frecuentes
 
-**¿Puedo borrar alguno?** No. Sin `_wp.csv` la ruta la maneja el cerebro 1.1; **sin `_cinta.csv` el NPC sigue el camino pero ya no reproduce tu manejo** (corre sin cinta); sin `_hdr.json` el servidor carga el master entero, que es lento y **congela el servidor** mientras lo lee; y sin el master la ruta no aparece en la lista.
+**¿Puedo borrar alguno?** No. Sin `_wp.csv` la ruta la maneja el cerebro 1.1; **sin `_cinta.csv` el NPC sigue el camino pero ya no reproduce tu manejo** (corre sin cinta); sin `_hdr.json` el servidor carga el master entero, que es lento y **congela el servidor** mientras lo lee; y sin el master la ruta no aparece en la lista. Una ruta que se carga por el master entero lo avisa en el RPT, y también a los admins conectados (`… is in the old format (no _wp.csv): loading it froze the server for N s…`): volvé a convertir la toma con el Wizard.
 
 **¿Puedo editarlos a mano?** El master y el carnet son JSON y se dejan. **La cinta no se toca**: es una medición, no una configuración. Si algo de tu ruta no te gusta, la respuesta es **volver a grabarla**, no corregir los números.
 
@@ -410,7 +411,7 @@ El NPC va a manejar **tan bien como manejaste vos** — la grabación es su manu
 - **Tomá las curvas con la línea que querés** que haga el NPC — ni cortes el vértice ni te abras de más.
 - **Ritmo constante en las rectas:** la velocidad que grabás es la referencia que va a usar el NPC.
 - **Una toma limpia vale más que diez sucias.** Si te subiste a un cordón o frenaste mal, **re-grabá** — es gratis y rápido.
-- **Cambios de sentido (K-turn, galpón):** frená del todo, **cambiá de marcha y seguí** — el **intercambio se auto-detecta** del cambio de gear (no tocás ninguna tecla); la reversa también sale del gear (§9.4).
+- **Cambios de sentido (K-turn, galpón):** frená del todo y, **sin soltar el freno, cambiá de marcha** y seguí — el **intercambio se auto-detecta** del cambio de gear (no tocás ninguna tecla); la reversa también sale del gear (§9.4). Si soltás el freno antes de cambiar, el vehículo puede seguir avanzando unos centímetros (en bajada, siempre), y ese avance queda grabado como parte del recorrido.
 - **Paradas:** una sola frenada continua hasta detenerte del todo, y ahí marcá con **NUMPAD 4**. Ver "Cómo parar" más abajo.
 - **Bocina y luces:** en esta versión **no se graban** — lo que hagas con la bocina o las luces mientras grabás no queda en la toma. Las **luces** las prende el framework según la hora del juego (`LightsMode: "auto"`, el default) y la **bocina** se configura por ruta con `HornMode` (§9 "Bocina y luces" y Apéndice A.2b).
   > **Para que las luces se vean:** el vehículo necesita **batería + bombillas (faros) instaladas**. El framework le energiza la batería al spawn, pero las bombillas tienen que estar entre sus `Attachments` (normalmente ya vienen del fingerprint del vehículo). Sin faros físicos, la tecla L no prende nada.
@@ -436,6 +437,7 @@ En esos segundos el framework mide cuánto avanza el vehículo solo, sin acelera
 - **No hace falta esperar en la toma.** El tiempo de espera lo ponés en el evento de esa marca (§10.1); al grabar, detenete lo justo y arrancá.
 - **No hace falta esperar el ralentí en cada parada**: eso es una sola vez por vehículo (§7.1). Podés mantener el freno pisado.
 - **Cambiar de marcha estando detenido está bien** —bajar a primera para arrancar—: el framework lo resuelve.
+- **En un cambio de sentido, el freno pisado hasta poner la otra marcha.** Si te detenés, soltás y el vehículo se arrastra antes de la reversa, la toma registra ese arrastre y el NPC lo copia. El framework frena igual al final de cada tramo, pero la llegada más exacta sale de una toma limpia.
 
 **Si parás en pendiente, mantené el freno de pie pisado** mientras marcás o cortás la toma. Si soltás, el vehículo rueda unos centímetros hacia atrás y ese retroceso queda grabado. Usá el freno de pie, no el de mano. Y la medición de §7.1 hacela en cualquier tramo llano de esa misma toma: lo más cómodo es al principio, arrancá a grabar con el motor encendido, quedate quieto dos o tres segundos con todo suelto, y recién ahí salí.
 
@@ -446,6 +448,11 @@ En esos segundos el framework mide cuánto avanza el vehículo solo, sin acelera
 **Pasar rozando en un lugar angosto.** En calles angostas y curvas cerradas junto a carteles, postes o muros, pasá más despacio y bien centrado. El NPC repite tu línea con variaciones de centímetros entre una corrida y otra: si en tu toma pasaste rozando, a veces va a tocar.
 
 **Ignorar los avisos de salto.** A alta velocidad el server a veces corrige tu posición hacia atrás mientras grabás; se siente como un tirón. El conversor lo limpia solo, pero si en la salida del wizard ves `(!) glitch en racha` o `(!) salto persistente`, revisá ese tramo o regrabalo.
+
+**Dos avisos más, desde la 1.2.1.** El wizard también te dice:
+
+- `(!) La toma tiene N retroceso(s) grabado(s)`: mientras grababas, el server te corrigió la posición hacia atrás (el tirón). La ruta los reproduce como están y el NPC no sigue ese salto, pero si en ese tramo se desvía, regrabalo.
+- `(!) En N cambio(s) de marcha el vehiculo avanzo sin freno antes de cambiar`: te detuviste, soltaste el freno y el vehículo se arrastró antes de poner la otra marcha. Al grabar, mantené el freno pisado hasta cambiar (§9.4).
 
 ### 7.4 — Grabá vacío
 
@@ -605,7 +612,9 @@ Cuando tu ruta necesita **cambiar de dirección** —un giro de tres puntos (**K
 2. Hacés la reversa: **despacio (3–8 km/h), con correcciones chicas** (el arco no tiene que ser perfecto, lo vas corrigiendo). El framework **auto-detecta** que ese tramo es reversa —del gear— y lo trata como reversa.
 3. Al terminar → **frená del todo** → metés **forward** y seguís. *(De nuevo sin tecla: el cambio reversa → forward es el segundo intercambio.)*
 
-Repetís en cada cambio de sentido, siempre igual: **frenás del todo, cambiás de marcha, seguís**. Cada uno de esos cambios de gear corta el tramo (`legBreak`), y Boris lo trata como un **nuevo arranque**: llega alineado, se planta, y sale limpio en el sentido nuevo. Es el *cusp* (reversa↔forward), el punto más difícil del control — hoy **resuelto** (§17).
+Repetís en cada cambio de sentido, siempre igual: **frenás del todo, cambiás de marcha sin soltar el freno, seguís**. Cada uno de esos cambios de gear corta el tramo (`legBreak`), y Boris lo trata como un **nuevo arranque**: llega alineado, se planta, y sale limpio en el sentido nuevo. Es el *cusp* (reversa↔forward), el punto más difícil del control — hoy **resuelto** (§17).
+
+> **Por qué sin soltar el freno.** Si te detenés, soltás el freno y el vehículo se arrastra a paso de hombre antes del cambio (en bajada pasa siempre), la toma lo registra. El NPC repite ese arrastre y frena al final del tramo, pero **lo que el vehículo avanzó a menos de 1 km/h dentro de tu última parada no se repite** (típico: 30-40 cm): el tramo cierra donde el vehículo quedó quieto al entrar en esa parada. Con el freno pisado hasta poner la otra marcha, la parada y el cambio caen en el mismo lugar.
 
 > **Un 0 km/h NO es siempre un intercambio.** Frenar del todo **sin cambiar de sentido** (esperar, ceder el paso) es una **pausa**, no un corte de tramo. El conversor distingue las dos cosas: solo el 0 km/h **con cambio de gear forward↔reverse** genera el `legBreak`. Por eso no necesitás marcar nada — el gear ya lo dice todo.
 
@@ -713,7 +722,7 @@ Los tres pasos funcionan también en los tramos de reversa (salir de un andén m
 **Nada de esto tapa el problema.** Cada intervención queda registrada:
 
 - En el RPT, con el lugar y la evidencia que la disparó: `[AR] <ruta> wp 380 s 594 · FISICO (...) · escalon 1: maniobra`. Cuando la escalera se abre sale `[C12] BLOQUEADO en wp N · <motivo>`, y cuando se cierra, `[C12] BLOQUEO terminado tras X s`: tiene que haber tantos de uno como del otro. Si tu mod necesita enterarse (por ejemplo, para que otro vehículo no le ceda el paso a uno que no se puede mover), consultá `RunnerBloqueado()` (Apéndice B.7).
-- Al final de la ruta: `ROUTE_COMPLETE en wp 939 · AR-FISICO x2 (wp 386 maniobra..., wp 385 re-ubicado...)`. Una llegada con ayudas **no es una llegada limpia**.
+- Al final de la ruta, en la línea del `FIN`. **Desde la 1.2.1, una intervención física del AutoRecovery (maniobra o re-ubicación) deja la ruta en `ROUTE_INCOMPLETE`, aunque llegue:** `*** ROUTE_INCOMPLETE en wp 335 · AR fisico con accion: wp 135 maniobra: … · REPOSO tras 0.5 s: a 0.106 m …`. Los re-arranques suaves (`NO-FISICO`) no la invalidan, pero quedan listados: `AR x1 (wp 93 no-fisico)`. Ver §17 (el veredicto).
 - En `profiles/BZ_AutoDrive/AR_log.csv`, una fila por intervención de todas las corridas: fecha, ruta, vehículo, waypoint, tipo, evidencia, acción y resultado.
 
 Si una ruta necesita el AutoRecovery **siempre en el mismo lugar**, eso es información: andá a ese punto y mirá qué hay. Suele ser un tramo de la grabación para rehacer.
@@ -721,6 +730,83 @@ Si una ruta necesita el AutoRecovery **siempre en el mismo lugar**, eso es infor
 **Intervención manual.** Si estás mirando una corrida y querés destrabarla vos, escribí el nombre de la ruta en `profiles/BZ_AutoDrive/BZ12_AR_MANUAL.txt`. El vehículo se re-ubica 10 m más adelante sobre la ruta, contados desde el último punto que pisó bien. Si ese lugar está ocupado, no hace nada.
 
 Todos los valores se configuran por ruta en el Apéndice A.5.
+
+---
+
+## 9B. DayZ 1.30 — qué cambió en los vehículos, y las motos
+
+### 9B.0 — Qué cambió en los vehículos con la 1.30 (también para autos)
+
+La 1.30 tocó los vehículos por dentro. BZ_AutoDrive **1.2.1** ya lo resuelve, y el mismo paquete corre en la 1.29 y en la 1.30. Lo que te conviene saber como admin:
+
+| qué cambió | qué pasaba | qué hace AutoDrive 1.2.1 |
+|---|---|---|
+| **Las luces** usan un sistema nuevo; la función vieja de los faros ya no existe | un mod que prende faros a la manera vieja **no compila** en la 1.30. AutoDrive 1.2 tampoco: **el server no levanta** | usa el sistema nuevo en la 1.30 y el viejo en la 1.29, y hace que los demás jugadores vean las luces del NPC |
+| **Borrar un vehículo con alguien sentado** | en la 1.30 **tumba el server** (todos afuera) | al terminar una ruta, primero baja a los NPC y después borra el vehículo vacío. Si hay un **jugador** sentado, espera a que se baje |
+| **Dónde busca archivos** el juego | con la 1.2, la **lista de rutas sale vacía** en la 1.30 | lee las rutas de la carpeta del perfil de otra manera. Necesita que el server arranque con un `-profiles` **relativo** (p. ej. `-profiles=profiles`): con una ruta absoluta la lista sigue vacía y el RPT lo avisa (§15) |
+| **Los neumáticos** tienen parámetros nuevos (fricción lateral y longitudinal, rugosidad, tipo) | — | **medido:** las rutas grabadas en la 1.29 se manejan igual en la 1.30, con la misma precisión |
+| **Quién simula el vehículo:** con un jugador arriba, lo simula **su** cliente | — | nada que hacer: el NPC maneja igual con pasajeros jugadores en un auto |
+| **Las motos** son una clase nueva, aparte de los autos | — | las maneja (ver abajo) |
+| **El velocímetro** de un vehículo recién aparecido puede no dar un número durante unos segundos (medido en el M1025, de caja automática) | la ruta quedaba trabada en el arranque | usa la velocidad real del vehículo mientras dure y lo avisa en el RPT (`[Velocimetro] … no da un numero`) |
+
+> **⚠ Si usás otro mod que borra vehículos** (limpieza, respawn, eventos): en la 1.30 **no tiene que borrar nunca un vehículo con alguien sentado**. Revisalo antes de actualizar el server.
+
+**Auto contra moto, de un vistazo:**
+
+| | auto (`CarScript`) | moto (`MotorbikeScript`, 1.30) |
+|---|---|---|
+| reversa | sí (cambios de sentido, §9.4) | **no**: hacia atrás se camina |
+| frenos | freno + freno de mano | freno = **delantero**; freno de mano = **trasero** |
+| se cae | no | sí: el NPC la levanta |
+| se inclina en las curvas | no | sí: la inclinación de tu toma es la referencia |
+| caminarla | — | sí, con el motor prendido o apagado: el NPC la repite empujando |
+| asiento de atrás / pasajeros | sí | no, en la 1.30 |
+| grabar y convertir | NUMPAD 5 y el wizard | igual |
+| destrabe | la escalera del AutoRecovery (§9.6) | caminar 3 m atrás, y si no alcanza, re-ubicar |
+
+### Las motos *(experimental)*
+
+Desde la 1.30, DayZ trae motos, y **una moto no es un auto**. El juego las arma sobre una clase propia (`MotorbikeScript`), que es una rama aparte de la de los autos (`CarScript`). AutoDrive las reconoce **por esa jerarquía**, así que no hay que configurar nada por nombre:
+
+- **Las dos motos vanilla** de la 1.30 (`Motorbike_01_*`, la Moped, y `Motorbike_02_*`, la Enduro) andan tal cual.
+- **Una moto de mod hecha sobre el script nuevo** también anda, sin tocar nada.
+- **Una moto de mod vieja, hecha como auto** (`CarScript`), sigue yendo por el camino de los autos, como hasta ahora.
+
+Todo lo de motos existe **solo en la 1.30**. El mismo paquete corre en la 1.29 y ahí esa parte sencillamente no está.
+
+### 9B.1 — Qué hace distinto el NPC con una moto
+
+Grabás, convertís y lanzás igual que con un auto. Lo que cambia es cómo la maneja:
+
+- **Los frenos.** El freno de la moto (la tecla de frenar) es el **delantero**, el principal; el freno de mano es el **trasero**. El NPC usa los dos así.
+- **No tiene reversa.** Una ruta de moto no tiene cambios de sentido (§9.4). Para ir hacia atrás, la moto se **camina** (ver §9B.2).
+- **Marchas y arranque.** Al arrancar, el juego a veces "pierde" el primer cambio: el NPC insiste hasta que entra. Arranca sin la patada, y sube la pata al tomar el mando (la baja al soltarla).
+- **La inclinación.** En las curvas la moto se inclina. El NPC toma como referencia **cuánto te inclinaste vos en ese mismo punto**: mientras no se incline más que en tu toma (con 2° de margen), no frena ni recorta el volante.
+- **La línea.** El conductor de motos corrige con amortiguamiento, para no zigzaguear, y con la sensibilidad de **esa** moto, que el wizard mide de tus tomas y guarda en su envelope (§6C). **Arriba de 65 km/h** corrige de otra manera: una moto tarda medio segundo en inclinarse cuando se gira el manubrio, así que el NPC la inclina según la curva del camino que viene, en vez de corregir con el manubrio como un auto.
+- **La llegada.** Frena hasta quedar quieta sobre tu punto final, midiendo en esa misma frenada cuánto frena de verdad la moto. En las pruebas llega a 1-4 cm, también entrando rápido.
+- **Si se cae,** la levanta y vuelve a sentar al chofer.
+- **Si choca de frente o se traba,** camina **3 m hacia atrás** y reintenta. Si vuelve a pasar en el mismo lugar, la re-ubica unos metros más adelante sobre la ruta, como el AutoRecovery del auto (§9.6). El log lo dice: `[MOTO] DESTRABE (choque de frente) en el arco 800 m: camina 3 m hacia ATRAS…`.
+
+### 9B.2 — Cómo grabar en moto
+
+Igual que un auto: **NUMPAD 5** para empezar y para terminar (§5, §7). Subite, prendé el motor, grabá, manejá y terminá **detenido**.
+
+**Caminar la moto vale.** Si la sacás de un lugar caminándola hacia atrás, o caminás un tramo corto hacia adelante, grabalo así, con el motor prendido. El wizard detecta esos tramos (`[moto] caminando: … se reproduce por empuje`) y el NPC los repite **a tu velocidad**, empujando la moto con el chofer sentado. Se ve caminando, con la animación del juego, **hacia atrás y hacia adelante**. Si la doblaste mientras la empujabas (por ejemplo, sacándola marcha atrás y encarándola para otro lado), el NPC reproduce ese giro y corrige si se corre de la línea. Después respeta la espera que hayas hecho y arranca en primera, a fondo.
+
+**Evitá puertas y portones.** El estado de las puertas del mapa (abierta o cerrada) **cambia entre reinicios del server**. Si tu ruta pasa por un portón o termina adentro de un garaje, el día que esté cerrado la moto choca. Se destraba sola, pero la llegada ya no es limpia. AutoDrive **no abre puertas**: qué hacer con ellas es decisión tuya como admin. Grabá por caminos sin puertas.
+
+**Los escombros no son choques.** Pasar por encima de escombros u objetos del piso queda registrado como contacto, pero sin pérdida de velocidad no cuenta como choque.
+
+**Avisos del wizard propios de la moto:**
+- `toma con el reloj roto … NO se convierte`: la toma se grabó con una versión vieja del grabador. Regrabala.
+- `caminando: … se reproduce por empuje`: un tramo caminado. Es normal.
+- `(!) toma con choque en el arco X m`: en la toma chocaste de verdad (perdiste velocidad contra algo). El NPC va a repetir tu línea **hacia** ese choque: regrabá ese tramo.
+
+### 9B.3 — Límites (por qué dice experimental)
+
+- **Probado** en la 1.30 experimental y en la **estable** (15/10): rutas completas con la Moped (con caminatas hacia atrás que giran) y con la Enduro **hasta 120 km/h** (desvío máximo 0,4-0,56 m en toda la ruta, llegada a 3-4 cm). Solo las dos motos vanilla: las de mods se suman a medida que sus autores las adapten a la 1.30.
+- **El asiento de atrás** no se puede usar: en la 1.30 experimental el juego lo tenía a medio hacer (no lo volvimos a probar en la estable), y un acompañante queda encimado con el chofer. AutoDrive no sienta acompañantes en motos.
+- **Los NPC de eAI en moto:** probados el 15/10 con Expansion 1.9.79. El chofer eAI maneja la Enduro y la Moped (la caminata también) y el retiro lo baja y borra igual que en un auto.
 
 ---
 
@@ -1683,7 +1769,7 @@ El framework usa **solo 3 teclas** — el ciclo de grabación + abrir la UI. Tod
 
 | Acción (nombre en el menú) | Default | Para qué |
 |---|---|---|
-| **Open Control Panel** | `INICIO` (Home) | **abrir / cerrar** el Reproductor (la puerta a toda la UI) |
+| **Open Control Panel** | `INICIO` (Home) | **abrir / cerrar** el Reproductor (la puerta a toda la UI). También lo cierra `ESC` (sin abrir la pausa del juego). Si le asignás otra tecla en Controles, esa lo abre y lo cierra |
 | **Record (start/stop)** | `NUMPAD 5` | empezar / terminar de grabar una ruta |
 | **Mark Event / Stop** | `NUMPAD 4` | marcar una **parada / nodo de evento** (§10) mientras grabás |
 
@@ -1709,7 +1795,7 @@ Un solo panel para el admin — el **Reproductor** — que lo abrís con una tec
 
 **③ ACTIVE SPAWN VEHICLE (derecha, abajo) — los vehículos vacíos que sembraste.** Cada vehículo que spawneaste vacío (con START/HERE/END, ver abajo) aparece acá como una fila —**ruta · wp · posición**— con dos botones: **TP** (ir a su lado) y **DELETE** (borrarlo). Podés dejar **varios** vacíos sembrados por el mapa y manejarlos desde acá. Scrollea si hay más de los que entran.
 
-**La barra de abajo — spawn de vehículos vacíos + scrubber.** Muestra la ficha de la ruta seleccionada + el scrubber, y a la derecha **SPAWN EMPTY VEHICLE AT: START · HERE · END**: spawnea el vehículo de la ruta **vacío y manejable** en el inicio, en el wp del scrubber (**HERE**) o en el final. Sirve para **continuar una grabación** (spawnás el auto donde quedaste y seguís manejando) o para sembrar autos. **Ya no te teletransporta** al vehículo: aparece en la lista **ACTIVE SPAWN VEHICLE** (③) y desde ahí lo TP o lo eliminás.
+**La barra de abajo — spawn de vehículos vacíos + scrubber.** Muestra la ficha de la ruta seleccionada + el scrubber, y a la derecha **SPAWN EMPTY VEHICLE AT: START · HERE · END**: spawnea el vehículo de la ruta **vacío y manejable** en el inicio, en el wp del scrubber (**HERE**) o en el final. Sirve para **continuar una grabación** (spawnás el auto donde quedaste y seguís manejando) o para sembrar autos. **Si el lugar está ocupado** por otro vehículo, no spawnea y lo avisa en pantalla (`Spawn point occupied by <clase> (N m away)`). **Ya no te teletransporta** al vehículo: aparece en la lista **ACTIVE SPAWN VEHICLE** (③) y desde ahí lo TP o lo eliminás.
 
 **Los checks de logger (opt-in, antes de dar play).** Debajo de la lista de rutas hay dos casillas — **`[ ] boris_native`** y **`[ ] ai_run`** — que **tildás ANTES de largar la ruta** (LOAD & SPAWN). Si están tildadas, esa corrida graba su trayectoria **en sincro con el play**:
 - **`ai_run`** — la **caja negra** de Boris (telemetría de la corrida; ver §15.1). Se arma **desde este check** (ya no con tecla) para esa corrida puntual.
@@ -1867,11 +1953,12 @@ Con el verbo `play_sound` (en un evento NUMPAD 4) reproducís un audio **3D pega
 Algunos clásicos (el detalle fino + más casos están en el **AI knowledge pack**, ver abajo):
 - **Instalación nueva: el panel no abre y NUMPAD 5 no graba** → todavía no sos admin. El RPT del arranque lo dice: `AdminSteamIDs is empty: nobody is admin…` (o `Admins: 0`). Agregá tu SteamID64 **entre comillas** en `BZAutoDrive_settings.json` y reiniciá (§13.1).
 - **El RPT dice `No routes yet` al arrancar** → todavía no hay ninguna ruta: grabá una (NUMPAD 5) y convertila con el Wizard (§5). Si dice `No default route (BZBusRoute.json): nothing starts at boot; N route(s) available in the panel`, está todo bien: tus rutas están en el panel y ninguna arranca sola al iniciar el server.
+- **En la 1.30 la lista de rutas sale vacía y el RPT dice `DayZ 1.30 cannot list files under an absolute -profiles path`** → tu server arranca con un `-profiles=` con ruta absoluta (p. ej. `-profiles=C:\DayZServer\profiles`), y en la 1.30 el juego no deja listar archivos ahí. Usá una ruta relativa a la carpeta del server: `-profiles=profiles`.
 - **El vehículo aparece pero no se mueve** → casi siempre las coordenadas de la ruta no coinciden con el mapa (grabaste en otro mapa). Grabá tu propia ruta en el mapa donde corrés.
 - **No se grabó mi corrida del NPC** → el check **`ai_run`** estaba destildado. Tildalo en el Reproductor *antes* de dar play (§13).
 - **El NPC no entra a una curva cerrada** → es el tramo más exigente (§17); el control **capea la velocidad** solo, pero si el vehículo es **pesado**, lo mejor es **grabar la ruta con ÉL** (nace a su medida). Si es una maniobra cerrada de verdad (galpón, cambio de sentido), va como **reverse** — ver §9.4–9.5.
 - **No suena el audio** → ver §14 (replicación server→cliente).
-- **La ruta llegó, pero el final dice `AR x2` o `AR-FISICO x2`** → llegó con ayudas del AutoRecovery (§9.6). Buscá en el RPT las líneas `[AR]` o abrí `profiles/BZ_AutoDrive/AR_log.csv`: te dicen el waypoint y qué pasó. Si siempre es el mismo punto, andá a verlo en el mapa.
+- **El final dice `AR x2` (la ruta completa) o `AR fisico con accion` (`ROUTE_INCOMPLETE`)** → el AutoRecovery intervino (§9.6): los re-arranques suaves no invalidan la ruta; una maniobra o una re-ubicación, sí (§17, el veredicto). Buscá en el RPT las líneas `[AR]` o abrí `profiles/BZ_AutoDrive/AR_log.csv`: te dicen el waypoint y qué pasó. Si siempre es el mismo punto, andá a verlo en el mapa.
 - **La ruta se corta en el mismo lugar cada vez y no hay nada ahí** → mirá la pendiente y la velocidad grabada en ese tramo. Una bajada que se empina de golpe, tomada a alta velocidad, puede hacer que el vehículo toque el terreno con la trompa.
 - **El vehículo aparece hundido y no arranca** → al spawnear, el RPT escribe un bloque **`[SpawnProbe]`** (a los 1,5 s y a los 3,5 s) con la altura del vehículo respecto del piso y cuántas ruedas tocan el suelo. Si dice **`RESUMEN: 0/4 ruedas en contacto`**, nació apoyado sobre la carrocería y no va a poder moverse. Es un caso raro, visto en un solo vehículo de terceros; si te pasa, reportalo con ese bloque.
 - **La ruta vuelve a largarse sola mientras estoy probando otra cosa** → es la **ruta por defecto** del server (o una lanzada por API), que se re-lanza a los `RespawnDelay` segundos (300 por default; `0` vale 60 s, no la apaga — §8). Las que largás desde el Reproductor no se re-lanzan. Para que no moleste mientras probás, pará ese runner con **[]** en el panel.
@@ -1922,6 +2009,21 @@ Aparte del `ai_run` (la telemetría de diagnóstico), el framework puede grabar 
 **Es OPT-IN.** Se arma **tildando el check `boris_native` en el Reproductor ANTES de dar play** (§13). Vive en el **server que corrió a Boris**: `<server>\profiles\BZ_AutoDrive_PathLogger\boris_native_*.csv` (uno por corrida, con timestamp — nunca se pisa).
 
 > **⚠ Igual que el `ai_run`: es MEDICIÓN, no una toma nueva.** No se lo des al wizard como grabación — realimentar la salida de Boris **clona sus errores** (§15.1, *model collapse*). Sirve para **comparar** contra tu grabación humana (la fuente de verdad), no para regenerar la ruta.
+
+
+### 15.3 — Diagnóstico y cajas negras: `Diagnostics` y `BlackBox` *(desde la 1.2.1)*
+
+Dos perillas en `profiles\BZ_AutoDrive\BZAutoDrive_settings.json`, las dos **apagadas por defecto**. Se leen **al arrancar el server** (cambiarlas pide reiniciar).
+
+```json
+"Diagnostics": 1,
+"BlackBox": 1,
+"BlackBoxKeepPerRoute": 10
+```
+
+- **`Diagnostics`** — con `0` (el default) el RPT queda en lo esencial: la carga, el fin de cada ruta (`REPOSO` y `FIN`), los errores y cada intervención del AutoRecovery. Las líneas que se repiten mientras el vehículo anda (la dirección a cada paso, el latido de cada ruta, el `SLAM` de la llegada, los rescates del cursor…) solo salen con `1`. Con rutas en marcha, apagado el RPT pesa **más de un 90 % menos**. Prendelo cuando algo no anda y tengas que mirar.
+- **`BlackBox`** — con `1` cada corrida escribe su caja negra, `profiles\BZ_AutoDrive\BZ12_LOG_<ruta>_<hora>.csv`: el estado del vehículo y del cerebro 40 veces por segundo (posición, velocidad, pedales, volante, el desvío de costado, el modo, quién manda). Es lo que se usa para entender una falla fina. Con `0` no se escribe nada.
+- **`BlackBoxKeepPerRoute`** — cuántas cajas se guardan por ruta; las más viejas se borran solas (el registro va en `BZ12_LOG_indice.txt`). Default **10**.
 
 ---
 
@@ -1992,7 +2094,8 @@ Para que sepas qué pedirle al framework y qué no:
 - **Maniobras (parking / reversa / K-turn):** el **intercambio reversa→forward** —el punto más exigente del control, un K-turn adentro de un galpón— está **resuelto**: se **auto-detecta del cambio de sentido** que hiciste al grabar (no hace falta marcarlo — §9.4), funciona con reglas físicas y **sin constantes por-vehículo**, y se probó en un banco amplio (Golf FWD, BMW E60, OffroadHatchback, Hatchback FWD, Porsche GT2RS motor-central, Sedan, Toyota 86 RWD y el camión Truck_01) con **0 rescates de AutoRecovery**.
   **La condición es tuya y es una sola: hacé el cambio de sentido en recta, no en curva** (§9.5). Los ángulos de volante de la reversa son del vehículo, no del camino.
   **Para la misma ruta en otro vehículo, grabala con ese vehículo** — con una maniobra de por medio es lo único que generaliza.
-- **Precisión de llegada (endpoint).** El freno final se arma con lo que declara el config del vehículo y lo que se midió de él (cuanto más rápido llega, antes se arma: con la distancia de frenado que pide su velocidad real, más un margen), y **estaciona unos 10 cm antes del punto**, a propósito. El objetivo es quedar a menos de **0,25 m** del punto final; al cerrar una maniobra o un cambio de sentido, **0,10 m**. Si el freno final se enganchó y el vehículo quedó entre 0,25 m y **1 m**, la ruta cuenta igual como **completa** (sigue su ciclo normal) y el RPT lo avisa: `[C12] LLEGADA fuera de la tolerancia estricta: <distancia> m`. De una moto a un bus, la misma regla: no se relaja por tamaño, porque el framework tiene que servir para vehículos que todavía no conocemos. Un bus que llega a 0,39 m figura como completo, con ese aviso: el aviso es la señal de que esa llegada no alcanzó la precisión de siempre. **Los números, vehículo por vehículo, en §17.1.**
+- **Precisión de llegada (endpoint).** El freno final se arma con lo que declara el config del vehículo y lo que se midió de él (cuanto más rápido llega, antes se arma: con la distancia de frenado que pide su velocidad real, más un margen), y **estaciona unos 10 cm antes del punto**, a propósito. El freno se planea con **la frenada que mediste vos en la toma** cuando la toma termina frenando a fondo (`[C12] FRENADA de la toma: 5.4 m/s2 …` en el RPT): el freno que declara el config suele ser optimista. De una moto a un bus, la misma regla: no se relaja por tamaño, porque el framework tiene que servir para vehículos que todavía no conocemos. **Los números, vehículo por vehículo, en §17.1.**
+- **El veredicto: cuándo una ruta está completa** *(desde la 1.2.1)*. El fin de ruta se decide **con el vehículo quieto**: medio segundo después de detenerse (a lo sumo unos 3 s después de llegar) sale `[C12] REPOSO tras T s: a X m de la pose final (longitudinal a m, lateral l m)`, y enseguida el `FIN`. `ROUTE_COMPLETE` exige **las tres**: (1) en reposo, a **0,25 m o menos** del punto final de la toma; (2) **ningún choque contra un objeto** en toda la corrida (un bache o un golpe contra el terreno no cuentan); (3) **ninguna intervención física del AutoRecovery** (maniobra o re-ubicación; los re-arranques suaves no cuentan, pero se listan). Si falla alguna, `ROUTE_INCOMPLETE`, y la misma línea dice por qué: `quedo a X m de la pose final en reposo`, `choco contra un objeto: wp N contra <clase>`, `AR fisico con accion: wp N <accion>`. Vale igual para autos y motos. *(En la 1.2 una llegada entre 0,25 m y 1 m contaba como completa con un aviso: ya no.)*
 - **Qué vehículos probamos.** Más de 40 clases de varios autores: autos, deportivos, 4x4, furgones, buses, camiones (hasta 7,5 m de batalla), militares, tractores y motos (§17.1).
 - **Lo que NO hace:** no inventa rutas (necesita tu grabación) ni descubre comportamiento más allá de lo que demostraste. Es determinista e inspeccionable — esa es su gracia.
 
@@ -2003,7 +2106,7 @@ Para que sepas qué pedirle al framework y qué no:
 Estos números salen de los logs del servidor de pruebas, **con el cerebro 1.2**. Cada fila es un vehículo y cada "llegada" es una corrida que terminó su ruta; la distancia es la que quedó entre el vehículo y el punto final grabado.
 
 **Cómo leerla:**
-- **La mediana ronda los 0,10-0,20 m a propósito.** El freno final estaciona unos **10 cm antes** del punto: pasarse es peor que quedarse corto. El objetivo es **0,25 m**; entre 0,25 m y 1 m la ruta cuenta como completa, con un aviso en el RPT.
+- **La mediana ronda los 0,10-0,20 m a propósito.** El freno final estaciona unos **10 cm antes** del punto: pasarse es peor que quedarse corto. El objetivo es **0,25 m**: desde la 1.2.1, más que eso en reposo es `ROUTE_INCOMPLETE` (el veredicto, arriba). *(Los números de esta tabla son de la 1.2; con la 1.2.1, en las rutas de prueba, las llegadas quedan en 0,10-0,15 m.)*
 - **p90** = 9 de cada 10 llegadas quedaron a esa distancia o menos.
 - **Las corridas que no llegaron no están en la tabla**: se cuentan aparte, abajo.
 - Una corrida repetida desde el mismo punto de salida puede dar casi el mismo número: más llegadas no siempre son más variedad.
@@ -2473,8 +2576,9 @@ Lo que tenés que saber:
 | `IsHeld()` | `bool`: detenido en una parada o por `HoldRunner()`, esperando que lo sueltes. El paso de `false` a `true` es "llegó a una parada" |
 | `RunnerIsPaused()` | `bool`: la pausa blanda (`SetPaused`). **No es lo mismo que el hold** |
 | `RunnerRouteEnded()` | `bool`: el cerebro cerró la ruta; desde ahí nadie maneja el vehículo |
-| `RunnerRouteCompleted()` | `bool`: y la cerró llegando (no rendida ni trabada). También es `true` en una llegada con aviso, entre 0,25 m y 1 m |
-| `RunnerEndReason()` | `string`: vacío mientras corre; al cerrar, el motivo (`ROUTE_COMPLETE en wp N ...`, `ROUTE_INCOMPLETE ...`, `STUCK en wp N (escalera del AR agotada: declarado)`) |
+| `RunnerRouteCompleted()` | `bool`: y la cerró completa, con el veredicto estricto (en reposo a ≤ 0,25 m, sin choque contra un objeto, sin intervención física del AutoRecovery: §17). *(En la 1.2 era `true` también entre 0,25 m y 1 m: ya no)* |
+| `RunnerReposoFinM()` | `float`: la distancia en reposo al punto final con la que se decidió el veredicto; `-1` mientras corre, y si la ruta terminó por otra vía (`STUCK`, `StopRunner`). Autos y motos *(desde la 1.2.1)* |
+| `RunnerEndReason()` | `string`: vacío mientras corre; al cerrar, el motivo (`ROUTE_COMPLETE en wp N ...`, `ROUTE_INCOMPLETE ...`, `STUCK en wp N (escalera del AR agotada: declarado)`). Desde la 1.2.1 termina con ` · REPOSO tras T s: a X m de la pose final (longitudinal …, lateral …)` y, en un `ROUTE_INCOMPLETE`, trae los motivos encadenados |
 | `RunnerFellBackTo11()` | `bool`: la ruta no se pudo cargar para el cerebro 1.2 y la maneja el 1.1. El vehículo anda igual |
 | `RunnerBloqueado()` | `bool`: el AutoRecovery está tratando de destrabarlo (§9.6). **Es un obstáculo para los demás** |
 | `RunnerBloqueadoMotivo()` / `RunnerBloqueadoDesdeS()` | por qué (con el último choque, si hubo) / desde hace cuántos segundos |
@@ -2519,9 +2623,9 @@ El cerebro emite estos eventos y **el runner los consume él mismo** (la cola es
 | Valor | Nombre | Significado | ¿Cierra la ruta? |
 |---|---|---|---|
 | 1 | `ARRIVED` | llegó a una parada intermedia | no |
-| 2 | `ROUTE_COMPLETE` | llegó al final | sí |
+| 2 | `ROUTE_COMPLETE` | llegó al final y cumple el veredicto (§17). Sale **en el reposo**: hasta ~3,5 s después de llegar | sí |
 | 3 | `STUCK` | trabado, con la escalera del AutoRecovery agotada | sí |
-| 4 | `ROUTE_INCOMPLETE` | terminó sin llegar: quedó a más de 1 m del punto final, una maniobra no cerró, o un tramo se cerró sin progreso | sí |
+| 4 | `ROUTE_INCOMPLETE` | terminó sin cumplir el veredicto: quedó a más de 0,25 m en reposo, chocó contra un objeto, el AutoRecovery tuvo que moverlo, una maniobra no cerró, o un tramo se cerró sin progreso. También sale en el reposo | sí |
 | 5 | `BLOQUEADO` | el AutoRecovery empezó a destrabarlo (un aviso por vez) | **no** |
 
 Tu mod ve lo mismo consultando los métodos de B.7.2 una vez por segundo, que es lo que hacen los mods que ya lo usan.
@@ -2533,8 +2637,10 @@ Tu mod ve lo mismo consultando los métodos de B.7.2 una vez por segundo, que es
 | `[C12] BLOQUEADO en wp N · <motivo>` / `[C12] BLOQUEO terminado tras X s` | se abre / se cierra un intento de destrabarlo. Por vehículo, tiene que haber tantas de una como de la otra |
 | `[BZDrive] *** CHOQUE #N *** ...` / `... episodio cerrado: K impactos ...` | un choque (uno por episodio: los golpes a menos de 5 s del anterior se cuentan juntos) / el resumen, si hubo más de un golpe |
 | `[BZDrive] *** BACHE #N ***` | una frenada brusca por el terreno, sin contacto: no es un choque |
+| `[C12] REPOSO tras T s: a X m de la pose final (longitudinal a m, lateral l m)` | el vehículo quedó quieto al final; con esto se decide el veredicto *(1.2.1)* |
+| `[C12] FIN: ROUTE_COMPLETE en wp N · cierre: … · REPOSO tras …` / `*** ROUTE_INCOMPLETE en wp N · <motivos> · …` | el cierre de la ruta, con el veredicto y sus motivos |
 | `[C12] FIN: STUCK en wp N (<motivo>: declarado)` | la ruta se cerró trabada, con el motivo real |
-| `[C12] LEG N cerrado · <motivo> · ...` | se cerró un tramo (útil en los cambios de sentido) |
+| `[C12] LEG N cerrado · <motivo> · remFr X m · lat Y m · … · la ultima parada grabada de la fase (cuadro K) queda a Z m` | se cerró un tramo (útil en los cambios de sentido). `lat` es el desvío de costado; la distancia a **la última parada grabada** es la referencia fiel de dónde paraste vos |
 | `[SpawnGuard] wp0 ocupado ...: el runner ESPERA ...` / `cabecera libre tras T s ...` | espera por el punto de salida ocupado / se liberó |
 | `[SpawnBus] quedo: ...` / `[Continuar] quedo: ...` | dónde quedó el vehículo 3 s después de aparecer, y cuánto se desvió de lo pedido |
 | `[AR] <ruta> wp N · FISICO (<evidencia>) · escalon K: ...` | cada paso de la escalera; también en `AR_log.csv` |

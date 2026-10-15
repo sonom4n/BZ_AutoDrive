@@ -48,8 +48,17 @@ class BZCintaMuestra
     // codifica DayZ la R; medido: REVrecta 813/849 frames gear 0). El controller
     // chequea coherencia con el leg y espeja el termino de rumbo del iman.
     bool enReversa;
+    // el clamp de borde RETUVO el cursor en esta consulta: la cinta no tiene mas filas de esta fase (el leg se agoto)
+    bool borde;
     // E3: el error que el iman corrige, FIRMADO.
     float latM;       // lateral puro a la linea grabada; + = vehiculo a la DERECHA
+    // MOTO (columnas opcionales 12 y 13 de la cinta): el comando de direccion grabado (-9 = la cinta no lo trae) y
+    // si el cursor esta en la fila donde la toma retoma despues de un tramo no reproducible (la moto empujada en N)
+    float steer = -9;
+    int   corte = 0;
+    // MOTO (columna opcional 14): la inclinacion de la toma en el punto (grados; -99 = la cinta no la trae). Las guardas
+    // de inclinacion del conductor de moto son relativas a ella: lo que el humano inclino ahi se permite
+    float roll = -99;
     float headingDeg; // rumbo grabado en el punto (convencion atan2(dx,dz), grados
                       // — la MISMA de st.yaw=BZMath.HeadingXZ, verificada contra la
                       // toma: err mediana 0.03 deg)
@@ -87,6 +96,17 @@ class BZCintaRunner
     // puede arrancar": Novodmitrovsk clavo un bus con v grabada 0,02 y hay dos puntos mas entre 0,5 y 1. Es el mismo
     // umbral para FinMesetaAdelante/InicioMesetaAdelante (el re-arme de cae ~10 cm mas adelante, en la salida).
     private const float MESETA_KMH = 1.0;   // v grabada por debajo = detenido a efectos practicos
+    // la FRENADA FINAL de la toma: el pedal grabado a fondo (>= FRENADA_PEDAL) hasta que la v grabada cae bajo
+    // FRENADA_FIN_KMH; vale como medicion si arranca desde >= FRENADA_V0_KMH, recorre >= FRENADA_DS_M y dura >= FRENADA_CUADROS
+    private const float FRENADA_PEDAL = 0.9;
+    private const float FRENADA_FIN_KMH = 1.0;
+    private const float FRENADA_V0_KMH = 8.0;
+    private const float FRENADA_DS_M = 0.3;     // los umbrales del cusp: una parada fuerte desde 12 km/h dura 0,4-0,7 m
+    private const int   FRENADA_CUADROS = 12;   // y 17-19 cuadros (medido: 20 la dejaba "sin medicion" y el endpoint iba con el config)
+    private bool  m_FrenoTomaOk;
+    private float m_FrenoTomaMs2 = -1;
+    private float m_FrenoTomaV0Kmh;
+    private float m_FrenoTomaDsM;
     private int m_MesetaIni = -1;           // frame de entrada de la meseta en curso (-1 = ninguna)
     private int m_MesetaFin = -1;           // ultimo frame de la meseta en curso
     private int m_MesetaLlamadas = 0;       // consultas reproducidas adentro
@@ -104,6 +124,11 @@ class BZCintaRunner
     private ref array<float> m_Brk;
     private ref array<float> m_Kmh;
     private ref array<int>   m_Gear;
+    private ref array<float> m_Str;    // MOTO: columna 12 (steering grabado); -9 si la cinta no la trae
+    private ref array<int>   m_Corte;  // MOTO: columna 13 (1 = retoma despues de un tramo no reproducible)
+    private ref array<float> m_Roll;   // MOTO: columna 14 (roll de la toma, grados); -99 si la cinta no la trae
+    private ref array<float> m_Camina; // MOTO: columna 15 (la velocidad FIRMADA de la toma en un tramo caminado, m/s:
+                                       // + adelante, - atras; 0 fuera de los tramos o si la cinta no la trae)
     private int  m_Count;
     private int  m_Cursor;
     private bool m_Valida;
@@ -215,6 +240,10 @@ class BZCintaRunner
         m_Brk = new array<float>();
         m_Kmh = new array<float>();
         m_Gear = new array<int>();
+        m_Str = new array<float>();
+        m_Corte = new array<int>();
+        m_Roll = new array<float>();
+        m_Camina = new array<float>();
         m_Count = 0;
         m_Cursor = 0;
         m_Valida = false;
@@ -561,6 +590,224 @@ class BZCintaRunner
         return loF;
     }
 
+    // la cuerda del anclaje: el primer cuadro despues de j, hasta hi, con una cuerda de >= pasoMin desde j y del MISMO
+    // tramo (la cuerda no cruza de fase); -1 si no hay
+    private int FinDeCuerda(int j, int hi, float pasoMin)
+    {
+        int k = j + 1;
+        int trJ = -1;
+        if (m_FrameTramo && j < m_FrameTramo.Count()) trJ = m_FrameTramo.Get(j);
+        while (k <= hi)
+        {
+            if (trJ >= 0 && k < m_FrameTramo.Count() && m_FrameTramo.Get(k) != trJ) return -1;
+            float cx = m_X.Get(k) - m_X.Get(j);
+            float cz = m_Z.Get(k) - m_Z.Get(j);
+            if (cx * cx + cz * cz >= pasoMin * pasoMin) return k;
+            k = k + 1;
+        }
+        return -1;
+    }
+
+    // MOTO (amortiguamiento de la ley lateral): la curvatura GRABADA en el arco s (rad/m, + a la derecha, la convencion
+    // del rumbo), dpsi/ds del rumbo grabado entre s - mitadM y s + mitadM. Por la velocidad de la moto da la tasa de giro
+    // de la referencia (en MOPED_130_01R, contra el yaw_rate del frame_: r 0,92, pendiente 0,98 con mitadM 0,5)
+    float CurvaturaEn(float s, float mitadM)
+    {
+        if (!m_Valida || m_Count < 2) return 0;
+        int aC = FrameDe(s - mitadM);
+        int bC = FrameDe(s + mitadM);
+        float dsC = m_S.Get(bC) - m_S.Get(aC);
+        if (dsC < 0.2) return 0;
+        float dhC = m_H.Get(bC) - m_H.Get(aC);
+        while (dhC > 180.0) dhC = dhC - 360.0;
+        while (dhC < -180.0) dhC = dhC + 360.0;
+        return dhC * Math.DEG2RAD / dsC;
+    }
+
+    // MOTO: la velocidad maxima admisible AHORA (km/h) para llegar a la grabada de mas adelante frenando a `a` m/s2,
+    // mirando `alcanceM` metros de arco desde sEst: min(vObj, raiz(v_k^2 + 2 a ds)). La anticipacion del conductor de
+    // moto (con la moto en la toma, la referencia es la grabada; solo baja si viene mas rapido de lo que puede frenar)
+    float VelAdmisibleKmh(float sEst, float alcanceM, float a, float vObj)
+    {
+        float refV = vObj;
+        int kA;
+        for (kA = m_Cursor + 1; kA < m_Count; kA++)
+        {
+            float dsA = m_S.Get(kA) - sEst;
+            if (dsA > alcanceM) break;
+            if (dsA < 0) dsA = 0;
+            float vkA = m_Kmh.Get(kA) / 3.6;
+            float admA = Math.Sqrt(vkA * vkA + 2.0 * a * dsA) * 3.6;
+            if (admA < refV) refV = admA;
+        }
+        return refV;
+    }
+
+    // MOTO: la cinta trae el steering grabado (columna 12)
+    bool TieneSteering()
+    {
+        if (m_Count < 1 || m_Str.Count() != m_Count) return false;
+        return m_Str.Get(0) > -5;
+    }
+
+    // MOTO (columna 15): lo que el conductor necesita para caminar un tramo de la toma, por frame
+    // ★ LA FRENADA A FONDO QUE LA TOMA DEMOSTRO: a = v0^2 / (2 ds) sobre su parada final (desde la primera fila con el
+    // pedal a fondo hasta la ultima rodando). Es lo que ESTE vehiculo hizo con el pedal a fondo en ESTE lugar; el manual
+    // deriva el freno del par de frenos del config y la fisica no lo entrega (medido: 8,5 declarados, 5,5 reales).
+    // -1 si la toma no termina con una frenada a fondo medible (parada suave, o termina rodando).
+    float FrenadaFinalMS2()
+    {
+        if (m_FrenoTomaOk) return m_FrenoTomaMs2;
+        m_FrenoTomaOk = true;
+        m_FrenoTomaMs2 = -1;
+        if (!m_Valida) return -1;
+        int fin = m_Count - 1;
+        while (fin > 0 && m_Kmh.Get(fin) < FRENADA_FIN_KMH) fin = fin - 1;   // el reposo del final
+        if (fin <= 0) return -1;
+        if (m_Brk.Get(fin) < FRENADA_PEDAL) return -1;   // no paro con el pedal
+        int ini = fin;
+        while (ini > 0 && m_Brk.Get(ini - 1) >= FRENADA_PEDAL) ini = ini - 1;
+        float v0Kmh = m_Kmh.Get(ini);
+        float ds = m_S.Get(fin) - m_S.Get(ini);
+        if (v0Kmh < FRENADA_V0_KMH || ds < FRENADA_DS_M || fin - ini + 1 < FRENADA_CUADROS) return -1;
+        float v0 = v0Kmh / 3.6;
+        m_FrenoTomaV0Kmh = v0Kmh;
+        m_FrenoTomaDsM = ds;
+        m_FrenoTomaMs2 = (v0 * v0) / (2.0 * ds);
+        return m_FrenoTomaMs2;
+    }
+    float FrenadaFinalV0Kmh() { return m_FrenoTomaV0Kmh; }
+
+    // ★ LA FRENADA DEL CUSP: la parada grabada (bloque con v < MESETA_KMH) mas cercana a `pose` (la pose final del leg) y el
+    // pedal a fondo que la precede: a = v0^2 / (2 ds), como la parada final (FrenadaFinalMS2) pero con umbrales de cusp
+    // (los cusps se toman a 7-10 km/h en 0,4-0,7 m). Dentro de una misma toma las paradas a fondo dan 4-7 m/s2: la
+    // capacidad depende de la velocidad y del lugar, por eso se mide la de ESE cusp y no la de la llegada.
+    // -1 sin parada grabada a menos de FRENADA_POSE_M de la pose, o sin pedal a fondo medible antes de ella.
+    private const float FRENADA_POSE_M = 2.0;
+    private const float FRENADA_CUSP_V0_KMH = 5.0;
+    private const float FRENADA_CUSP_DS_M = 0.3;
+    private const int   FRENADA_CUSP_CUADROS = 12;
+    float FrenadaAntesDePoseMS2(vector pose, out float v0Kmh, out float dsM, out int cuadros)
+    {
+        v0Kmh = 0;
+        dsM = 0;
+        cuadros = 0;
+        if (!m_Valida) return -1;
+        int kStar = -1;
+        float dMin2 = FRENADA_POSE_M * FRENADA_POSE_M;
+        int k;
+        for (k = 0; k < m_Count; k++)
+        {
+            float dxk = pose[0] - m_X.Get(k);
+            float dzk = pose[2] - m_Z.Get(k);
+            float d2k = dxk * dxk + dzk * dzk;
+            if (d2k < dMin2)
+            {
+                dMin2 = d2k;
+                kStar = k;
+            }
+        }
+        if (kStar < 0) return -1;
+        // el bloque de parada que contiene ese cuadro, o el que sigue (la pose suele caer en su entrada), o el anterior
+        int p = kStar;
+        while (p < m_Count - 1 && m_Kmh.Get(p) >= MESETA_KMH && m_S.Get(p) - m_S.Get(kStar) < 1.0) p = p + 1;
+        if (m_Kmh.Get(p) >= MESETA_KMH)
+        {
+            p = kStar;
+            while (p > 0 && m_Kmh.Get(p) >= MESETA_KMH && m_S.Get(kStar) - m_S.Get(p) < 1.0) p = p - 1;
+        }
+        if (m_Kmh.Get(p) >= MESETA_KMH) return -1;
+        int iniP = p;
+        while (iniP > 0 && m_Kmh.Get(iniP - 1) < MESETA_KMH) iniP = iniP - 1;
+        int j0 = iniP;
+        while (j0 > 0 && m_Brk.Get(j0 - 1) >= FRENADA_PEDAL) j0 = j0 - 1;
+        cuadros = iniP - j0;
+        if (cuadros < FRENADA_CUSP_CUADROS) return -1;
+        v0Kmh = m_Kmh.Get(j0);
+        dsM = m_S.Get(iniP) - m_S.Get(j0);
+        if (v0Kmh < FRENADA_CUSP_V0_KMH || dsM < FRENADA_CUSP_DS_M) return -1;
+        float v0 = v0Kmh / 3.6;
+        return (v0 * v0) / (2.0 * dsM);
+    }
+    float FrenadaFinalDsM() { return m_FrenoTomaDsM; }
+
+    // la ULTIMA PARADA GRABADA de la fase que contiene el cursor (el ultimo cuadro con v grabada < MESETA_KMH antes del
+    // fin del tramo): distancia desde `pos` y el cuadro. -1 si la fase no tiene parada. Para el cierre de leg: la pose
+    // del leg es un wp del conversor y puede quedar a 0,4-0,5 m de donde la toma paro de verdad.
+    float DistUltimaParadaDeFase(vector pos, bool esperaRev, out int cuadro)
+    {
+        int iniP = -1;
+        int finP = -1;
+        cuadro = -1;
+        if (!UltimaParadaDeFase(esperaRev, iniP, finP)) return -1;
+        cuadro = finP;
+        float dxp = pos[0] - m_X.Get(finP);
+        float dzp = pos[2] - m_Z.Get(finP);
+        return Math.Sqrt(dxp * dxp + dzp * dzp);
+    }
+
+    // el bloque de cuadros de la ULTIMA parada grabada (v < MESETA_KMH) de la fase que contiene el cursor: [ini, fin].
+    // false si la fase no tiene parada.
+    private bool UltimaParadaDeFase(bool esperaRev, out int iniP, out int finP)
+    {
+        iniP = -1;
+        finP = -1;
+        if (!m_Valida || !m_TramoS || m_TramoS.Count() == 0) return false;
+        int tr = TramoDe(m_SEst);
+        while (tr > 0 && m_TramoRev.Get(tr) != esperaRev) tr = tr - 1;
+        if (tr < 0 || m_TramoRev.Get(tr) != esperaRev) return false;
+        int fin = m_Count - 1;
+        if (tr + 1 < m_TramoIdx.Count()) fin = m_TramoIdx.Get(tr + 1) - 1;
+        int ini = m_TramoIdx.Get(tr);
+        int k = fin;
+        while (k > ini && m_Kmh.Get(k) >= MESETA_KMH) k = k - 1;
+        if (k <= ini) return false;
+        finP = k;
+        while (k > ini && m_Kmh.Get(k - 1) < MESETA_KMH) k = k - 1;
+        iniP = k;
+        return true;
+    }
+
+    // ★ EL LEG SE CIERRA EN LA ULTIMA PARADA GRABADA. Una toma puede parar, arrastrarse (a < 3 km/h, sin freno) y volver a
+    // parar antes del cambio de sentido: el cierre aceptaba la PRIMERA parada (medido: 3,1 m antes de la pose, con la
+    // meseta de 6 s sin cumplir, y la reversa arrancaba 3 m corrida con un AR de regalo). 0 = la fase no tiene parada
+    // grabada (el cierre decide como antes), 1 = el cursor esta en la ultima parada (o a ULT_PARADA_ATRAS_M de arco de
+    // su entrada: el cursor puede venir corto), 2 = todavia no: quedan filas por reproducir.
+    private const float ULT_PARADA_ATRAS_M = 0.3;
+    int ParadaDeFase(bool esperaRev)
+    {
+        int iniP = -1;
+        int finP = -1;
+        if (!UltimaParadaDeFase(esperaRev, iniP, finP)) return 0;
+        if (m_SEst >= m_S.Get(iniP) - ULT_PARADA_ATRAS_M) return 1;
+        return 2;
+    }
+
+    int Frames() { return m_Count; }
+    float SDeFrame(int k) { return m_S.Get(k); }
+    vector PosDeFrame(int k) { return Vector(m_X.Get(k), m_Y.Get(k), m_Z.Get(k)); }
+    float RumboDeFrame(int k) { return m_H.Get(k); }
+    float FwDeFrame(int k) { return m_Fw.Get(k); }
+    float CaminaDeFrame(int k)
+    {
+        if (m_Camina.Count() != m_Count) return 0;
+        return m_Camina.Get(k);
+    }
+    float SteerDeFrame(int k)
+    {
+        if (m_Str.Count() != m_Count) return 0;
+        float stF = m_Str.Get(k);
+        if (stF < -5) return 0;
+        return stF;
+    }
+
+    // MOTO: la cinta trae el roll de la toma (columna 14)
+    bool TieneRoll()
+    {
+        if (m_Count < 1 || m_Roll.Count() != m_Count) return false;
+        return m_Roll.Get(0) > -90;
+    }
+
     float SFin()
     {
         if (!m_Valida || m_Count < 1) return 0;
@@ -621,7 +868,7 @@ class BZCintaRunner
         m_MesetaFin = -1;
         m_MesetaUltFin = -1;
         if (m_FrameTramo && kA < m_FrameTramo.Count()) m_UltTramoOk = m_FrameTramo.Get(kA);
-        if (!BZDriveController.s_Quiet) Print("[Cinta] ANCLA (AR manual) · s_est -> " + m_SEst.ToString() + " · frame " + kA.ToString() + " · tramo " + m_UltTramoOk.ToString());
+        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] ANCLA (AR manual) · s_est -> " + m_SEst.ToString() + " · frame " + kA.ToString() + " · tramo " + m_UltTramoOk.ToString());
     }
 
     // FRENO GRABADO SOBRE UNA BAJADA, ADELANTE. Desde el cursor hasta sDesde + alcanceM busca el primer
@@ -767,6 +1014,18 @@ class BZCintaRunner
         m_Thr.Insert(tk.Get(7).ToFloat());
         m_Brk.Insert(tk.Get(8).ToFloat());
         m_Gear.Insert(tk.Get(9).ToInt());
+        float strF = -9;
+        if (tk.Count() > 12) strF = tk.Get(12).ToFloat();
+        m_Str.Insert(strF);
+        int corteF = 0;
+        if (tk.Count() > 13) corteF = tk.Get(13).ToInt();
+        m_Corte.Insert(corteF);
+        float rollF = -99;
+        if (tk.Count() > 14) rollF = tk.Get(14).ToFloat();
+        m_Roll.Insert(rollF);
+        float caminaF = 0;
+        if (tk.Count() > 15) caminaF = tk.Get(15).ToFloat();
+        m_Camina.Insert(caminaF);
         return true;
     }
 
@@ -873,13 +1132,13 @@ class BZCintaRunner
     void SembrarFase(bool esperaRev, vector pos)
     {
         if (!m_Valida || !m_TramoS) return;
-        if (!BZDriveController.s_Quiet) Print("[Cinta] CAMBIO-FASE(leg) a " + esperaRev.ToString() + " · s_est " + m_SEst.ToString() + " · ultConsumido " + m_UltTramoOk.ToString());
+        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] CAMBIO-FASE(leg) a " + esperaRev.ToString() + " · s_est " + m_SEst.ToString() + " · ultConsumido " + m_UltTramoOk.ToString());
         int kt;
         for (kt = m_UltTramoOk + 1; kt < m_TramoS.Count(); kt++)
         {
             if (m_TramoRev.Get(kt) == esperaRev)
             {
-                if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA tramo " + kt.ToString() + " · s_est -> " + m_TramoS.Get(kt).ToString());
+                if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] SIEMBRA tramo " + kt.ToString() + " · s_est -> " + m_TramoS.Get(kt).ToString());
                 m_SEst = m_TramoS.Get(kt);
                 m_Cursor = m_TramoIdx.Get(kt);
                 m_TicksLejos = 0;
@@ -944,7 +1203,7 @@ class BZCintaRunner
             m_MesetaFin = -1;
             m_MesetaUltFin = -1;
             m_PrevQOk = false;   // mismo enganche sembrado que la pass-1
-            if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA-REANCLA tramo " + ktR.ToString() + " · s_est -> " + m_SEst.ToString() + " · dist " + Math.Sqrt(dMin).ToString() + " m (monotonia re-armada)");
+            if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] SIEMBRA-REANCLA tramo " + ktR.ToString() + " · s_est -> " + m_SEst.ToString() + " · dist " + Math.Sqrt(dMin).ToString() + " m (monotonia re-armada)");
             return;
         }
         if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA SIN BLANCO (no hay tramo de la fase nueva despues de " + m_UltTramoOk.ToString() + ")");
@@ -986,6 +1245,22 @@ class BZCintaRunner
     // de decenas de metros es cm). Teleport/respawn (salto de consulta grande)
     // resetea la odometria a proyeccion global corta.
     private const float ANCLA_PASO_M = 0.25;
+    // ★ EL ANCLAJE POR CUERDA (las dos fases, solo con el casco rodando). En un tape lento (5-15 km/h) los cuadros estan
+    // a 5-10 cm, por debajo de ANCLA_PASO_M: el ancla cuadro a cuadro nunca se acepta ("nudo denso", ver abajo) y el
+    // cursor corre por odometria pura hasta el rescate (distM > RESCATE_M durante RESCATE_TICKS). Y la odometria queda
+    // CORTA donde la toma es lenta: el s grabado se infla con el ruido de posicion de la grabacion (medido sobre las
+    // cintas: las cuerdas crudas de sus posiciones dan 3-7 % mas que su s a 5-15 km/h y 1,000 de 20 km/h en adelante),
+    // y el casco real rueda suave y suma menos. Medido en una reversa final de -86 grados con el volante serruchado
+    // (OffroadHB02R): el cursor 1,3-1,6 m ATRAS del casco, el volante replayado en contrafase (+-17 grados) y |lat| 0,92
+    // m; con el cursor en su lugar el banco da 0,22. Y en AVANCE (CivSedan, leg de 12-16 km/h hacia un cusp): 5,5 %
+    // corto, LEJOS x12 SIN CANDIDATO, rescate de +1,29 m en plena curva y el leg cerrado 1,1-1,2 m de costado; en la
+    // version anterior el mismo leg arrancaba con el cursor 1,5 m ADELANTE (siembra imprecisa) y la deriva lo cancelaba.
+    // La ventana de anclas es la de cuadros (cursor-3..+6) AMPLIADA por arco (atras/adelante del s_est), y la cuerda de
+    // >= ANCLA_PASO_M se arma sobre varios cuadros del mismo tramo; las reglas de adopcion son las de siempre. En tapes
+    // de cuadros largos (>= 25 cm, alta velocidad) la cuerda es el cuadro siguiente: lo mismo que antes.
+    private const float ANCLA_ARCO_ATRAS_M = 0.5;
+    private const float ANCLA_ARCO_ADELANTE_M = 2.5;
+    private const int   ANCLA_ARCO_COTA = 400;
     static const float SALTO_CONSULTA_M = 8.0;   // la lee tambien el controlador (MarcarStopServido): UNA sola distancia de "llego a la meseta"
     // continuidad de arco del ancla (costo d² + (Δarco/λ)²).
     // λ=5: a Δarco 60 m el termino vale 144 m² — ninguna pasada ajena gana.
@@ -1057,7 +1332,9 @@ class BZCintaRunner
     // de rumbo opuesto eran inter-FASE (ya filtrados). El teleport real
     // (cruzado log-CSV × tramos) es intra-tramo: ver la invariante EL-ANCLA-
     // SOLO-ACERCA en la aceptacion, abajo.
-    bool Muestra(vector pos, BZCintaMuestra res, bool esperaRev)
+    // `rodando`: el consultante se mueve (>= el umbral de rodadura del controlador). La cuerda del anclaje se apaga sin eso:
+    // ver el bloque de la cuerda.
+    bool Muestra(vector pos, BZCintaMuestra res, bool esperaRev, bool rodando)
     {
         if (!m_Valida) return false;
         int j;
@@ -1135,6 +1412,31 @@ class BZCintaRunner
         if (hi > m_Count - 2) hi = m_Count - 2;
         float pasoMin = ANCLA_PASO_M;
         bool enRescate = false;
+        bool cuerda = false;
+        // ⚠ SOLO CON EL CASCO RODANDO. Con el vehiculo quieto en el cusp (la meseta grabada y los 0,3 s que tarda en
+        // moverse tras la salida) la proyeccion sobre la cuerda corria el cursor 5-10 cm ADELANTE, a cuadros grabados a
+        // 2,1-2,4 km/h; la guarda del AR lee la v grabada de la fila del cursor ("no es fila de salida" si > 2 km/h) y
+        // con el reposo acumulado en la meseta disparaba un FISICO 14-105 ms despues de la salida, con el vehiculo ya
+        // arrancando solo (medido en 3 de 8 rutas con tramo de cola; con el cursor por odometria, 0). Quieto, el cursor
+        // se queda en la fila de salida como siempre; al rodar, la cuerda vuelve y el final de la reversa no cambia.
+        // En las DOS fases (ver ANCLA_ARCO_*): en avance lento el torneo por cuadros consecutivos tampoco anclaba.
+        if (rodando)
+        {
+            // la ventana de cuadros ampliada por arco, y la cuerda sobre varios cuadros
+            cuerda = true;
+            int pasosR = 0;
+            while (lo > 0 && m_SEst - m_S.Get(lo) < ANCLA_ARCO_ATRAS_M && pasosR < ANCLA_ARCO_COTA)
+            {
+                lo = lo - 1;
+                pasosR = pasosR + 1;
+            }
+            pasosR = 0;
+            while (hi < m_Count - 2 && m_S.Get(hi) - m_SEst < ANCLA_ARCO_ADELANTE_M && pasosR < ANCLA_ARCO_COTA)
+            {
+                hi = hi + 1;
+                pasosR = pasosR + 1;
+            }
+        }
         if (!m_PrevQOk || m_TicksLejos >= RESCATE_TICKS)
         {
             // ventana ESPACIAL alrededor de s_est, ESCALONADA por fallos seguidos
@@ -1158,6 +1460,7 @@ class BZCintaRunner
             m_PrevQOk = true;
             m_TicksLejos = 0;
             pasoMin = RESCATE_PASO_M;
+            cuerda = false;   // el rescate escalonado sigue como siempre
         }
         float sx;
         float sz;
@@ -1178,6 +1481,8 @@ class BZCintaRunner
         // ganando porque no hay alternativa (espejo: recupera igual, 0.74 m).
         // Es la guarda anti-rama del rescate, extendida a la ELECCION del ancla.
         int mejor = -1;
+        int mejor2 = -1;   // el cuadro del final de la cuerda elegida (j + 1, o mas lejos con la cuerda armada)
+        int j2;
         float tmejor = 0;
         float dmin = 1000000000.0;
         float dPosMejor = 1000000000.0;
@@ -1203,10 +1508,22 @@ class BZCintaRunner
             }
             segEnRev = (m_Gear.Get(j) == 0);
             if (segEnRev != esperaRev) continue;      // fase equivocada: sin ancla
-            sx = m_X.Get(j + 1) - m_X.Get(j);
-            sz = m_Z.Get(j + 1) - m_Z.Get(j);
+            j2 = j + 1;
+            if (cuerda) j2 = FinDeCuerda(j, hi, pasoMin);
+            if (j2 < 0) continue;                      // no hay cuerda de largo suficiente en el tramo
+            sx = m_X.Get(j2) - m_X.Get(j);
+            sz = m_Z.Get(j2) - m_Z.Get(j);
             seg2 = sx * sx + sz * sz;
             if (seg2 < pasoMin * pasoMin) continue;   // nudo denso: sin ancla
+            // un RETROCESO GRABADO no es camino: la correccion de red de la toma deja cuadros que van hacia atras (medido:
+            // 2,4 m en una toma, 2,3 en otra; con ellos la cuerda seguia a la toma que retrocedia y el cursor saltaba
+            // atras 8 veces). La cuerda que va contra el rumbo grabado de su tramo se descarta; en reversa la cuerda va
+            // contra el morro por definicion, asi que ahi se descarta la que va A FAVOR. El cursor sigue por odometria
+            // mientras dura el retroceso y vuelve a anclar cuando la toma vuelve a avanzar.
+            float hRetJ = m_H.Get(j) * Math.DEG2RAD;
+            float haciaJ = sx * Math.Sin(hRetJ) + sz * Math.Cos(hRetJ);
+            if (!segEnRev && haciaJ < 0) continue;
+            if (segEnRev && haciaJ > 0) continue;
             t = ((pos[0] - m_X.Get(j)) * sx + (pos[2] - m_Z.Get(j)) * sz) / seg2;
             t = Math.Clamp(t, 0.0, 1.0);
             qx = m_X.Get(j) + sx * t;
@@ -1231,6 +1548,7 @@ class BZCintaRunner
                 dmin = costo;
                 dPosMejor = d2;
                 mejor = j;
+                mejor2 = j2;
                 tmejor = t;
             }
         }
@@ -1275,8 +1593,10 @@ class BZCintaRunner
             if (anclaOk)
             {
                 m_Cursor = mejor;
-                m_SEst = m_S.Get(mejor) + (m_S.Get(mejor + 1) - m_S.Get(mejor)) * tmejor;
+                m_SEst = m_S.Get(mejor) + (m_S.Get(mejor2) - m_S.Get(mejor)) * tmejor;
                 res.distM = distA;
+                // la cuerda de reversa abarca varios cuadros: el cursor camina hasta el cuadro del s_est
+                while (m_Cursor < m_Count - 2 && m_S.Get(m_Cursor + 1) <= m_SEst) m_Cursor = m_Cursor + 1;
             }
         }
         if (!anclaOk)
@@ -1289,7 +1609,7 @@ class BZCintaRunner
         }
         // instrumentacion del cusp: en estado LEJOS, la decision del
         // ancla completa, cada 8 ticks (~5 Hz) para no inundar
-        if (res.distM > RESCATE_M && !BZDriveController.s_Quiet)
+        if (res.distM > RESCATE_M && !BZDriveController.s_Quiet && BZDiag.On())
         {
             m_DiagLejos = m_DiagLejos + 1;
             if ((m_DiagLejos % 8) == 1)
@@ -1343,6 +1663,15 @@ class BZCintaRunner
         res.thr   = m_Thr.Get(m_Cursor) + (m_Thr.Get(b) - m_Thr.Get(m_Cursor)) * t;
         res.brk   = m_Brk.Get(m_Cursor) + (m_Brk.Get(b) - m_Brk.Get(m_Cursor)) * t;
         res.kmhRec = m_Kmh.Get(m_Cursor) + (m_Kmh.Get(b) - m_Kmh.Get(m_Cursor)) * t;
+        // MOTO: el steering grabado (si la cinta lo trae) y la marca de corte de la fila del cursor
+        res.steer = -9;
+        res.corte = 0;
+        if (m_Str.Count() == m_Count && m_Str.Get(m_Cursor) > -5 && m_Str.Get(b) > -5)
+            res.steer = m_Str.Get(m_Cursor) + (m_Str.Get(b) - m_Str.Get(m_Cursor)) * t;
+        if (m_Corte.Count() == m_Count) res.corte = m_Corte.Get(m_Cursor);
+        res.roll = -99;
+        if (m_Roll.Count() == m_Count && m_Roll.Get(m_Cursor) > -90 && m_Roll.Get(b) > -90)
+            res.roll = m_Roll.Get(m_Cursor) + (m_Roll.Get(b) - m_Roll.Get(m_Cursor)) * t;
         // E3: el error FIRMADO contra la linea grabada. El rumbo se interpola por
         // el camino corto (wrap) y la lateral es la componente sobre la normal
         // DERECHA del rumbo grabado: rn = (cos h, -sin h) con dir = (sin h, cos h).
@@ -1414,6 +1743,7 @@ class BZCintaRunner
         if (t > 0.5) res.gear = m_Gear.Get(b);
         else res.gear = m_Gear.Get(m_Cursor);
         res.enReversa = (res.gear == 0);
+        res.borde = clampeoBorde;
         // fase equivocada en el cursor = una forma de "lejos": alimenta el
         // contador del rescate (el distM chico del suelo superpuesto no lo hace)
         if (res.enReversa != esperaRev) m_TicksLejos = m_TicksLejos + 1;

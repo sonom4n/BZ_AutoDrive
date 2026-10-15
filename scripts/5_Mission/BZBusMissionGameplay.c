@@ -10,6 +10,13 @@ modded class MissionGameplay {
     // CTRL+NUMPAD 2/3/8/9 = spawn from slot file (test A/B/C/D).
     static bool s_BZ_CtrlHeld = false;
     private float m_DbgRefreshTimer = 0;   // debugger overlay (capa 2): refresh ~3Hz
+    // EL CIERRE DEL REPRODUCTOR POR SU TECLA EN LA 1.30 (medido, cliente): con el menu abierto la mision no ve la accion
+    // UABZAutoDrivePanel, el menu no recibe OnKeyDown y su Update no ve LocalPress; solo llega la tecla CRUDA al OnKeyPress
+    // de la mision. Como la accion es rebindeable, la tecla que la ABRIO (la cruda vista en OnKeyPress justo antes de que
+    // la accion dispare en OnUpdate) es la que cierra; INICIO (la de fabrica) y ESC cierran siempre.
+    static int s_BZ_TeclaPanel = KeyCode.KC_HOME;
+    private int m_BZ_TeclaCruda = -1;
+    private int m_BZ_TeclaCrudaMs = -100000;
 
     override void OnKeyRelease(int key) {
         super.OnKeyRelease(key);
@@ -60,9 +67,29 @@ modded class MissionGameplay {
         // El "abrir" mantiene el guard (no abrir desde la pantalla de Controles/rebinding ni otro menu).
         if (BZBusClientManager.s_IsControlPanelAdmin && BZIn("UABZAutoDrivePanel")) {
             if (BZReproductorUI.s_Instance) {
-                GetGame().GetUIManager().HideScriptedMenu(BZReproductorUI.s_Instance);
-            } else if (!GetGame().GetUIManager().GetMenu() && !GetGame().GetUIManager().IsDialogVisible()) {
+                // no se cierra en el toque que lo acaba de abrir (la tecla cruda puede haberlo abierto en este mismo cuadro)
+                if (GetGame().GetTime() - BZReproductorUI.s_AbiertoMs > 250) {
+                    BZReproductorUI.s_CierrePor = "tecla";
+                    GetGame().GetUIManager().HideScriptedMenu(BZReproductorUI.s_Instance);
+                }
+            } else if (!GetGame().GetUIManager().GetMenu() && !GetGame().GetUIManager().IsDialogVisible() && GetGame().GetTime() - BZReproductorUI.s_CerradoMs > 250) {
+                // (no se reabre en el toque que lo acaba de cerrar desde su Update: en la 1.29 los dos ven la tecla)
+                // la tecla cruda que acaba de disparar la accion es la que va a cerrar el panel (rebindeable)
+                // (medido: UAInput.Binding/GetBindKey vienen en otra numeracion que KeyCode (205959232 contra 199): no se
+                // comparan directo; por eso la tecla cruda)
+                if (m_BZ_TeclaCruda > 0 && GetGame().GetTime() - m_BZ_TeclaCrudaMs < 300) s_BZ_TeclaPanel = m_BZ_TeclaCruda;
                 GetGame().GetUIManager().EnterScriptedMenu(MENU_BZ_REPRODUCTOR, null);
+            } else if (BZDiag.On()) {
+                // diagnostico: la accion disparo y el panel no abre; se dice cual de las condiciones lo frena
+                UIScriptedMenu menuNo = GetGame().GetUIManager().GetMenu();
+                string menuNoCl = "ninguno";
+                if (menuNo) menuNoCl = menuNo.ClassName();
+                string dlgNo = "no";
+                if (GetGame().GetUIManager().IsDialogVisible()) dlgNo = "si";
+                int msNo = GetGame().GetTime() - BZReproductorUI.s_CerradoMs;
+                string lnNo = "[Reproductor] la tecla del panel NO abre: menu abierto = " + menuNoCl + " · dialogo visible = " + dlgNo;
+                lnNo = lnNo + " · ms desde el cierre por tecla = " + msNo.ToString();
+                BZBusLog.Info(lnNo);
             }
         }
 
@@ -122,6 +149,8 @@ modded class MissionGameplay {
     }
 
     override void OnKeyPress(int key) {
+        m_BZ_TeclaCruda = key;   // la ultima tecla cruda, para saber cual abrio el Reproductor (ver s_BZ_TeclaPanel)
+        m_BZ_TeclaCrudaMs = GetGame().GetTime();
         // 2026-06-09: track CTRL state para multi-slot
         if (key == KeyCode.KC_LCONTROL || key == KeyCode.KC_RCONTROL) {
             s_BZ_CtrlHeld = true;
@@ -141,10 +170,45 @@ modded class MissionGameplay {
             return;
         }
 
-        // Cerrar el Reproductor con ESC si esta abierto (el abrir es por el input system en OnUpdate)
-        if (BZReproductorUI.s_Instance && key == KeyCode.KC_ESCAPE) {
+        // Cerrar el Reproductor con ESC, con INICIO (la de fabrica) o con la tecla que lo abrio (s_BZ_TeclaPanel, la
+        // asignada a la accion) si esta abierto. En la 1.30 es el UNICO camino que llega con el menu abierto (medido).
+        // La tecla se CONSUME: no sigue a super, y las acciones de menu del vanilla (UAUIMenu/UAUIBack, que abren la pausa
+        // desde el OnUpdate del vanilla con el panel ya cerrado: medido con ESC) quedan suprimidas hasta soltarla.
+        if (BZReproductorUI.s_Instance && (key == KeyCode.KC_ESCAPE || key == KeyCode.KC_HOME || key == s_BZ_TeclaPanel)) {
+            if (GetGame().GetTime() - BZReproductorUI.s_AbiertoMs <= 250) return;   // el toque que lo acaba de abrir (o su repeticion): no lo cierra
+            BZReproductorUI.s_CierrePor = "tecla";
+            if (key == KeyCode.KC_ESCAPE) BZReproductorUI.s_CierrePor = "ESC";
+            BZReproductorUI.s_CerradoMs = GetGame().GetTime();
             GetGame().GetUIManager().HideScriptedMenu(BZReproductorUI.s_Instance);
-            super.OnKeyPress(key);
+            UAInput menuIn = GetUApi().GetInputByID(UAUIMenu);
+            if (menuIn) menuIn.Supress();
+            UAInput backIn = GetUApi().GetInputByID(UAUIBack);
+            if (backIn) backIn.Supress();
+            return;
+        }
+
+        // diagnostico: la tecla del panel con el panel cerrado (dice si la tecla LLEGA aunque la accion no dispare, y que
+        // menu hay abierto en ese momento)
+        if (BZDiag.On() && !BZReproductorUI.s_Instance && BZBusClientManager.s_IsControlPanelAdmin && (key == KeyCode.KC_HOME || key == s_BZ_TeclaPanel)) {
+            UIScriptedMenu menuTc = GetGame().GetUIManager().GetMenu();
+            string menuTcCl = "ninguno";
+            if (menuTc) menuTcCl = menuTc.ClassName();
+            string dlgTc = "no";
+            if (GetGame().GetUIManager().IsDialogVisible()) dlgTc = "si";
+            BZBusLog.Info("[Reproductor] tecla del panel (key " + key.ToString() + ") con el panel cerrado: menu abierto = " + menuTcCl + " · dialogo visible = " + dlgTc);
+        }
+
+        // ABRIR DESDE LA TECLA CRUDA. Medido en la 1.30 (7 de 7, con y sin otros mods): despues de cerrar con ESC, la
+        // primera pulsacion de INICIO llega aca como tecla cruda pero la accion UABZAutoDrivePanel no dispara (la segunda
+        // si). La tecla cruda abre con las mismas condiciones que la accion; si la accion tambien dispara en este cuadro,
+        // el toggle de OnUpdate y el Update del menu ven el panel abierto hace menos de 250 ms (s_AbiertoMs) y no lo cierran.
+        // La tecla es la que abrio la ultima vez por la accion (s_BZ_TeclaPanel; INICIO de fabrica).
+        bool puedeAbrirTc = (!BZReproductorUI.s_Instance && BZBusClientManager.s_IsControlPanelAdmin && key == s_BZ_TeclaPanel);
+        if (puedeAbrirTc && (GetGame().GetUIManager().GetMenu() || GetGame().GetUIManager().IsDialogVisible())) puedeAbrirTc = false;
+        if (puedeAbrirTc && GetGame().GetTime() - BZReproductorUI.s_CerradoMs <= 250) puedeAbrirTc = false;
+        if (puedeAbrirTc) {
+            GetGame().GetUIManager().EnterScriptedMenu(MENU_BZ_REPRODUCTOR, null);
+            if (BZDiag.On()) BZBusLog.Info("[Reproductor] abierto desde la tecla cruda (key " + key.ToString() + ")");
             return;
         }
 

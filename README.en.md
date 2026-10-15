@@ -18,7 +18,7 @@ You record a route by driving it yourself. An NPC (Boris) drives it forever, wit
 - **It replays your driving:** the *tape* stores steering, throttle, brake and gear 40 times per second, indexed by **distance traveled**. The NPC does what you did **at that point of the road**: it flies where you flew and brakes where you braked.
 - **Any vehicle, no tuning:** the control reads each car's declared physics and drives from that — front / rear / mid / 4x4 / **truck** — with **a single configuration**, no per-vehicle tuning. Validated out-of-sample on a broad bench of drivetrains and sizes. *(A **recording** belongs to its vehicle: for the same route on another car, **record it with that car** — that way the framework learns its physics.)*
 - **Real physics:** the NPC applies real steering, throttle and brake to the simulated vehicle. It looks and feels like a person driving, not a scripted teleport.
-- **Handles the hard stuff:** tight curves, reverse, **auto-detected** direction changes (K-turns), and a precise final stop (about **10 cm** from the recorded point).
+- **Handles the hard stuff:** tight curves, reverse, **auto-detected** direction changes (K-turns), and a precise final stop (about **10 cm** from the recorded point). A route only counts as **complete** if the vehicle ends at rest within 0.25 m, without hitting any object and without physical help from AutoRecovery.
 - **Scales:** route loading **~1700× faster** (data format change) + **multiple concurrent vehicles without moving the server FPS**.
 
 ## What's included
@@ -78,13 +78,15 @@ PathLogger (record)  →  Wizard (route + tape + vehicle profile)  →  1.2 brai
 
 > ⚠ **Do not add `@DayZ-Expansion-AI` on its own** if you already have the Bundle: they are the same classes in another version and **the server won't start**.
 
-**Workshop vehicle mods** — any that extend `CarScript` (most of them) work automatically, no changes needed.
+**Workshop vehicle mods** — any that extend `CarScript` (most of them) work automatically, no changes needed. **On DayZ 1.30**, a vehicle mod made for 1.29 needs an update from its author (some don't compile; others load but their doors, wheels or damage break). 1.2.1 is validated with the vanilla vehicles of 1.30; modded ones are added as they get updated.
 
 ## Build from source
 
 To use it: subscribe on the Workshop (it ships signed). To build your fork: package the PBO however you prefer — DayZ Tools (AddonBuilder) or your own pipeline — and sign it with your **own** key. Each modder packages their own way.
 
 ## Status
+
+**v1.2.1** — **ready for DayZ 1.30**: a single package runs on 1.29 and 1.30; **motorbikes** (experimental, 1.30 only); a **strict verdict** for the end of a route, decided with the vehicle at rest; final braking measured from your take; direction changes within centimeters; light logs by default (`Diagnostics`, `BlackBox`). On 1.30, start the server with a relative `-profiles`.
 
 **v1.2** — **new driving brain**: it replays your driving (the *tape*) and **measures** each vehicle (its *profile*); no vehicle creeps on its own at idle (measured on 43 vehicles); launch throttle measured across the fleet; an **AutoRecovery** that detects a jam by lack of progress and also recovers in reverse; faster direction changes; conversion produces **four** files and ships with **Python included**. Kept from before: **auto-detected reverse and direction changes**, **precise final stop**, **event DSL**, **Quests integration** (convoy/ambush/escort), **multi-runner**, UI/player panel. Details in the [CHANGELOG](CHANGELOG.en.md).
 

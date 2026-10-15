@@ -114,7 +114,7 @@ class BZPhysicsReceiver {
     }
 
     // ------------------------------------------------------------------------
-    //  Muestreo per-frame. car = CarScript (Car.Cast(this) desde EOnPostSimulate).
+    //  Muestreo per-frame. car = el Car del vehiculo (BZVehiculo.Auto(), desde BZVehiculoGanchos.PostSimulate).
     // ------------------------------------------------------------------------
     void Sample(Car car, float cmdThrottle, float cmdSteering, float cmdBrake, int desiredGear, float dt) {
         if (!car) return;
@@ -135,6 +135,7 @@ class BZPhysicsReceiver {
         m_Rpm          = car.EngineGetRPM();
         m_EngineOn     = car.EngineIsOn();
         m_SpeedoKmh    = car.GetSpeedometer();
+        if (!BZMath.Finite(m_SpeedoKmh)) m_SpeedoKmh = 0;   // el velocimetro puede no ser un numero tras el spawn
         m_FuelFrac     = car.GetFluidFraction(CarFluid.FUEL);
 
         // --- Pose + orientacion 6DOF ---

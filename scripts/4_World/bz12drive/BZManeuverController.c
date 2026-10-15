@@ -543,7 +543,7 @@ class BZManeuverController
             return;
         }
         // Ni soltando todo baja lo suficiente: hay que frenar.
-        float aBrakeMax = m.MaxBrakeDecel(surfKind);
+        float aBrakeMax = m.MaxBrakeDecelManiobra(surfKind);   // techado por la frenada medida del cusp
         if (aBrakeMax < 0.5) aBrakeMax = 0.5;
         o.throttle = 0;
         o.brake = Math.Clamp((-aNeed) / aBrakeMax, 0.0, 1.0);
@@ -578,7 +578,7 @@ class BZManeuverController
     {
         float d = signed - BZDriveTol.LLEGADA_M;
         if (d < 0) d = 0;
-        float aMax = m.MaxBrakeDecel(surfKind);
+        float aMax = m.MaxBrakeDecelManiobra(surfKind);   // techado por la frenada medida del cusp
         if (aMax < 0.5) aMax = 0.5;
         float vStop = Math.Sqrt(2.0 * aMax * d);
         float wb = m.wheelbaseM;

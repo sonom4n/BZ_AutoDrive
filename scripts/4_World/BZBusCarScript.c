@@ -58,6 +58,7 @@ modded class CarScript {
     // ========================================================================
     bool m_BZLuzDiagDado;      // el diagnostico de luces del cliente, una vez por vehiculo
     bool m_BZLuzClientCorrio;  // nuestro override de UpdateLightsClient corrio en este cliente
+    bool m_BZHazPropio;        // el haz lo creo NUESTRA copia (solo con m_BZLightsWanted): la limpieza al soltar la luz no toca el haz vanilla de un auto de jugador
     bool m_BZLightsWanted;  // NetSync: estado de luz que el server QUIERE en clientes
     bool m_BZPartsLocked;   // NetSync: VEHICULO INVIOLABLE, lo fija el runner (BZBusService) sobre el auto que maneja.
                             // Default false = vanilla en cualquier auto sin runner (esta clase moddeada toca a TODOS).
@@ -65,6 +66,14 @@ modded class CarScript {
                             // OnVariablesSynchronized() en el observador si CAMBIA el VALOR
                             // de una NetSyncVar (dirty pelado sin cambio = no-op). El heartbeat
                             // incrementa este contador -> fuerza el sync -> re-aplica LightOn().
+
+    // el adaptador de este vehiculo (BZVehiculoAuto): lo crea la fabrica la primera vez que un gancho lo pide
+    ref BZVehiculo m_BZV;
+
+    BZVehiculo BZV() {
+        if (!m_BZV) m_BZV = BZVehiculoFabrica.Para(this);
+        return m_BZV;
+    }
 
     void CarScript() {
         // El constructor de la base ya registro sus NetSyncVariables (ver
@@ -115,8 +124,11 @@ modded class CarScript {
     void BZSetLights(bool on) {
         if (GetGame().IsServer()) {
             // Aplicar el estado native server-side (idempotente: solo si difiere).
-            if (on && !IsScriptedLightsOn())  ToggleHeadlights();
-            else if (!on && IsScriptedLightsOn()) ToggleHeadlights();
+            // LightToggle() (proto native de Transport) y no ToggleHeadlights(): en la 1.29 ToggleHeadlights era
+            // exactamente `LightToggle();` con un TODO, y en la 1.30 ya no existe (la accion vanilla de luces llama
+            // transport.LightToggle()). Asi el mismo build compila en las dos versiones del motor.
+            if (on && !IsScriptedLightsOn())  LightToggle();
+            else if (!on && IsScriptedLightsOn()) LightToggle();
 
             m_BZLightsWanted = on;
             SetSynchDirty();   // dispara OnVariablesSynchronized() en los clientes
@@ -138,7 +150,12 @@ modded class CarScript {
         if (m_BZLightsWanted && !m_BZLuzDiagDado)
         {
             m_BZLuzDiagDado = true;
-            bool hazBZ = (m_Headlight != null);
+            bool hazBZ = false;
+#ifdef DAYZ_1_29
+            hazBZ = (m_Headlight != null);
+#else
+            hazBZ = m_LightsComponent.LightExist("Front");   // 1.30: el haz vive en el componente de luces
+#endif
             string dgLuz = "[BZLuces] " + GetType() + " · el server pide luz · UpdateLightsClient (override BZ) corrio: " + m_BZLuzClientCorrio.ToString();
             dgLuz = dgLuz + " · LightIsOn " + LightIsOn().ToString() + " · m_Headlight existe: " + hazBZ.ToString() + " · lamparas " + m_HeadlightsState.ToString();
             Print(dgLuz);
@@ -172,6 +189,29 @@ modded class CarScript {
     // ========================================================================
     override void UpdateLightsClient(int newGear = -1) {
         m_BZLuzClientCorrio = true;
+#ifdef DAYZ_1_29
+        // SOLO los autos que el framework prende pasan por la copia. Los demas (los de los jugadores) siguen la cadena
+        // de siempre (super = el vanilla; Expansion no sobrescribe este metodo, sobrescribe UpdateLights). Hace falta
+        // desde la 1.30: ahi el vanilla maneja el haz con VehicleLightsComponent, y esta copia vieja le pondria a TODOS
+        // los autos el faro generico y los dejaria sin luces traseras (CreateRearLight devuelve un faro delantero
+        // casteado a trasera = null). Al soltar la luz se apaga el haz que creo la copia, porque el vanilla nuevo ya
+        // no mira m_Headlight/m_RearLight; el haz de un auto de jugador (m_BZHazPropio false) no se toca.
+        if (!m_BZLightsWanted) {
+            if (m_BZHazPropio) {
+                m_BZHazPropio = false;
+                if (m_Headlight) {
+                    m_Headlight.FadeOut();
+                    m_Headlight = null;
+                }
+                if (m_RearLight) {
+                    m_RearLight.FadeOut();
+                    m_RearLight = null;
+                }
+            }
+            super.UpdateLightsClient(newGear);
+            return;
+        }
+        m_BZHazPropio = true;
         int gear;
         if (newGear == -1) {
             gear = GetGear();
@@ -235,7 +275,7 @@ modded class CarScript {
             if (EngineIsOn() || m_RearLightType == CarRearLightType.BRAKES_ONLY || m_RearLightType == CarRearLightType.BRAKES_AND_REVERSE) {
                 m_RearLight = CreateRearLight();
                 vector localPos = GetMemoryPointPos(m_ReverseLightPoint);
-                m_RearLight.AttachOnObject(this, localPos, "180 0 0");
+                if (m_RearLight) m_RearLight.AttachOnObject(this, localPos, "180 0 0");   // en la 1.30 CreateRearLight da null
             }
         }
 
@@ -264,17 +304,107 @@ modded class CarScript {
                 NoRearLight();
             }
         }
+#else
+        // DayZ 1.30 (y siguientes): la copia del vanilla 1.30 (CarScript.c:1861-1972) con el UNICO cambio de siempre en el
+        // faro delantero: (LightIsOn() || m_BZLightsWanted). En la 1.30 el haz lo maneja m_LightsComponent con el perfil de
+        // luz de cada vehiculo; la copia 1.29 le ponia a todos el faro generico y dejaba sin traseras (CreateRearLight da
+        // null). Medido en el server Exp el 27/09: el flag LightIsOn tampoco llega al observador, asi que la copia sigue
+        // haciendo falta. Sin m_BZLightsWanted va el vanilla: al soltar la luz, el super apaga el "Front" del componente
+        // (es el mismo que prendio esta copia), y un auto de jugador no se toca.
+        if (!m_BZLightsWanted) {
+            super.UpdateLightsClient(newGear);
+            return;
+        }
+        int gear130;
+        if (newGear == -1) {
+            gear130 = GetGear();
+        } else {
+            gear130 = newGear;
+        }
+
+        // ---- FARO DELANTERO (UNICO cambio vs vanilla: || m_BZLightsWanted) ----
+        if (LightIsOn() || m_BZLightsWanted) {
+            if (!m_LightsComponent.LightExist("Front") && m_HeadlightsState != CarHeadlightBulbsState.NONE)
+                m_LightsComponent.EnableLight("Front");
+
+            if (m_LightsComponent.LightExist("Front")) {
+                switch (m_HeadlightsState) {
+                    case CarHeadlightBulbsState.LEFT:
+                        m_LightsComponent.AttachLightOnPoint("Front", m_LeftHeadlightPoint, m_LeftHeadlightTargetPoint, VehicleLightMode.SEGREGATED);
+                        break;
+                    case CarHeadlightBulbsState.RIGHT:
+                        m_LightsComponent.AttachLightOnPoint("Front", m_RightHeadlightPoint, m_RightHeadlightTargetPoint, VehicleLightMode.SEGREGATED);
+                        break;
+                    case CarHeadlightBulbsState.BOTH:
+                        vector posIzq130 = GetMemoryPointPos(m_LeftHeadlightPoint);
+                        vector posDer130 = GetMemoryPointPos(m_RightHeadlightPoint);
+                        vector posMedio130 = (posIzq130 + posDer130) * 0.5;
+                        m_LightsComponent.AttachLightOnObject("Front", posMedio130, vector.Zero, VehicleLightMode.AGGREGATED);
+                        break;
+                    default:
+                        m_LightsComponent.DisableLight("Front");
+                }
+            }
+        } else {
+            if (m_LightsComponent.LightExist("Front"))
+                m_LightsComponent.DisableLight("Front");
+        }
+
+        // ---- LUCES TRASERAS / FRENO / REVERSA (copia literal del vanilla 1.30) ----
+        switch (gear130) {
+            case CarGear.REVERSE:
+            case CarAutomaticGearboxMode.R:
+                if (m_BrakesArePressed)
+                    m_RearLightType = CarRearLightType.BRAKES_AND_REVERSE;
+                else
+                    m_RearLightType = CarRearLightType.REVERSE_ONLY;
+                break;
+            default:
+                if (m_BrakesArePressed)
+                    m_RearLightType = CarRearLightType.BRAKES_ONLY;
+                else
+                    m_RearLightType = CarRearLightType.NONE;
+        }
+
+        if (!m_LightsComponent.LightExist("Rear") && m_RearLightType != CarRearLightType.NONE && m_HeadlightsState != CarHeadlightBulbsState.NONE) {
+            if (EngineIsOn() || m_RearLightType == CarRearLightType.BRAKES_ONLY || m_RearLightType == CarRearLightType.BRAKES_AND_REVERSE) {
+                m_LightsComponent.EnableLight("Rear");
+                m_LightsComponent.AttachLightOnObject("Rear", GetMemoryPointPos(m_ReverseLightPoint), "180 0 0", VehicleLightMode.SEGREGATED);
+            }
+        }
+
+        if (m_LightsComponent.LightExist("Rear") && m_RearLightType != CarRearLightType.NONE && m_HeadlightsState != CarHeadlightBulbsState.NONE) {
+            switch (m_RearLightType) {
+                case CarRearLightType.BRAKES_ONLY:
+                    m_LightsComponent.SetLightTypeAndMode("Rear", VehicleLightType.BRAKE, VehicleLightMode.SEGREGATED);
+                    break;
+                case CarRearLightType.REVERSE_ONLY:
+                    if (EngineIsOn())
+                        m_LightsComponent.SetLightTypeAndMode("Rear", VehicleLightType.REVERSE, VehicleLightMode.SEGREGATED);
+                    else
+                        m_LightsComponent.DisableLight("Rear");
+                    break;
+                case CarRearLightType.BRAKES_AND_REVERSE:
+                    if (EngineIsOn())
+                        m_LightsComponent.SetLightTypeAndMode("Rear", VehicleLightType.REVERSE_BRAKE, VehicleLightMode.AGGREGATED);
+                    else
+                        m_LightsComponent.SetLightTypeAndMode("Rear", VehicleLightType.BRAKE, VehicleLightMode.SEGREGATED);
+                    break;
+                default:
+                    m_LightsComponent.DisableLight("Rear");
+            }
+        } else {
+            if (m_LightsComponent.LightExist("Rear"))
+                m_LightsComponent.DisableLight("Rear");
+        }
+#endif
     }
 
     // ESCENA 2 (ambush): si le pegan un tiro al chasis del vehiculo gestionado, avisar al service para
     // que dispare el despliegue. Guard IsBusActive(this) -> solo reacciona el bus del convoy, no todos los autos.
     override void EEHitBy(TotalDamageResult damageResult, int damageType, EntityAI source, int component, string dmgZone, string ammo, vector modelPos, float speedCoef) {
         super.EEHitBy(damageResult, damageType, source, component, dmgZone, ammo, modelPos, speedCoef);
-        if (!GetGame().IsServer()) return;
-        BZBusService srv = BZBusService.GetRunnerForCar(this);   // MULTITON: el runner DUEÑO de este auto
-        if (srv) srv.NotifyConvoyDamaged();
-        // AR_OnWay fase 2: si el que pega es OTRO VEHICULO (choque), avisar para el escape.
-        if (srv && source && CarScript.Cast(source)) srv.NotifyHitByVehicle();
+        BZVehiculoGanchos.Golpe(this, source);   // el cuerpo, compartido con la moto (BZVehiculoGanchos)
     }
 
     // QUIEN FUE. El detector de choque del cerebro sabe que la desaceleracion es imposible para un
@@ -285,12 +415,14 @@ modded class CarScript {
     // (rodar sobre el terreno da `other` nulo siempre: mismo objeto, cero resoluciones).
     Object m_BzContactoObj;
     string m_BzContactoClase;
+    string m_BzContactoZona;   // la zona del casco de ese contacto (la linea del choque la muestra)
     float  m_BzContactoImp;
     float  m_BzContactoT = -1;
     private const float BZ_CONTACTO_VENTANA_S = 0.5;
 
     override void OnContact(string zoneName, vector localPos, IEntity other, Contact data) {
         super.OnContact(zoneName, localPos, other, data);
+        BZFrameRecorder.Contacto(this, zoneName, other);   // la columna `contacto` de la toma (cliente que graba)
         if (!GetGame().IsServer()) return;
         float ahoraC = GetGame().GetTickTime();
         float impC = data.Impulse;
@@ -298,79 +430,31 @@ modded class CarScript {
         if (m_BzContactoT >= 0 && ahoraC - m_BzContactoT <= BZ_CONTACTO_VENTANA_S && impC <= m_BzContactoImp) return;
         m_BzContactoT = ahoraC;
         m_BzContactoImp = impC;
+        m_BzContactoZona = zoneName;
         Object objC = Object.Cast(other);
         if (objC == m_BzContactoObj) return;
         m_BzContactoObj = objC;
         m_BzContactoClase = "";
         if (objC) m_BzContactoClase = objC.GetType();
+        if (objC && m_BzContactoClase == "") m_BzContactoClase = "modelo " + objC.GetModelName();   // objeto del mapa sin clase
     }
 
     override void OnInput(float dt) {
         super.OnInput(dt);
-
         if (!GetGame().IsServer()) return;
-
-        BZBusService srv = BZBusService.GetRunnerForCar(this);   // MULTITON: el runner DUEÑO de este auto (no el primary)
-        if (!srv) return;
-
-        // Si el conductor en seat 0 es un PLAYER REAL (no eAI), el service se
-        // hace a un lado: no aplicar cached input, dejar al player manejar
-        // libremente. Util para "tomar el bus" y continuar una grabacion
-        // humana desde donde quedo, sin matar el service ni regenerar el bus.
-        //
-        // IMPORTANTE: en DayZ, eAI hereda de PlayerBase, asi que PlayerBase.Cast
-        // tambien devuelve true para Boris. La forma correcta de diferenciar
-        // player real de eAI es por GetIdentity() — los players reales tienen
-        // PlayerIdentity, los eAI no. Sin este check, el service "se hacia a
-        // un lado" cuando Boris estaba al volante y el bus quedaba sin inputs.
-        Human driver = CrewMember(0);
-        if (driver) {
-            PlayerBase realPlayer = PlayerBase.Cast(driver);
-            if (realPlayer && realPlayer.GetIdentity()) {
-                return;
-            }
-        }
-
-        // ===== CEREBRO 1.2 (F2): cuando el controller maneja, TODO el actuador por-frame
-        // es UNA llamada (Sample+apply). Reemplaza a las tres de abajo (SEAM Cara 3).
-        if (srv.SampleDrive12(this, dt)) return;
-
-        // Freno predictivo del endpoint PER-FRAME (2026-08-17): en los ultimos 5m antes de un stop, recomputa
-        // el freno cada frame (~35Hz) en vez de cada 500ms -> Boris para EN el punto en vez de cruzarlo con
-        // envion. Gate barato (corta al toque salvo m_AtStop && <5m); solo aritmetica, sin queries de terreno.
-        srv.EndpointFrameBrake(this);
-
-        // Aplicar throttle/steering/brake cacheado (sobreescribe lo que eAI puso)
-        srv.ApplyBusInput(this, dt);
-
-        // Sobreescribir el gear: eAI metio FIRST en super.OnInput, ponemos el deseado
-        int desired = srv.GetDesiredGear();
-        if (GetGear() != desired) {
-            ShiftTo(desired);
-        }
+        // el cuerpo (jugador real al volante = el framework se hace a un lado; cerebro 1.2; freno del endpoint;
+        // comando cacheado; la marcha deseada por encima del FIRST de eAI) vive en BZVehiculoGanchos.OnInput,
+        // compartido con la moto
+        BZVehiculoGanchos.OnInput(this, BZV(), dt);
     }
 
     override void EOnPostSimulate(IEntity other, float timeSlice) {
         super.EOnPostSimulate(other, timeSlice);
 
-        // Grabador frame-by-frame (2026-07-05): captura los inputs del humano a
-        // resolucion de fisica para replay temporal fiel. Corre en el cliente que
-        // maneja (jugador local); Frame() solo graba el auto que arranco la toma.
-        // ANTES del early-out srv==null (el auto del humano NO tiene runner).
-        BZFrameRecorder frec = BZFrameRecorder.GetInstance();
-        if (frec.IsActive()) frec.Frame(this, timeSlice);
-
-        // Server-side probe (2026-07-05): captura la salida del TRADUCTOR autoritativo (motor
-        // server-side) para el auto que maneja un jugador real. Localiza la divergencia
-        // cliente-vs-servidor comparando contra el frame_ (cliente). Auto-detecta, sin trigger.
-        if (GetGame().IsServer()) BZServerProbe.GetInstance().Frame(this, timeSlice);
-
-        BZBusService srv = BZBusService.GetRunnerForCar(this);   // MULTITON: el runner DUEÑO de este auto (no el primary)
+        // el grabador cuadro a cuadro (cliente que maneja, antes de buscar runner), el probe del server y el receptor
+        // fisico del runner: BZVehiculoGanchos.PostSimulate, compartido con la moto. Devuelve el runner dueno.
+        BZBusService srv = BZVehiculoGanchos.PostSimulate(this, BZV(), timeSlice);
         if (!srv) return;
-
-        // V2 physics receiver portado a v1 (2026-07-04): muestrea el estado fisico real
-        // cada frame de fisica. Aditivo (solo loguea si NUMPAD 7 esta activo).
-        srv.SampleReceiver(this, timeSlice);
 
         // Cuando GearStrategy="follow_recording" esta activo, la AT por RPM no
         // debe correr: el recording es source of truth para gear. Si la AT
@@ -412,14 +496,20 @@ modded class CarScript {
         float kmhNow = GetSpeedometerAbsolute();
         float tNow = GetGame().GetTickTime();
         float accelKmhPerSec = 0;
-        if (m_BZBus_LastSampleTime > 0) {
-            float dt = tNow - m_BZBus_LastSampleTime;
-            if (dt > 0.01) {
-                accelKmhPerSec = (kmhNow - m_BZBus_LastKmh) / dt;
+        // con el velocimetro en NaN (medido tras el spawn) no se mide la aceleracion ni se guarda la muestra: la primera
+        // lectura finita que siguiera a un 0 forzado habria disparado el anti-catapulta
+        if (BZMath.Finite(kmhNow)) {
+            if (m_BZBus_LastSampleTime > 0) {
+                float dt = tNow - m_BZBus_LastSampleTime;
+                if (dt > 0.01) {
+                    accelKmhPerSec = (kmhNow - m_BZBus_LastKmh) / dt;
+                }
             }
+            m_BZBus_LastKmh = kmhNow;
+            m_BZBus_LastSampleTime = tNow;
+        } else {
+            kmhNow = 0;
         }
-        m_BZBus_LastKmh = kmhNow;
-        m_BZBus_LastSampleTime = tNow;
 
         float accelThreshold = srv.GetAccelShiftThreshold();
 

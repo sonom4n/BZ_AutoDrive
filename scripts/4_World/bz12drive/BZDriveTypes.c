@@ -87,9 +87,23 @@ class BZMath
     static bool Finite(float v)
     {
         if (v != v) return false;
+        // NaN e infinitos caen a -2147483648 al pasar a entero (medido: la linea de estado del runner con el velocimetro
+        // en NaN). Es la prueba que no depende de como el motor compare con NaN (ValidateSpawn tomo 'nan > 0.5' por cierto).
+        int iv = (int)v;
+        if (iv < -2000000000) return false;
         if (v > 1000000000.0) return false;
         if (v < -1000000000.0) return false;
         return true;
+    }
+
+    // un NaN a proposito (la bandera de prueba del velocimetro): la raiz de un negativo; si el motor la acota, 0/0
+    static float NaN()
+    {
+        float n = Math.Sqrt(-1.0);
+        if (!Finite(n)) return n;
+        float z = 0.0;
+        n = z / z;
+        return n;
     }
 
     static bool FiniteVec(vector v)
@@ -170,6 +184,7 @@ class BZVehicleState
     string contactoClase;
     float  contactoHaceS;
     float  contactoImp;
+    string contactoZona;   // la zona del casco que toco ("" si no hubo contacto)
 
     void Reset()
     {
@@ -190,17 +205,24 @@ class BZVehicleState
         contactoClase = "";
         contactoHaceS = -1;
         contactoImp = 0;
+        contactoZona = "";
     }
 
     // Coherencia del input. La usa el arbitro para decidir SAFE_STOP.
     bool IsCoherent()
     {
-        if (!BZMath.FiniteVec(pos)) return false;
-        if (!BZMath.Finite(yaw)) return false;
-        if (!BZMath.Finite(kmh)) return false;
-        if (!BZMath.Finite(chassisKmh)) return false;
-        if (!BZMath.Finite(pitch)) return false;
-        return true;
+        return (Incoherencia() == "");
+    }
+
+    // que campo no es un numero ("" = todos finitos): para que el SAFE_STOP del arbitro diga por que
+    string Incoherencia()
+    {
+        if (!BZMath.FiniteVec(pos)) return "posicion no numerica";
+        if (!BZMath.Finite(yaw)) return "rumbo no numerico";
+        if (!BZMath.Finite(kmh)) return "velocimetro no numerico (" + kmh.ToString() + ")";
+        if (!BZMath.Finite(chassisKmh)) return "velocidad del cuerpo no numerica";
+        if (!BZMath.Finite(pitch)) return "inclinacion no numerica";
+        return "";
     }
 }
 
@@ -324,5 +346,71 @@ class BZPathSample
         legBreak = false;
         isStop = false;
         tight = false;
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  BZHistRuedas - las ruedas en el suelo de los ultimos cuadros, para que la linea de un choque diga si el vehiculo
+//  venia apoyado o en el aire (un salto que aterriza). Solo instrumento: no decide nada. La usan el auto y la moto.
+// ----------------------------------------------------------------------------
+class BZHistRuedas {
+    static const int N = 48;   // 1,2 s a 40 Hz: sobra para la ventana
+    private ref array<float> m_T;
+    private ref array<int> m_R;
+    private int m_Idx;
+    private int m_Cant;
+    private float m_Reloj;
+
+    void BZHistRuedas() {
+        m_T = new array<float>();
+        m_R = new array<int>();
+        for (int i = 0; i < N; i++) {
+            m_T.Insert(0);
+            m_R.Insert(0);
+        }
+    }
+
+    void Anotar(int ruedas, float dt) {
+        if (dt > 0) m_Reloj = m_Reloj + dt;
+        m_T.Set(m_Idx, m_Reloj);
+        m_R.Set(m_Idx, ruedas);
+        m_Idx = m_Idx + 1;
+        if (m_Idx >= N) m_Idx = 0;
+        if (m_Cant < N) m_Cant = m_Cant + 1;
+    }
+
+    // los cuadros ANTERIORES al ultimo anotado, dentro de ventanaS, del mas viejo al mas nuevo:
+    // "12 cuadros · min 0/4 · 4x5 0x6 2x1" (ruedas x cuadros seguidos)
+    string Resumen(float ventanaS, int total) {
+        if (m_Cant < 2) return "sin cuadros previos";
+        int ult = m_Idx - 1;
+        if (ult < 0) ult = N - 1;
+        float tRef = m_T.Get(ult);
+        int k = m_Idx - m_Cant;
+        if (k < 0) k = k + N;
+        int n = 0;
+        int minR = 99;
+        int runV = -1;
+        int runN = 0;
+        string rle = "";
+        for (int j = 0; j < m_Cant - 1; j++) {
+            float tj = m_T.Get(k);
+            int rj = m_R.Get(k);
+            k = k + 1;
+            if (k >= N) k = 0;
+            if (tRef - tj > ventanaS) continue;
+            n = n + 1;
+            if (rj < minR) minR = rj;
+            if (rj == runV) {
+                runN = runN + 1;
+                continue;
+            }
+            if (runN > 0) rle = rle + " " + runV.ToString() + "x" + runN.ToString();
+            runV = rj;
+            runN = 1;
+        }
+        if (runN > 0) rle = rle + " " + runV.ToString() + "x" + runN.ToString();
+        if (n == 0) return "sin cuadros previos en " + ventanaS.ToString() + " s";
+        return n.ToString() + " cuadros · min " + minR.ToString() + "/" + total.ToString() + " ·" + rle;
     }
 }

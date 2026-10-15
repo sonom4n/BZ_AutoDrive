@@ -20,6 +20,7 @@
 //  Sin correa puesta (radio 0) esto no hace NADA: cualquier otro eAI del server (Quest, AICamp, el chofer)
 //  no se entera de que esta clase existe.
 // ============================================================================
+#ifdef DZ_Expansion_AI_Preload
 modded class eAIBase
 {
     private vector m_BzCorreaCentro;
@@ -135,3 +136,4 @@ modded class eAIBase
         OverrideTargetPosition(destC);   // DESPUES del super: este es el valor que queda para el proximo frame
     }
 }
+#endif

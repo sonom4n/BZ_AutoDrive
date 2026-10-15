@@ -960,6 +960,13 @@ class BZEnvelopeStore extends BZEnvelopeSource
         return true;
     }
 
+    // las lineas de kinds que este Store no parsea (se conservan tal cual). El conductor de moto lee de aca los suyos
+    // (aut, bfrena, rpmkmh: los escribe envelope_emit.py desde la toma de la moto)
+    array<string> Ajenas()
+    {
+        return m_Extra;
+    }
+
     bool Load()
     {
         if (m_Class == "") return false;

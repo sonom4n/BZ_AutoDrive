@@ -118,6 +118,9 @@ class BZModeArbiter
 
     int  GetMode()     { return m_Mode; }
     int  GetFallback() { return m_Fallback; }
+    // por que el ultimo SAFE_STOP: estado incoherente (y que campo), sin leg valido, o 20 s sin avance del cursor
+    private string m_FallbackPorQue;
+    string GetFallbackPorQue() { return m_FallbackPorQue; }
     bool IsCommitted() { return m_Committed; }
 
     // El Controller avisa que el endpoint clavo. El arbitro NO se lo pregunta al slam.
@@ -170,11 +173,20 @@ class BZModeArbiter
     {
         m_Fallback = BZArbFallback.NONE;
         // (1) SEGURIDAD -- gana sobre todo, incluso sobre el dwell y el compromiso.
-        if (!Coherent(st, leg, m)) return SafeStop();
+        string incoh = Incoherencia(st, leg, m);
+        if (incoh != "")
+        {
+            m_FallbackPorQue = incoh;
+            return SafeStop();
+        }
         // (2) MAQUINA DE ESTADOS
         if (m_Mode == BZDriveMode.BZDM_IDLE) return EnterMode(StartModeFor(st, leg, m));
         if (m_Mode == BZDriveMode.BZDM_HALTED) return Stay();   // solo sale por NotifyResume
-        if (Stalled(leg)) return SafeStop();
+        if (Stalled(leg))
+        {
+            m_FallbackPorQue = "20 s sin avance del cursor";
+            return SafeStop();
+        }
         int next = NextMode(st, leg, m, surfKind);
         ReportarRuteoReversa(st, leg, m, next);
         if (next == m_Mode) return Stay();
@@ -261,21 +273,23 @@ class BZModeArbiter
     {
         if (m_Mode == BZDriveMode.BZDM_ENDPOINT) return false;
         if (m_Mode != BZDriveMode.BZDM_CRUISE && m_Mode != BZDriveMode.BZDM_APPROACH && m_Mode != BZDriveMode.BZDM_MANEUVER) return false;
-        if (!Coherent(st, leg, m)) return false;
+        if (Incoherencia(st, leg, m) != "") return false;
         if (!LlegoLaHoraDelSlamCon(st, leg, m, remAhoraM, surfKind)) return false;
         EnterMode(BZDriveMode.BZDM_ENDPOINT);
         return true;
     }
 
     // Compuerta de SEGURIDAD. Todo lo que hace que este tick no se pueda manejar.
-    private bool Coherent(BZVehicleState st, BZLegView leg, BZVehicleManual m)
+    // "" = coherente; si no, el motivo (es lo que el SAFE_STOP dice)
+    private string Incoherencia(BZVehicleState st, BZLegView leg, BZVehicleManual m)
     {
-        if (!st) return false;
-        if (!leg) return false;
-        if (!m) return false;
-        if (!leg.valid) return false;
-        if (!st.IsCoherent()) return false;
-        return true;
+        if (!st) return "sin estado";
+        if (!leg) return "sin leg";
+        if (!m) return "sin manual";
+        if (!leg.valid) return "sin leg valido";
+        string campo = st.Incoherencia();
+        if (campo != "") return "estado incoherente: " + campo;
+        return "";
     }
 
     private int NextMode(BZVehicleState st, BZLegView leg, BZVehicleManual m, int surfKind)
@@ -549,7 +563,7 @@ class BZModeArbiter
         // capacidad que el slam usa para dosificar el pedal (MaxBrakeDecel, del manual y la superficie), mas el
         // margen; el planeo (aFree) se ignora a proposito: sin el la zona es un poco mas larga, nunca mas corta.
         // Llegando lento la distancia de frenado es chica y manda la zona de siempre: nada cambia.
-        float aMaxZ = m.MaxBrakeDecel(surfKind);
+        float aMaxZ = m.MaxBrakeDecelEndpoint(surfKind);   // el mismo freno con el que el slam dosifica: techado por la toma
         if (aMaxZ >= 0.5)
         {
             float vMsZ = st.chassisKmh / 3.6;
@@ -619,6 +633,7 @@ class BZModeArbiter
     private void ReportarRuteoReversa(BZVehicleState st, BZLegView leg, BZVehicleManual m, int next)
     {
         if (BZDriveController.s_Quiet) return;   // la suite de self-tests no ensucia el log
+        if (!BZDiag.On()) return;                 // una linea por tick de reversa: diagnostico (Diagnostics)
         if (!leg || !leg.valid || !leg.isReverse) return;
         if (!m) return;
         float ventana = BZPurePursuit.PisoLookaheadM(m);
@@ -675,6 +690,13 @@ class BZModeArbiter
         if (m_Mode == BZDriveMode.BZDM_HALTED)
         {
             m_StallTicks = 0;
+            return false;
+        }
+        // sin leg valido no hay cursor que avanzar: el contador no corre (ni arranca antes del LEG 0)
+        if (!leg || !leg.valid)
+        {
+            m_StallTicks = 0;
+            m_LastS = -1.0;
             return false;
         }
         if (m_LastS < 0)

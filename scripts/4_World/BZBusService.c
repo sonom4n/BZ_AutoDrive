@@ -1,6 +1,10 @@
 // Estado de boarding animado por bot (caminar->abrir->subir->cerrar). Usado para el crew (Stage 1).
 class BZBoardState {
+#ifdef DZ_Expansion_AI_Preload
     eAIBase bot;
+#else
+    PlayerBase bot;   // sin Expansion: nunca se llena (no hay crew)
+#endif
     int     seat;
     int     phase;     // 0=esperando turno (gate de proximidad), 1=caminando, 2=subiendo, 3=sentado/done
     float   timer;
@@ -157,7 +161,13 @@ class BZBusService {
     static const float  SPAWN_PREROLL_SECONDS     = 3.0;
 
     private EntityAI             m_Bus;
+// SIN EXPANSION: DZ_Expansion_AI_Preload ausente = el chofer es un maniqui vanilla; los bots de crew, guardia, escolta y
+// quest no existen. Con Expansion el compilador ve exactamente lo de antes (lo prueba el banco de identidad).
+#ifdef DZ_Expansion_AI_Preload
     private eAIBase              m_Driver;
+#else
+    private PlayerBase           m_Driver;   // maniqui vanilla (SurvivorM_*)
+#endif
     // ★ 843: EL CHOFER. Un vehiculo sin nadie al volante NO es una traba: es un final.
     private string               m_DriversMode = "any";   // any | driver | list (ver BZDriversConfig)
     private ref array<int>       m_DriversSeats;          // Mode "list": asientos habilitados
@@ -166,8 +176,14 @@ class BZBusService {
     // estacionando y siguio en reversa hasta que lo paro el rozamiento: "cuando mato a Boris no queda en freeze").
     private int                  m_SinChoferPolls;
     private vector               m_SinChoferPos;          // donde lo mataron, para medir cuanto rodo
+#ifdef DZ_Expansion_AI_Preload
     private eAIGroup             m_Group;
+#endif
+#ifdef DZ_Expansion_AI_Preload
     private ref array<eAIBase>   m_Guards;    // bots armados spawneados por spawn_guard (v1 teleport)
+#else
+    private ref array<PlayerBase> m_Guards;   // sin Expansion: siempre vacio
+#endif
     // LA PARADA CON ESCOLTA (verbo guard_stop). Maquina de 4 fases; ver GuardStopTick.
     private int                  m_GsFase;      // 0 inactivo · 1 esperando que frene · 2 desplegados · 3 embarcando
     private float                m_GsRadio;
@@ -182,19 +198,31 @@ class BZBusService {
     private int                  m_GsTries;
     private int                  m_GsVivos;
     private bool                 m_GsEnCombate; // para no repetir la linea de combate
+#ifdef DZ_Expansion_AI_Preload
     private eAIGroup             m_GsGrupo;     // grupo PROPIO de la guardia (ver DesplegarGuardia)
+#endif
     // 851: el conteo tiene que ser sobre ESTA parada, no sobre el Crew declarado. El roster son los
     // que BAJARON aca; m_GsABordo, los que estaban arriba cuando empezo. Con eso los dos numeros cierran y un
     // bot que llega caminando desde la parada anterior se ve como lo que es: un extra, no un descuadre.
     private bool                 m_IgnoraInfectados = true;   // (ver BZDeployConfig)
     private int                  m_CrewPend;                  // indice del spawn escalonado del Crew
+#ifdef DZ_Expansion_AI_Preload
     private ref array<eAIBase>   m_GsRoster;
+#else
+    private ref array<PlayerBase> m_GsRoster;   // sin Expansion: siempre vacio
+#endif
     private int                  m_GsABordo;
     private int                  m_GsFugaTicks; // ticks con al menos un guardia fuera del radio (x GS_TICK_S = segundos)
+#ifdef DZ_Expansion_AI_Preload
     private ref array<eAIBase>   m_Crew;      // bots que viajan sentados desde el arranque (v2)
+#else
+    private ref array<PlayerBase> m_Crew;     // sin Expansion: siempre vacio
+#endif
     private ref array<int>       m_CrewSeats; // asiento de cada bot de m_Crew (array paralelo)
     private ref array<ref BZBoardState> m_CrewBoard; // estado de boarding animado por cada crew (Stage 1)
+#ifdef DZ_Expansion_AI_Preload
     private eAIDynamicPatrol     m_CrewPatrol;   // patrulla viva del crew (spawner propio de eAI, como Quest/AICamp)
+#endif
     private bool                 m_CrewWillBoard = false; // MILESTONE 1: crew patrulla y NO aborda (confirmar movimiento)
     private int                  m_QuestCheckID = -1;     // INTEGRACION QUEST Step 1: id de la quest a inspeccionar
     private int                  m_QuestPollTries = 0;    // INTEGRACION QUEST: intentos del poll de bots (lazy/proximidad)
@@ -463,7 +491,7 @@ class BZBusService {
             BZBusLog.Err(tagAr + "la ruta no esta bajo el controlador 1.2 o ya termino — sin accion");
             return false;
         }
-        Car busAr = Car.Cast(m_Bus);
+        Car busAr = AutoDelBus();
         if (!busAr) {
             BZBusLog.Err(tagAr + "sin vehiculo — sin accion");
             return false;
@@ -541,7 +569,7 @@ class BZBusService {
         foreach (Object oD : objsD) {
             if (!oD) continue;
             if (oD == propioD) continue;
-            if (!CarScript.Cast(oD)) continue;
+            if (!BZVehiculoFabrica.EsVehiculo(oD)) continue;
             float dD = vector.Distance(oD.GetPosition(), posD);
             if (dMinD < 0 || dD < dMinD) dMinD = dD;
         }
@@ -559,7 +587,7 @@ class BZBusService {
             SpawnProbe(m_ArProbeTag + " t+1.5s", desdeAr);
             m_ArProbeN = 1;
             // 3: MONTADO sobre algo (ruedas en el aire + chasis levantado) -> el escalon falla YA y sube
-            Car carPr = Car.Cast(m_Bus);
+            Car carPr = AutoDelBus();
             if (carPr && m_Ctrl12 && m_ArProbeTag == "AR-FISICO") {
                 int nwPr = carPr.WheelCount();
                 int abajoPr = Ruedas12(carPr);
@@ -621,7 +649,7 @@ class BZBusService {
 
     int GetPassengerCount() {
         if (!m_Bus) return 0;
-        Car carBus = Car.Cast(m_Bus);
+        Car carBus = AutoDelBus();
         if (!carBus) return 0;
         int count = 0;
         for (int i = 0; i < carBus.CrewSize(); i++) {
@@ -701,7 +729,7 @@ class BZBusService {
                     if (r && r.RunnerIsActive()) active++;
                 }
             }
-            BZBusLog.Info("[PERF] server " + (int)s_ServerFps + " fps | BZ " + s_FrameworkMs + " ms/frame | runners activos: " + active);
+            if (BZDiag.On()) BZBusLog.Info("[PERF] server " + (int)s_ServerFps + " fps | BZ " + s_FrameworkMs + " ms/frame | runners activos: " + active);
         }
     }
 
@@ -986,9 +1014,8 @@ class BZBusService {
         // linea grabada). Capta un vehiculo pegado/empujado que se corrio de los waypoints -> sin
         // esto, al acercarse el scan lo pierde ("despejado") y Boris lo FUERZA (bug con vehiculos
         // fuertes que empujan). Radio chico = solo lo que tiene realmente en frente (banquina afuera).
-        CarScript busCar = CarScript.Cast(selfBus);
-        if (busCar) {
-            vector busFwd = busCar.GetDirection();
+        if (BZVehiculoFabrica.EsVehiculo(selfBus)) {
+            vector busFwd = selfBus.GetDirection();
             busFwd[1] = 0;
             float bfLen = busFwd.Length();
             if (bfLen > 0.001) {
@@ -1000,7 +1027,7 @@ class BZBusService {
                     GetGame().GetObjectsAtPosition3D(fpt, 3.0, fobjs, fprox);
                     foreach (Object fo : fobjs) {
                         if (!fo || fo == selfBus) continue;
-                        if (CarScript.Cast(fo)) return fd;
+                        if (BZVehiculoFabrica.EsVehiculo(fo)) return fd;
                     }
                 }
             }
@@ -1034,7 +1061,7 @@ class BZBusService {
                 foreach (Object o : objs) {
                     if (!o) continue;
                     if (o == selfBus) continue;
-                    if (!CarScript.Cast(o)) continue;
+                    if (!BZVehiculoFabrica.EsVehiculo(o)) continue;
                     vector rel = o.GetPosition() - wp;
                     rel[1] = 0;
                     float lateral = rel[0] * rightv[0] + rel[2] * rightv[2];
@@ -1138,7 +1165,7 @@ class BZBusService {
             foreach (Object o : objs) {
                 if (!o) continue;
                 if (o == selfBus) continue;
-                if (CarScript.Cast(o)) { clear = false; break; }
+                if (BZVehiculoFabrica.EsVehiculo(o)) { clear = false; break; }
             }
             if (clear) return i;
         }
@@ -1568,13 +1595,13 @@ class BZBusService {
         BZBusLog.Info("[WIZARD-RT] bbox X=" + boxX.ToString() + " Y=" + boxY.ToString() + " Z=" + boxZ.ToString());
 
         // Car-specific runtime props
-        Car bus = Car.Cast(m_Bus);
+        Car bus = AutoDelBus();
         if (bus) {
             BZBusLog.Info("[WIZARD-RT] EngineGetRPMIdle: " + bus.EngineGetRPMIdle());
             BZBusLog.Info("[WIZARD-RT] EngineGetRPMMin: " + bus.EngineGetRPMMin());
             BZBusLog.Info("[WIZARD-RT] EngineGetRPMRedline: " + bus.EngineGetRPMRedline());
             BZBusLog.Info("[WIZARD-RT] EngineGetRPMMax: " + bus.EngineGetRPMMax());
-            BZBusLog.Info("[WIZARD-RT] GetSpeedometerAbsolute(idle): " + bus.GetSpeedometerAbsolute());
+            BZBusLog.Info("[WIZARD-RT] GetSpeedometerAbsolute(idle): " + KmhDe(bus));
         }
     }
 
@@ -1672,7 +1699,7 @@ class BZBusService {
                     if (posBoost < -8.0) posBoost = -8.0;
                     float target = m_FrameReplay.CurSpeed() + posBoost;
                     if (target < 0) target = 0;
-                    float spdErr = target - bus.GetSpeedometerAbsolute();
+                    float spdErr = target - KmhDe(bus);
                     if (spdErr > 0.6) {
                         frThr = frThr + (spdErr - 0.6) * 0.08;
                         if (frThr > 1.0) frThr = 1.0;
@@ -1757,7 +1784,7 @@ class BZBusService {
                 // Mido el residuo (velocidad grabada vs actual de Boris) y acumulo el inverso en la comp del
                 // frame_ para la PROXIMA pasada. Ciego a la causa. Persiste al fin del stream (Save).
                 if (m_Config.FrameReplayILC) {
-                    float ilcSpdErr = m_FrameReplay.CurSpeed() - bus.GetSpeedometerAbsolute();
+                    float ilcSpdErr = m_FrameReplay.CurSpeed() - KmhDe(bus);
                     // La ZONA DE COMPENSACION (slope-aware) la decide AccumComp con la pendiente GRABADA
                     // (m_Slope, de la elevacion de la toma) -> fisica-fiel y no depende del pitch vivo de Boris.
                     // El gate viejo de pitch<2 tiraba justo los frames de descenso suave donde vive el deficit.
@@ -1844,7 +1871,7 @@ class BZBusService {
         // DriveTowards porque esa funcion esta al limite de instrucciones de Enforce.
         float steerOut = m_CachedSteering;
         if (m_LegLaunch && m_Config && m_Config.LaunchStraightEnabled) {
-            if (bus.GetSpeedometerAbsolute() >= m_Config.LaunchStraightKmh) {
+            if (KmhDe(bus) >= m_Config.LaunchStraightKmh) {
                 m_LegLaunch = false;
             } else {
                 float capLs = m_Config.LaunchStraightCap;
@@ -1855,7 +1882,7 @@ class BZBusService {
         // DIAGNOSTICO one-shot (2026-07-25): el cap de LaunchStraight no aplicaba en el arranque de la reversa
         // (volante -11deg con cap 0.03). Logueo los primeros N ticks de cada tramo para ver m_LegLaunch real.
         if (m_Config && m_Config.DriveDiagLog && m_LaunchDbg < 22) {
-            BZBusLog.Info("[LAUNCHDBG] leg=" + m_LegStart + ".." + m_LegEnd + " launch=" + m_LegLaunch + " vel=" + bus.GetSpeedometerAbsolute() + " cmd=" + m_CachedSteering + " out=" + steerOut);
+            BZBusLog.Info("[LAUNCHDBG] leg=" + m_LegStart + ".." + m_LegEnd + " launch=" + m_LegLaunch + " vel=" + KmhDe(bus) + " cmd=" + m_CachedSteering + " out=" + steerOut);
             m_LaunchDbg++;
         }
         bus.SetThrottle(m_CachedThrottle);
@@ -1877,11 +1904,11 @@ class BZBusService {
         // remocion total: el endpoint, el frenado de precision y los holds declarados usan handbrake DESPUES
         // del despegue (flag ya OFF) -> no se pierde precision.
         if (m_LaunchHbSuppress && !m_SpawnHoldActive) {
-            if (bus.GetSpeedometerAbsolute() > 3.0) m_LaunchHbSuppress = false;   // despego -> logica normal retoma
+            if (KmhDe(bus) > 3.0) m_LaunchHbSuppress = false;   // despego -> logica normal retoma
             else hbApply = 0;                                                     // arranque de la toma: handbrake negado
         }
         // SAFETY ANTI-DEADLOCK (backstop, mid-ruta): por si un handbrake se traba fuera del arranque.
-        bool hbDeadlock = (hbApply > 0.5 && m_CachedThrottle > 0.5 && bus.GetSpeedometerAbsolute() < 1.0 && !m_SpawnHoldActive && !m_EndpointLatched && !m_Frozen && !m_AtStop);
+        bool hbDeadlock = (hbApply > 0.5 && m_CachedThrottle > 0.5 && KmhDe(bus) < 1.0 && !m_SpawnHoldActive && !m_EndpointLatched && !m_Frozen && !m_AtStop);
         if (hbDeadlock) {
             m_HbSafetyTicks = m_HbSafetyTicks + 1;
         } else {
@@ -1897,6 +1924,9 @@ class BZBusService {
     void Init() {
         if (!GetGame().IsServer()) return;
         LoadSettings(); // config global del framework (admin + tecla Control Panel)
+#ifndef DZ_Expansion_AI_Preload
+        AvisarSinExpansion();
+#endif
         if (!LoadConfig()) return;   // sin ruta por defecto (BZBusRoute.json): nada arranca al boot; las rutas se lanzan desde el panel
         if (!ValidateConfig()) return;
         PreloadSlots(); // 2026-06-09: precarga slots para CTRL+NUMPAD switch instantaneo
@@ -1940,6 +1970,8 @@ class BZBusService {
     // (AICamp/Patrol), los agarramos VIVOS via el modulo global. STEP 1: validar ACCESO (loguear).
     // Los bots se spawnean en el OnEventStart del objetivo (un toque DESPUES de OnQuestStart) -> grab
     // diferido 3s. Ver [[reference_expansion_quest_api]]. Reparto: Quest=bots+logica, Framework=vehiculo.
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void OnQuestStart(ExpansionQuest quest) {
         if (!quest) return;
         ExpansionQuestConfig qc = quest.GetQuestConfig();
@@ -1988,11 +2020,15 @@ class BZBusService {
         BZBusLog.Info("[QUEST] Expansion_OnQuestStart -> quest id=" + m_QuestCheckID + " (poll de convoy arranca)");
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.CheckQuestBots, 4000, false);
     }
+#endif
+#endif
 
     // ESCORT (AIVIP, ObjectiveType 9): poll buscando al VIP del quest. El VIP NO esta en QuestPatrolExists
     // (esa lista es solo AICamp/AIPatrol); esta flageado con Expansion_IsQuestVIP() y sale del enum global
     // eAIBase.eAI_GetAll(). Cuando aparece cerca del vehiculo, lo embarcamos (BoardEscortVIP, walk-in en su
     // propio grupo). Despues el vehiculo maneja al destino y el VIP baja ahi (route-end = DismountQuestCrew).
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void CheckEscortVIP() {
         if (m_QuestCheckID < 0 || m_EscortBoarded) return;
         if (!m_Bus) {
@@ -2023,10 +2059,14 @@ class BZBusService {
             BZBusLog.Warn("[QUEST-ESCORT] VIP no aparecio (eAI_GetAll) tras los polls -> escort abortado");
         }
     }
+#endif
+#endif
 
     // BoardEscortVIP: sube al VIP (un eAIBase suelto, que vive en el grupo del player). Lo saca a su PROPIO
     // grupo (no tocar el grupo del jugador), lo pacifica y lo manda a la puerta del asiento 1 reusando el
     // walk-in del convoy (m_CrewBoard + StepCrewBoarding). El dismount en el destino lo hace el route-end de quest.
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void BoardEscortVIP(eAIBase vip) {
         if (!m_Bus || !vip) return;
         Transport transport = Transport.Cast(m_Bus);
@@ -2063,11 +2103,15 @@ class BZBusService {
         m_CrewSeats.Insert(seat);
         BZBusLog.Info("[QUEST-ESCORT] VIP -> WALK board seat " + seat + " (grupo propio, asiento trasero)");
     }
+#endif
+#endif
 
     // STEP 2 CONVOY (2026-06-16): el quest spawnea bots VIVOS (lazy por proximidad). Poll-eamos:
     // (1) al detectarlos -> convoy ACTIVO + guardamos el conteo inicial. (2) cuando el conteo BAJA
     // (mataste 1) -> TRIGGER: los sobrevivientes SUBEN al Cobra del framework (BoardQuestBots) y (futuro)
     // huyen al patio. Requiere el Cobra ya spawneado (NUMPAD 2). Ver [[project_brigadaz_transport_quest_integration]].
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void CheckQuestBots() {
         if (m_QuestCheckID < 0) return;
         array<eAIQuestPatrol> patrols = new array<eAIQuestPatrol>();
@@ -2131,12 +2175,16 @@ class BZBusService {
             BZBusLog.Info("[QUEST-CONVOY] poll terminado (~30min sin trigger)");
         }
     }
+#endif
+#endif
 
     // BoardQuestBots: los bots VIVOS del quest suben al Cobra del framework. Cada bot del quest esta en su
     // propia patrulla/grupo (eAIQuestPatrol, 1 c/u) -> aplicamos el recipe de caminata por bot (waypoint a
     // la puerta del asiento, al piso) reusando StepCrewBoarding (el Tick lo orquesta). Como son VIVOS (no
     // maniquies), el recipe funciona. Los metemos en m_Crew para el dismount/deploy posterior. NO los
     // re-agrupamos (preserva el kill-count del quest).
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void BoardQuestBots() {
         if (!m_Bus) { BZBusLog.Warn("[QUEST-CONVOY] no hay Cobra spawneado (NUMPAD 2) -> no se puede embarcar"); return; }
         Transport transport = Transport.Cast(m_Bus);
@@ -2191,6 +2239,8 @@ class BZBusService {
         int boarded = seat - 1;
         BZBusLog.Info("[QUEST-CONVOY] " + boarded + " sobrevivientes embarcando (StepCrewBoarding orquesta el walk).");
     }
+#endif
+#endif
 
     // OnQuestComplete: objetivos del quest cumplidos (ej. convoy entero muerto). Decide el DESTINO del
     // vehiculo del framework. Caso actual: DESPAWN (config "despawn"). Otras politicas posibles (ver manual
@@ -2202,6 +2252,8 @@ class BZBusService {
     // seteados por la FSM, sin overlap. NO se pacifica (hostil). Idempotente (materializacion gradual). OJO: en
     // vehiculos con entradas CrewEntryWS superpuestas (x5: traseros = delanteros) el board se contiende -> ver
     // [[feedback_vehicle_shared_doors_boarding]]; fix real = serializar por entrada.
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void BoardAmbushBots() {
         if (!m_Bus) return;
         Transport transport = Transport.Cast(m_Bus);
@@ -2254,6 +2306,8 @@ class BZBusService {
             BZBusLog.Info("[QUEST-AMBUSH] convoy embarcando (caminando) (" + m_Crew.Count() + " bots + Boris) -> a manejar");
         }
     }
+#endif
+#endif
 
     // Lo llama el CarScript (EEHitBy del vehiculo) y el poll de salud de los bots. Al primer daÃƒÂ±o de arma
     // -> despliega (one-shot). Solo en ambush activo y antes de disparar.
@@ -2271,9 +2325,9 @@ class BZBusService {
     // un delay fijo (un SUV no para en 1.5s desde 40km/h). Polleamos la velocidad cada 0.4s.
     void AmbushWaitStop() {
         if (!m_Bus) return;
-        Car c = Car.Cast(m_Bus);
+        Car c = AutoDelBus();
         float kmh = 999.0;
-        if (c) kmh = c.GetSpeedometerAbsolute();
+        if (c) kmh = KmhDe(c);
         m_AmbushStopTries++;
         if (kmh < 3.0 || m_AmbushStopTries > 20) {   // parado (<3km/h) o timeout ~8s
             BZBusLog.Info("[QUEST-AMBUSH] vehiculo detenido (" + kmh + " km/h) -> DESPLIEGUE");
@@ -2285,9 +2339,10 @@ class BZBusService {
 
     // Despliegue (escena 2): el vehiculo ya freno -> bajan los bots (animado, puerta abierta) + Boris
     // (armado, hostil) -> campean. Reusa DismountCrew (que abre puerta y deja patrulla LOOP).
+#ifdef DZ_Expansion_AI_Preload
     void AmbushDismount() {
         if (!m_Bus) return;
-        int dc = DismountCrew(Car.Cast(m_Bus));
+        int dc = DismountCrew(AutoDelBus());
         // Boris: hostil + baja animado (abre su puerta) + mortal.
         if (m_Driver) {
             eAIGroup bg = m_Driver.GetGroup();
@@ -2304,6 +2359,12 @@ class BZBusService {
         }
         BZBusLog.Info("[QUEST-AMBUSH] despliegue: " + dc + " bots + Boris bajando -> campean");
     }
+#else
+    // sin Expansion AI no hay convoy de bots: nada que desplegar
+    void AmbushDismount() {
+        BZBusLog.Info("[QUEST-AMBUSH] sin Expansion AI: no hay bots que desplegar");
+    }
+#endif
 
     // ======================= EL CHOFER =======================
     // El usuario: "desde 300 m le snipeo al chofer" y "si matamos al chofer asignado el vehiculo no puede
@@ -2335,6 +2396,7 @@ class BZBusService {
 
     // Sucesor: el primer bot del crew VIVO y habilitado. Orden POR ASIENTO -- los candidatos ya van todos a
     // bordo, asi que "el mas cercano" no distingue nada (por eso no hay perilla de orden).
+#ifdef DZ_Expansion_AI_Preload
     private eAIBase BuscarSucesor(out int seatSuc)
     {
         seatSuc = -1;
@@ -2350,9 +2412,11 @@ class BZBusService {
         }
         return null;
     }
+#endif
 
     // Lo sienta al volante con la misma receta del chofer original (teleport-seat + anim de operario) y lo
     // PACIFICA: el que maneja no pelea ni se baja (regla del usuario: "se queda al volante").
+#ifdef DZ_Expansion_AI_Preload
     private void SentarChofer(eAIBase suc, int seatViejo)
     {
         Transport trCh = Transport.Cast(m_Bus);
@@ -2370,6 +2434,7 @@ class BZBusService {
         if (m_DriverInvincible) m_Driver.SetAllowDamage(false);
         BZBusLog.Info("[C12][CHOFER] toma el volante el bot del asiento " + seatViejo.ToString() + " -> seat 0 (Drivers.Mode " + m_DriversMode + ") · la cinta sigue");
     }
+#endif
 
     // 2 Hz. Sin conductor util: sucesor si lo hay, FINAL declarado si no.
     private void VigilarChofer()
@@ -2378,6 +2443,7 @@ class BZBusService {
         if (!m_Bus) return;
         if (m_C12Terminada) return;
         if (ChoferUtil()) return;
+#ifdef DZ_Expansion_AI_Preload
         int seatSuc12 = -1;
         eAIBase suc12 = BuscarSucesor(seatSuc12);
         if (suc12)
@@ -2385,6 +2451,7 @@ class BZBusService {
             SentarChofer(suc12, seatSuc12);
             return;
         }
+#endif
         m_SinChoferCerrado = true;
         string motivoCh = "el chofer murio";
         if (!m_Driver) motivoCh = "el chofer ya no existe";
@@ -2409,9 +2476,9 @@ class BZBusService {
     private void FrenarYSoltar()
     {
         if (!m_Bus) return;
-        Car cSc = Car.Cast(m_Bus);
+        Car cSc = AutoDelBus();
         float kmhSc = 0;
-        if (cSc) kmhSc = cSc.GetSpeedometerAbsolute();
+        if (cSc) kmhSc = KmhDe(cSc);
         m_SinChoferPolls = m_SinChoferPolls + 1;
         if (kmhSc >= SINCHOFER_QUIETO_KMH && m_SinChoferPolls < SINCHOFER_MAX_POLLS)
         {
@@ -2446,7 +2513,7 @@ class BZBusService {
         if (m_Bus)
         {
             vector pSol = m_Bus.GetPosition();
-            Car cSol = Car.Cast(m_Bus);
+            Car cSol = AutoDelBus();
             if (cSol)
             {
                 cSol.SetThrottle(0);
@@ -2459,8 +2526,8 @@ class BZBusService {
                 cSol.SetBrakesActivateWithoutDriver(true);
             }
             m_Bus.SetAllowDamage(true);
-            CarScript cplSol = CarScript.Cast(m_Bus);
-            if (cplSol) cplSol.BZSetPartsLocked(false);   // botin entero y SIN condiciones: las piezas vuelven a soltarse
+            BZVehiculo vSol = V();
+            if (vSol) vSol.BloquearPiezas(false);   // botin entero y SIN condiciones: las piezas vuelven a soltarse
             float rodoSol = vector.Distance(m_SinChoferPos, pSol);
             BZBusLog.Info("[C12][CHOFER] vehiculo LIBERADO DETENIDO en " + pSol[0].ToString() + "," + pSol[2].ToString() + " (rodo " + rodoSol.ToString() + " m desde donde quedo sin chofer) · freno de mano puesto · el framework deja de manejarlo (botin)");
         }
@@ -2487,6 +2554,7 @@ class BZBusService {
     private const int   GS_PARADA_TRIES = 20;   // 10 s esperando que el vehiculo frene de verdad
     private const float GS_CORREA_MARGEN_M = 2.0;   // la correa va un poco afuera del anillo (ver BZEaiCorrea.c)
 
+#ifdef DZ_Expansion_AI_Preload
     private void IniciarGuardStop(BZAction a, int evIdx)
     {
         m_GsRadio  = a.radius;       if (m_GsRadio  <= 0) m_GsRadio  = GS_RADIO_DEF;
@@ -2502,7 +2570,16 @@ class BZBusService {
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).Remove(this.GuardStopTick);
         GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.GuardStopTick, 500, false);
     }
+#else
+    // sin Expansion AI no hay escolta: guard_stop no frena ni espera (la regla del framework: nunca quedarse
+    // detenido por algo que no puede pasar). Lo dice una vez por parada.
+    private void IniciarGuardStop(BZAction a, int evIdx)
+    {
+        BZBusLog.Warn("[MISION] wp " + m_WaypointIndex + ": guard_stop needs Expansion AI (escort bots): skipped, the vehicle keeps driving");
+    }
+#endif
 
+#ifdef DZ_Expansion_AI_Preload
     private bool GuardiaEnCombate()
     {
         if (!m_Crew) return false;
@@ -2516,9 +2593,11 @@ class BZBusService {
         if (m_GsGrupo && m_GsGrupo.IsInCombat()) return true;
         return false;
     }
+#endif
 
     // "Puedo responderle": hay algun blanco a tiro de la correa. Si estan peleando y el blanco esta lejos
     // (el francotirador a 300 m), no hay nada que hacer desde el perimetro y la mision sigue viaje.
+#ifdef DZ_Expansion_AI_Preload
     private bool AmenazaAlAlcance(vector posVeh)
     {
         if (!m_Crew) return false;
@@ -2533,6 +2612,7 @@ class BZBusService {
         }
         return false;
     }
+#endif
 
     // los muertos que importan son los de ESTE despliegue, no los del Crew declarado.
     private int RosterMuertos()
@@ -2548,6 +2628,7 @@ class BZBusService {
 
     // mirar la correa a 2 Hz NO la aplica (eso pasa adentro del bot, a 40 Hz); solo la CUENTA, para
     // que el log pueda decir que alguien se estaba yendo -- una de las tres cosas que el usuario vio y el log no.
+#ifdef DZ_Expansion_AI_Preload
     private void MirarCorrea()
     {
         if (!m_GsRoster) return;
@@ -2565,6 +2646,7 @@ class BZBusService {
         // una sola linea por episodio (el primer tick), no una por tick: el resto se resume al final
         if (m_GsFugaTicks == 1) BZBusLog.Info("[MISION] wp " + m_WaypointIndex + ": un guardia salio " + peorM + " m del anillo · la correa lo trae de vuelta");
     }
+#endif
 
     private int ContarCrewVivos()
     {
@@ -2590,6 +2672,7 @@ class BZBusService {
 
     // R1 + R4: los vivos vuelven al vehiculo DONDE ESTE. Reusa la maquina de embarque que ya existe
     // (StepCrewBoarding: caminan de a uno, abren, suben animados, y el que se traba 6 s entra por teleport).
+#ifdef DZ_Expansion_AI_Preload
     private int ReplegarGuardia()
     {
         if (!m_Crew || !m_CrewSeats || !m_Bus) return 0;
@@ -2628,6 +2711,7 @@ class BZBusService {
         }
         return vivosR;
     }
+#endif
 
     // "despliegue 3/3 bots a bordo" cuenta a quienes se les DIO LA ORDEN, y el 19/09
     // se leyo como si hubieran bajado tres cuando no bajo ninguno. Esta es la linea del HECHO: cuantos estan
@@ -2636,6 +2720,7 @@ class BZBusService {
     private bool m_GsPisoAvisado;
     private static const float GS_PISO_PLAZO_S = 5.0;
 
+#ifdef DZ_Expansion_AI_Preload
     private void ConfirmarPiso()
     {
         if (m_GsPisoAvisado || !m_GsRoster) return;
@@ -2665,6 +2750,7 @@ class BZBusService {
             BZBusLog.Warn("[GS] EN EL PISO " + pisoP.ToString() + "/" + totalP.ToString() + " a los " + m_GsT.ToString() + " s · SIGUEN ADENTRO: " + adentroP);
         }
     }
+#endif
 
     // LA FORMACION IN, SOLO CON EL LIDER EN EL PISO.
     //
@@ -2687,6 +2773,7 @@ class BZBusService {
     // SetFormationState solo asigna un campo (eAIGroup.c:615), asi que cambiarlo por tick no tiene costo.
     private bool m_GsFormacionIn;
 
+#ifdef DZ_Expansion_AI_Preload
     private void FormacionGuardia()
     {
         if (!m_GsGrupo) return;
@@ -2705,6 +2792,7 @@ class BZBusService {
             BZBusLog.Warn("[GS] el lider de la guardia volvio a estar ADENTRO -> formacion NONE, para que no arrastre a los demas al asiento");
         }
     }
+#endif
 
     // EL QUE SE VUELVE A SUBIR, DELATADO CON SU GRUPO.
     // En la corrida del 18/09 los 3 guardias volvieron al asiento 2,1 s despues del despliegue de
@@ -2723,6 +2811,7 @@ class BZBusService {
     private ref array<bool> m_GsReAviso;
     private ref array<bool> m_GsVistoFuera;
 
+#ifdef DZ_Expansion_AI_Preload
     private void MirarReembarque()
     {
         if (!m_GsRoster || !m_GsReAviso) return;
@@ -2758,18 +2847,20 @@ class BZBusService {
             BZBusLog.Warn("[GS] el guardia " + ri.ToString() + " VOLVIO A SUBIR a los " + m_GsT.ToString() + " s del despliegue " + "·" + " lo subio: " + quien + " " + "·" + " esta en " + donde);
         }
     }
+#endif
 
+#ifdef DZ_Expansion_AI_Preload
     private void GuardStopTick()
     {
         if (m_GsFase == 0) return;
         if (!m_Bus) { m_GsFase = 0; return; }
-        Car cG = Car.Cast(m_Bus);
+        Car cG = AutoDelBus();
         if (!cG) { m_GsFase = 0; return; }
 
         if (m_GsFase == 1)
         {
             m_GsTries = m_GsTries + 1;
-            if (cG.GetSpeedometerAbsolute() >= 3.0 && m_GsTries < GS_PARADA_TRIES)
+            if (KmhDe(cG) >= 3.0 && m_GsTries < GS_PARADA_TRIES)
             {
                 GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.GuardStopTick, 500, false);
                 return;
@@ -2849,15 +2940,23 @@ class BZBusService {
         SetCachedHandbrake(0.0);
         m_GsFase = 0;
     }
+#else
+    private void GuardStopTick()
+    {
+        m_GsFase = 0;
+    }
+#endif
     // ===============================================================================
 
     // Wrapper sin-args para CallLater: baja al crew del convoy (animado) una vez que el vehiculo paro.
     void DismountQuestCrew() {
         if (!m_Bus) return;
-        int dc = DismountCrew(Car.Cast(m_Bus));
+        int dc = DismountCrew(AutoDelBus());
         BZBusLog.Info("[QUEST-CONVOY] dismount en el patio: " + dc + " bot(s) bajando (animado). Fin de la secuencia del vehiculo.");
     }
 
+#ifdef DZ_Expansion_Quests_Preload
+#ifdef DZ_Expansion_AI_Preload
     void OnQuestComplete(ExpansionQuest quest) {
         if (!quest) return;
         ExpansionQuestConfig qc = quest.GetQuestConfig();
@@ -2870,6 +2969,8 @@ class BZBusService {
         m_QuestInitialBots = 0;
         CleanupEntities();   // borra Cobra + Boris y remueve el Tick (sin auto-respawn)
     }
+#endif
+#endif
     // ==============================================================================
 
     // Cierre manual del bus (NUMPAD 1 -> RPC -> aca). Limpia el vehiculo
@@ -2937,6 +3038,7 @@ class BZBusService {
         if (!FileExist(SETTINGS_PATH)) {
             JsonFileLoader<BZAutoDriveSettings>.JsonSaveFile(SETTINGS_PATH, s_Settings);
             BZBusLog.Info("[Settings] Generado default en " + SETTINGS_PATH);
+            AplicarDiagYCajas();
             AvisarSinAdmins();
             return;
         }
@@ -2945,7 +3047,15 @@ class BZBusService {
         // viejo, JsonLoadFile puede dejarla en 0 -- FijarPresupuesto ignora <= 0 y queda el default.
         BZCargaCola.FijarPresupuesto(s_Settings.LoadBudgetMsPerFrame);
         BZBusLog.Info("[Settings] Cargado. Admins: " + s_Settings.AdminSteamIDs.Count() + " | LoadBudgetMsPerFrame: " + BZCargaCola.Presupuesto() + " | CrewBoardTimeoutS: " + s_Settings.CrewBoardTimeoutS + " | AdminArrivalNotifications: " + ModoAvisoLlegada() + " | AdminSystemNotifications: " + ModoAvisoSistema());
+        AplicarDiagYCajas();
         AvisarSinAdmins();
+    }
+
+    // las dos perillas del RPT y del disco: el diagnostico repetido y las cajas negras (las dos apagadas por defecto)
+    private void AplicarDiagYCajas() {
+        BZDiag.Fijar(s_Settings.Diagnostics);
+        BZCajaNegra.Configurar(s_Settings.BlackBox, s_Settings.BlackBoxKeepPerRoute);
+        BZBusLog.Info("[Settings] Diagnostics: " + s_Settings.Diagnostics + " | BlackBox: " + s_Settings.BlackBox + " (las ultimas " + BZCajaNegra.Guardar() + " por ruta)");
     }
 
     // ¿El SteamID es admin del Control Panel? ⚠ FAIL-CLOSED (, decision
@@ -3083,7 +3193,7 @@ class BZBusService {
                 // Si ademas no hay NINGUNA ruta, una linea en ingles para el suscriptor; si hay, solo se dice que nada
                 // arranca solo al boot.
                 EnumerateRoutes();
-                if (s_RouteList.Count() == 0) BZBusLog.Warn("[BZ AutoDrive] No routes yet: record one in-game (NUMPAD 5) and convert it with @BZ_AutoDrive\\tools\\Wizard.bat.");
+                if (s_RouteList.Count() == 0 && BZCarpetas.PerfilListable()) BZBusLog.Warn("[BZ AutoDrive] No routes yet: record one in-game (NUMPAD 5) and convert it with @BZ_AutoDrive\\tools\\Wizard.bat.");
                 else BZBusLog.Info("[BZ AutoDrive] No default route (BZBusRoute.json): nothing starts at boot; " + s_RouteList.Count().ToString() + " route(s) available in the panel.");
             } else {
                 BZBusLog.Err("LoadConfigFromPath: archivo no existe: " + path);
@@ -3091,8 +3201,21 @@ class BZBusService {
             return false;
         }
 
-        int loadMs = TickCount(0) - loadT0;   // ms transcurridos (TickCount(arg) da absoluto, no delta -> resto a mano)
+        // TickCount cuenta de a 100 ns (10.000 por ms, como ARM_UNIDAD_TICKS y el cargador por trozos): la resta son
+        // ticks y se pasa a ms. Medido: una carga de 7,39 s decia 73934713 "ms" en el [LOADTIME] y 73934 s en el aviso.
+        int loadMs = (TickCount(0) - loadT0) / 10000;
         BZBusLog.Info("[LOADTIME] metodo=" + loadMethod + " waypoints=" + m_Config.Waypoints.Count() + " -> " + loadMs + " ms");
+        // UNA RUTA DE FORMATO VIEJO (sin _wp.csv) entra por el JSON completo, en un solo cuadro: el server queda congelado
+        // lo que dure (medido: 6,5 a 10 s con 1.406 wp y 700 KB). Se avisa en cada carga, con el tiempo medido y que hacer:
+        // al RPT como aviso y a los admins conectados por el canal de los avisos de sistema.
+        if (loadMethod == "JsonFileLoader")
+        {
+            float loadS = Math.Round(loadMs / 100.0) / 10.0;
+            string avV = "route " + m_RouteName + " is in the old format (no _wp.csv): loading it froze the server for " + loadS.ToString() + " s.";
+            avV = avV + " Reconvert the recording with the Wizard to load it in small slices.";
+            BZBusLog.Warn("[BZ AutoDrive] " + avV);
+            EnviarAAdmins(avV, ModoAvisoSistema());
+        }
         // "replay" no tiene que reproducir: la toma no graba bocina ni luces (el conversor escribe 0 en las dos
         // columnas). Se avisa UNA vez por carga de ruta, con la alternativa.
         if (m_Config.HornMode == "replay") BZBusLog.Warn("[Config] HornMode 'replay': la toma no graba bocina, asi no suena nunca (solo el verbo horn). Usa stops / finish / off.");
@@ -3305,9 +3428,13 @@ class BZBusService {
         CleanupEntities();
         if (!LoadConfigFromPath(path)) {
             BZBusLog.Err("[Continuar] no se pudo cargar " + fname);
+            RechazarContinuar(player, wpIndex, "Could not load " + fname + ": no empty vehicle created");
             return;
         }
-        if (!ValidateConfig()) return;
+        if (!ValidateConfig()) {
+            RechazarContinuar(player, wpIndex, "Route config is not valid (see the server log): no empty vehicle created");
+            return;
+        }
         SpawnParaContinuar(wpIndex, player);
     }
 
@@ -3333,9 +3460,6 @@ class BZBusService {
                 BZBusLog.Info("[PreloadSlots] slot " + s + " no existe (skip)");
                 continue;
             }
-            FileAttr attr;
-            FindFileHandle fh = FindFile(slotPath, slotPath, attr, FindFileFlags.ALL);
-            CloseFindFile(fh);
             // TamaÃƒÂ±o check via lectura del archivo
             FileHandle sizeFh = OpenFile(slotPath, FileMode.READ);
             if (sizeFh == 0) {
@@ -3378,19 +3502,16 @@ class BZBusService {
     private void EnumerateRoutes() {
         if (!s_RouteList) s_RouteList = new array<string>();
         s_RouteList.Clear();
-        string fileName;
-        FileAttr attr;
-        string pattern = "$profile:BZ_AutoDrive\\BZBusRoute*.json";
-        FindFileHandle fh = FindFile(pattern, fileName, attr, FindFileFlags.ALL);
-        if (fh) {
-            bool more = true;
-            while (more) {
-                if (IsRouteListable(fileName)) s_RouteList.Insert(fileName);
-                more = FindNextFile(fh, fileName, attr);
-            }
-            CloseFindFile(fh);
+        // el patron y la resolucion de "$profile:" cambian entre la 1.29 y la 1.30: lo resuelve BZCarpetas.ListarPerfil
+        array<string> nombres = BZCarpetas.ListarPerfil("BZ_AutoDrive", "BZBusRoute*.json");
+        int ni;
+        for (ni = 0; ni < nombres.Count(); ni++) {
+            string fileName = nombres.Get(ni);
+            if (IsRouteListable(fileName)) s_RouteList.Insert(fileName);
         }
         BZBusLog.Info("[RouteList] " + s_RouteList.Count() + " rutas enumeradas");
+        string avisoPerfil = BZCarpetas.TomarAvisoPerfil();
+        if (avisoPerfil != "") AvisoSistema(avisoPerfil);
     }
 
     private bool IsRouteListable(string fn) {
@@ -3683,9 +3804,49 @@ class BZBusService {
         if (m_Bus) return m_Bus.GetPosition();
         return "0 0 0";
     }
+    // ★ EL VELOCIMETRO PUEDE NO SER UN NUMERO. Medido (Offroad_02, caja automatica, 1 de 2 corridas): GetSpeedometerAbsolute
+    // dio NaN desde el spawn y durante mas de 13 s. NaN no es un numero y las comparaciones con NaN no son confiables (el
+    // ValidateSpawn lo tomo como "en movimiento"); el estado del cerebro 1.2 quedaba incoherente, el LEG 0 no se armaba y el
+    // arbitro hacia SAFE_STOP en el acto. Toda lectura del servicio pasa por aca: si el velocimetro no es finito, la
+    // velocidad del cuerpo (GetVelocity; finita o 0) y un aviso, una vez por spawn.
+    // BZ12_PRUEBA_NAN_S.txt (en el perfil, con los segundos): la lectura cruda es NaN durante esos segundos desde el spawn,
+    // para reproducir el caso a pedido. Sin el archivo no hace nada.
+    private static const string PRUEBA_NAN_FLAG = "$profile:BZ_AutoDrive\\BZ12_PRUEBA_NAN_S.txt";
+    private bool  m_VelocimetroNanAvisado;
+    private float m_PruebaNanHastaT;
+    private float KmhDe(Car c) {
+        if (!c) return 0;
+        float kmhRaw = c.GetSpeedometerAbsolute();
+        if (m_PruebaNanHastaT > 0 && GetGame().GetTickTime() < m_PruebaNanHastaT) kmhRaw = BZMath.NaN();
+        if (BZMath.Finite(kmhRaw)) return kmhRaw;
+        vector velC = GetVelocity(c);
+        float kmhC = 0;
+        if (BZMath.FiniteVec(velC)) kmhC = velC.Length() * 3.6;
+        if (!m_VelocimetroNanAvisado) {
+            m_VelocimetroNanAvisado = true;
+            string lnNan = "[Velocimetro] GetSpeedometerAbsolute no da un numero (" + kmhRaw.ToString() + ") en " + c.GetType();
+            lnNan = lnNan + ": el framework usa la velocidad del cuerpo (" + kmhC.ToString() + " km/h) mientras dure · runner " + m_RouteName;
+            BZBusLog.Warn(lnNan);
+        }
+        return kmhC;
+    }
+
+    // la bandera de prueba del velocimetro: se lee en cada spawn
+    private void ArmarPruebaNan() {
+        m_VelocimetroNanAvisado = false;
+        m_PruebaNanHastaT = 0;
+        float sNan = LeerBanderaFloat(PRUEBA_NAN_FLAG);
+        if (sNan <= 0) return;
+        m_PruebaNanHastaT = GetGame().GetTickTime() + sNan;
+        BZBusLog.Warn("[Velocimetro] PRUEBA: la lectura cruda sera NaN durante " + sNan.ToString() + " s desde el spawn (bandera BZ12_PRUEBA_NAN_S.txt) · runner " + m_RouteName);
+    }
+
     float RunnerSpeedKmh() {
-        Car c = Car.Cast(m_Bus);
-        if (c) return c.GetSpeedometerAbsolute();
+        Car c = AutoDelBus();
+        if (c) return KmhDe(c);
+        // la moto (1.30) no es Car: por el adaptador
+        BZVehiculo vS = V();
+        if (vS) return vS.KmhAbs();
         return 0;
     }
 
@@ -3758,6 +3919,15 @@ class BZBusService {
     {
         if (!m_C12Terminada) return "";
         return m_C12FinRazon;
+    }
+
+    // La medida del veredicto: la distancia a la pose final EN REPOSO (m) con la que se decidio COMPLETE/INCOMPLETE
+    // (la de la linea `[C12] REPOSO`). -1 mientras corre y si la ruta termino sin llegar (STUCK, abort).
+    float RunnerReposoFinM()
+    {
+        if (m_Moto12) return m_Moto12.ReposoFinM();   // la moto: la misma medida (contra la pose final de la toma)
+        if (!m_Ctrl12) return -1;
+        return m_Ctrl12.ReposoFinM();
     }
 
     // API taxi del BLOQUEO (nombres fijados con BusDrive, ). Trabado contra algo con la escalera del
@@ -3876,11 +4046,201 @@ class BZBusService {
 
     // ---- getters para que el eAI ubique/siente sus entidades (m_Bus/m_Driver son privados) ----
     EntityAI GetBus()    { return m_Bus; }
+
+    // EL VEHICULO VISTO POR EL ADAPTADOR (BZVehiculo, DISENO_MOTOS_130 SS3): sigue a m_Bus (se rehace si m_Bus cambia).
+    // null sin vehiculo o si la fabrica no lo maneja. AutoDelBus() es el Car de transicion para lo que todavia
+    // recibe Car (el cerebro 1.2, el grabador, los probes): el mismo Car que daba antes el cast de m_Bus.
+    private ref BZVehiculo m_V;
+    private EntityAI m_VDe;
+
+    BZVehiculo V() {
+        if (!m_Bus) return null;
+        if (!m_V || m_VDe != m_Bus) {
+            m_VDe = m_Bus;
+            m_V = BZVehiculoFabrica.Para(Transport.Cast(m_Bus));
+        }
+        return m_V;
+    }
+
+    Car AutoDelBus() {
+        BZVehiculo vAd = V();
+        if (!vAd) return null;
+        return vAd.Auto();
+    }
+
+    // ========================================================================
+    //  LA MOTO (DayZ 1.30): el tick del servicio (2 Hz) y el cuadro (OnInput, ~40 Hz). El conductor es
+    //  BZConductorMoto (la variante 6 del laboratorio de motos, herramienta aparte, sobre la cinta); lo demas es del framework, igual que en el auto:
+    //  embarque, spawn-hold con la carga de la ruta (PrepararCarga12), muster, pausa/hold/freeze, re-sentar al chofer
+    //  (tambien despues de una caida) y el fin por Completa12 (ROUTE_COMPLETE / INCOMPLETE, despawn/respawn).
+    //  Lo que la moto todavia NO tiene: paradas declaradas y eventos de la ruta, la escalera y el AR del auto (su atasco
+    //  es una re-ubicacion adelante sobre la cinta), luces del framework.
+    // ========================================================================
+    private ref BZConductorMoto m_Moto12;
+
+    private void TickMoto(BZVehiculo v) {
+        Transport trM = v.T();
+        if (!trM) return;
+        if (m_C12Terminada) {
+            SetCachedInput(0, 0, 1.0);
+            SetCachedHandbrake(1.0);
+            return;
+        }
+        bool driverBoardingM = (m_BoardPhase >= 1 && m_BoardPhase < 3);
+        bool crewBoardingM = AnyCrewBoarding();
+        if (driverBoardingM || crewBoardingM) {
+            if (driverBoardingM) StepBoarding();
+            StepCrewBoarding();
+            return;
+        }
+        if (m_CurrentInput == BZBusInput.SPAWN) {
+            if (!v.MotorPrendido()) v.Arrancar();
+            SetCachedInput(0, 0, 1.0);
+            if (m_Usar12 && !m_C12Fallo) {
+                PrepararCarga12();
+                if (m_Carga12 && !m_Carga12.Termino()) { LogCargando12(); return; }
+            }
+            if (!MusterListo()) return;
+            if (GetGame().GetTickTime() >= m_PreRollEndTime) {
+                SetInput(BZBusInput.PLAY, "moto: hold expirado, arranca");
+            }
+            return;
+        }
+        if (GetGame().GetTickTime() < m_PreRollEndTime) {
+            if (!v.MotorPrendido()) v.Arrancar();
+            SetCachedInput(0, 0, 1.0);
+            return;
+        }
+        if (m_Frozen) {
+            SetCachedInput(0, 0, 1.0);
+            SetCachedHandbrake(1.0);
+            return;
+        }
+        if (m_Paused || m_RouteStopped || m_HoldActive) {
+            SetCachedInput(0, 0, 1.0);
+            if (m_HoldActive || m_EndHoldActive) SetCachedHandbrake(1.0);
+            return;
+        }
+        // el chofer vivo que no esta sentado (se bajo, o la moto se cayo y lo eyecto): de vuelta al asiento, con la
+        // moto de pie
+        if (m_Driver && m_Driver.IsAlive() && m_Driver.GetParent() != m_Bus && !v.Caida()) {
+            SentarEnPlaza(m_Driver, trM, 0, true, "moto: el chofer no esta sentado (se bajo o la moto se cayo), lo meto de vuelta");
+        }
+        if (!v.MotorPrendido() && !v.Caida()) v.Arrancar();
+        if (!m_Usar12 || m_C12Fallo) return;
+        if (!m_Carga12 || !m_Carga12.Termino()) return;
+        BZCintaRunner cintaM = m_Carga12.Cinta();
+        if (!cintaM || !cintaM.Valida()) {
+            if (!m_Moto12) {
+                m_Moto12 = new BZConductorMoto();
+                BZBusLog.Err("[MOTO] la ruta no trae una cinta valida (_cinta.csv): la moto no puede manejar");
+                Completa12("moto sin cinta", false);
+            }
+            return;
+        }
+        if (!m_Moto12) {
+            m_Moto12 = new BZConductorMoto();
+            m_Moto12.Configurar(v, trM.GetType(), AjenasEnvelopeMoto(trM.GetType()));
+            // una ruta de moto convertida antes de la guarda del reloj del conversor no trae RelojCociente en el hdr
+            string hdrTxtM = BZJsonPresencia.LeerHeader(m_ConfigTextoPath);
+            if (hdrTxtM.IndexOf("\"MarchaCinta\"") >= 0 && hdrTxtM.IndexOf("\"RelojCociente\"") < 0) {
+                m_Moto12.SetSinReloj(true);
+                BZBusLog.Warn("[MOTO] " + NombreLog() + ": ruta de moto convertida SIN la medicion del reloj de la toma (antes de la guarda del conversor): su tiempo puede venir al doble; reconvertirla desde el frame_");
+            }
+            m_Moto12.AbrirLog(NombreLog());
+            m_C12Listo = true;
+        }
+        if (!m_Moto12.Termino()) m_WaypointIndex = WpDeArcoMoto(m_Moto12.Arco());
+        if (m_Moto12.Termino()) {
+            string finM = "ROUTE_COMPLETE (moto) · " + m_Moto12.Fin();
+            if (!m_Moto12.FinOk()) finM = "INCOMPLETE (moto) · " + m_Moto12.Fin();
+            Completa12(finM, m_Moto12.FinOk());
+        }
+    }
+
+    // las lineas del envelope que el conductor de moto lee (aut, bfrena, rpmkmh): de la ficha de la clase si las tiene,
+    // si no del hdr de la ruta
+    private array<string> AjenasEnvelopeMoto(string clsM) {
+        BZEnvelopeStore envClase = new BZEnvelopeStore();
+        envClase.SetClass(clsM);
+        if (envClase.Load() && TieneKindMoto(envClase.Ajenas())) return envClase.Ajenas();
+        BZEnvelopeStore envHdr = new BZEnvelopeStore();
+        envHdr.SetClass(clsM);
+        if (envHdr.CargarDesdeHdr(m_ConfigTextoPath, true) && TieneKindMoto(envHdr.Ajenas())) return envHdr.Ajenas();
+        BZBusLog.Warn("[MOTO] el envelope de " + clsM + " no trae autoridad/frenada/rpm de moto (aut/bfrena/rpmkmh): valores por defecto");
+        return null;
+    }
+
+    // el waypoint de la ruta por ARCO (la moto avanza por la cinta, no por waypoints): lo leen el latido, el panel y ACTIVE
+    // RUNNERS (RunnerWpIdx). El arco de los waypoints se acumula una vez por ruta.
+    private ref array<float> m_WpArcoMoto;
+    private int WpDeArcoMoto(float s) {
+        if (!m_Config || !m_Config.Waypoints) return 0;
+        int nW = m_Config.Waypoints.Count();
+        if (nW < 1) return 0;
+        if (!m_WpArcoMoto || m_WpArcoMoto.Count() != nW) {
+            m_WpArcoMoto = new array<float>();
+            float acW = 0;
+            int iW;
+            for (iW = 0; iW < nW; iW++) {
+                if (iW > 0) {
+                    vector aW = m_Config.Waypoints[iW - 1].GetVector();
+                    vector bW = m_Config.Waypoints[iW].GetVector();
+                    float dxW = bW[0] - aW[0];
+                    float dzW = bW[2] - aW[2];
+                    acW = acW + Math.Sqrt(dxW * dxW + dzW * dzW);
+                }
+                m_WpArcoMoto.Insert(acW);
+            }
+        }
+        int loW = 0;
+        int hiW = nW - 1;
+        while (loW < hiW) {
+            int midW = (loW + hiW + 1) / 2;
+            if (m_WpArcoMoto.Get(midW) <= s) loW = midW;
+            else hiW = midW - 1;
+        }
+        return loW;
+    }
+
+    private bool TieneKindMoto(array<string> lineas) {
+        if (!lineas) return false;
+        int iK;
+        for (iK = 0; iK < lineas.Count(); iK++) {
+            if (lineas.Get(iK).IndexOf("aut,") == 0) return true;
+        }
+        return false;
+    }
+
+    // el cuadro de la moto (gancho OnInput): true si el conductor la comando
+    bool SampleMoto(BZVehiculo v, float dt) {
+        // la caja negra despues del FIN, hasta el reposo
+        if (m_Moto12 && m_Moto12.Termino() && m_Moto12.LogEnCola() && m_Carga12) m_Moto12.Cola(v, m_Carga12.Cinta(), dt);
+        if (!m_Usar12 || !m_C12Listo || !m_Moto12) return false;
+        if (m_C12Terminada || m_Moto12.Termino()) return false;
+        if (m_Paused || m_RouteStopped || m_HoldActive || m_Frozen) return false;
+        if (m_CurrentInput == BZBusInput.SPAWN) return false;
+        if (!m_Carga12 || !m_Carga12.Termino()) return false;
+        return m_Moto12.Paso(v, m_Carga12.Cinta(), dt);
+    }
+
+    // el comando cacheado del servicio (spawn-hold, pausa, hold, fin) en la moto: gas, direccion, freno (el delantero,
+    // con el trasero de apoyo abajo de 10 km/h) y el freno de estacionar
+    void AplicarCacheadoMoto(BZVehiculo v) {
+        v.Gas(m_CachedThrottle);
+        v.Volante(m_CachedSteering);
+        v.Frenar(m_CachedBrake);
+        if (m_CachedHandbrake > 0.5) v.FrenoEstacionar(true);
+    }
+#ifdef DZ_Expansion_AI_Preload
     eAIBase  GetDriver() { return m_Driver; }
+#else
+    PlayerBase GetDriver() { return m_Driver; }   // sin Expansion: el maniqui
+#endif
 
     // Wheelbase del vehiculo spawneado, medido de los contactos de rueda (mismo metodo que PathLogService).
     private float ComputeWheelbaseLive() {
-        Car car = Car.Cast(m_Bus);
+        Car car = AutoDelBus();
         if (!car) return 0;
         vector fwd = car.GetDirection();
         vector vpos = car.GetPosition();
@@ -4161,6 +4521,14 @@ class BZBusService {
                 BZBusLog.Info("[Empty] admin TP -> vacio " + idx + " (" + e.routeName + " wp" + e.wpIndex + ")");
             }
         } else if (action == 1) {
+#ifndef DAYZ_1_29
+            // 1.30: un vehiculo con alguien sentado no se borra (tumba el server)
+            int ocE = BZRetiro.Ocupantes(e.veh);
+            if (ocE > 0) {
+                BZBusLog.Warn("[Empty] NO se elimina " + idx + ": hay " + ocE + " ocupante(s) sentado(s)");
+                return;
+            }
+#endif
             GetGame().ObjectDelete(e.veh);
             es.RemoveOrdered(idx);
             BZBusLog.Info("[Empty] eliminado " + idx + " (" + e.routeName + "). Quedan: " + es.Count());
@@ -4457,9 +4825,29 @@ class BZBusService {
         return yFinal;
     }
 
+    // el pedido de spawn vacio que NO se cumple: el toast con el motivo y el aviso al panel de quien lo pidio, para que
+    // retire su fila LOADING (ruta + wp) en vez de esperar a que venza
+    private void RechazarContinuar(PlayerBase player, int wpIndex, string motivo)
+    {
+        if (!player || !player.GetIdentity()) return;
+        ScriptRPC trpcR = new ScriptRPC();
+        trpcR.Write(motivo);
+        trpcR.Send(player, BZBusRPC.RECEIVE_TOAST, true, player.GetIdentity());
+        ScriptRPC rpcR = new ScriptRPC();
+        rpcR.Write(m_RouteName);
+        rpcR.Write(wpIndex);
+        rpcR.Send(player, BZBusRPC.RECEIVE_CONTINUAR_RECHAZADO, true, player.GetIdentity());
+    }
+
+    // radio del chequeo de lugar ocupado del spawn vacio: 1,2 batallas de la ruta, entre el de la cabecera de las rutas
+    // (3,5 m) y 6 m (un camion de 4,5 m de batalla: 5,4 m)
+    private const float CONTINUAR_OCUP_MIN_M = 3.5;
+    private const float CONTINUAR_OCUP_MAX_M = 6.0;
+
     void SpawnParaContinuar(int wpIndex, PlayerBase player) {
         if (!m_Config || !m_Config.Waypoints || m_Config.Waypoints.Count() < 1) {
             BZBusLog.Err("[Continuar] la ruta no tiene waypoints");
+            RechazarContinuar(player, wpIndex, "The route has no waypoints: no empty vehicle created");
             return;
         }
         int cnt = m_Config.Waypoints.Count();
@@ -4507,9 +4895,28 @@ class BZBusService {
             }
             iyh = iyh + 1;
         }
+        // EL LUGAR, OCUPADO POR UN VEHICULO FISICO. La lista de vacios es memoria: no sabe de un vehiculo que este panel no
+        // creo, ni de un vacio que volvio de la persistencia despues de un reinicio. Medido: un camion spawneado sobre otro
+        // igual salio de y 6,15 a y 29,59 en 5,6 s. El mismo chequeo que la cabecera de las rutas (OcupanteEnSpot), con el
+        // radio de la huella. Ocupado = no se crea nada, se dice quien ocupa y a cuanto, y el panel retira su fila LOADING.
+        float occRC = CONTINUAR_OCUP_MIN_M;
+        if (m_Config.Wheelbase * 1.2 > occRC) occRC = m_Config.Wheelbase * 1.2;
+        if (occRC > CONTINUAR_OCUP_MAX_M) occRC = CONTINUAR_OCUP_MAX_M;
+        Object ocupC = OcupanteEnSpot(spawnPos, occRC);
+        if (ocupC)
+        {
+            float dOcC = vector.Distance(ocupC.GetPosition(), spawnPos);
+            float dOcR = Math.Round(dOcC * 10.0) / 10.0;
+            string lnOc = "[Continuar] wp " + wpIndex.ToString() + " ocupado por " + ocupC.GetType() + " a " + dOcC.ToString() + " m (radio " + occRC.ToString() + " m)";
+            lnOc = lnOc + ": no se crea el vacio de " + m_RouteName;
+            BZBusLog.Info(lnOc);
+            RechazarContinuar(player, wpIndex, "Spawn point occupied by " + ocupC.GetType() + " (" + dOcR.ToString() + " m away): no empty vehicle created");
+            return;
+        }
         EntityAI veh = EntityAI.Cast(GetGame().CreateObject(vc, spawnPos, false, initAI));
         if (!veh) {
             BZBusLog.Err("[Continuar] no se pudo crear el vehiculo: " + vc);
+            RechazarContinuar(player, wpIndex, "Could not create " + vc + ": no empty vehicle created");
             return;
         }
         // EL VEHICULO NACE ORIENTADO Y EN SU LUGAR ANTES DE QUE LA FISICA
@@ -4569,7 +4976,7 @@ class BZBusService {
     // SPAWN-OVERLAP: hay otro vehiculo (CarScript) dentro del radio del punto de spawn?
     // Se usa para no spawnear el bus encimado a otro (varias rutas-opcion desde el mismo hub,
     // o el bus anterior aun sin limpiar en el respawn) -> ruedas sin traccion -> free-rev.
-    // Misma API que ScanObstacleAhead / BZRouteCleanup (GetObjectsAtPosition3D + CarScript.Cast).
+    // Misma API que ScanObstacleAhead / BZRouteCleanup (GetObjectsAtPosition3D + BZVehiculoFabrica.EsVehiculo).
     // devuelve el vehiculo (CarScript) que ocupa el radio, o null. Reemplaza a SpawnSpotOccupied (bool):
     // el log dice QUIEN ocupa la cabecera y a cuanto.
     private Object OcupanteEnSpot(vector pos, float radius) {
@@ -4578,13 +4985,14 @@ class BZBusService {
         GetGame().GetObjectsAtPosition3D(pos, radius, objs, prox);
         foreach (Object o : objs) {
             if (!o) continue;
-            if (CarScript.Cast(o)) return o;   // vehiculo en el radio -> ocupado
+            if (BZVehiculoFabrica.EsVehiculo(o)) return o;   // vehiculo en el radio -> ocupado
         }
         return null;
     }
 
     private void SpawnBus() {
         m_WaypointIndex = 0;
+        ArmarPruebaNan();   // el aviso del velocimetro y la bandera de prueba, por spawn
         m_BoardPhase    = 0;   // reset boarding animado (BoardDriver lo arranca en fase 1)
         m_CrewBoard     = null; // reset boarding del crew (BoardDriver lo reconstruye)
         m_AppliedEvents = new array<int>();   // re-dispara los marker events en cada corrida
@@ -4619,6 +5027,7 @@ class BZBusService {
         m_C12Terminada    = false;
         m_C12Listo        = false;
         m_C12Fallo        = false;
+        m_Moto12          = null;   // el conductor de moto es POR CORRIDA
         CancelarCarga12();   // la carga de la corrida anterior no sirve para esta
         m_MusterT0        = 0;    // el gate de muster es POR CORRIDA
         m_MusterCerrado   = false;
@@ -4818,8 +5227,10 @@ class BZBusService {
         // eso compara contra un nombre de clase del CONFIG que habria que adivinar, y si
         // se adivina mal se RECHAZAN TODOS los vehiculos validos. El cast al tipo de script
         // no se puede equivocar: o es un Car o no lo es.
-        if (!Car.Cast(m_Bus)) {
-            BZBusLog.Err("La clase '" + vc + "' EXISTE pero NO ES UN VEHICULO (no deriva de Car): no se puede conducir. Revisa VehicleClass en el header de la ruta.");
+        // V() y no AutoDelBus(): la moto de la 1.30 (MotorbikeScript) no es Car y el framework la maneja igual. Para
+        // un auto da exactamente lo mismo (V() existe si y solo si el Car.Cast no es null).
+        if (!V()) {
+            BZBusLog.Err("La clase '" + vc + "' EXISTE pero NO ES UN VEHICULO (no deriva de Car ni, desde la 1.30, de Motorbike): no se puede conducir. Revisa VehicleClass en el header de la ruta.");
             GetGame().ObjectDelete(m_Bus);
             m_Bus = null;
             return;
@@ -4868,7 +5279,7 @@ class BZBusService {
 
         // CAPA 3+4 INVERSE MODEL: inicializar si esta habilitado en config
         if (m_Config && m_Config.UseInverseModel) {
-            Car carForIM = Car.Cast(m_Bus);
+            Car carForIM = AutoDelBus();
             if (carForIM) {
                 m_InverseModel = new BZInverseModel();
                 m_InverseModel.LoadFromConfig(vc, carForIM);
@@ -4966,7 +5377,11 @@ class BZBusService {
             BZBusLog.Info("[Boarding] spawn driver al lado de la puerta (~1m, sin tramo caminado): entry=" + entryPos + " driverPos=" + driverPos + " (bus=" + busPosSpawn + ")");
         }
         float tSp1 = GetGame().GetTickTime();   // cuanto cuesta CREAR al chofer (init_ai completo)
+#ifdef DZ_Expansion_AI_Preload
         m_Driver = eAIBase.Cast(GetGame().CreateObject(m_Config.DriverClass, driverPos, false, true));
+#else
+        m_Driver = CrearChoferVanilla(driverPos);
+#endif
         float tSp2 = GetGame().GetTickTime();
         if (!m_Driver) {
             BZBusLog.Err("No se pudo crear conductor: " + m_Config.DriverClass);
@@ -4978,6 +5393,8 @@ class BZBusService {
         // y la ruta se rompe hasta el proximo respawn. Mismo criterio que el bus.
         m_Driver.SetAllowDamage(false);
 
+#ifdef DZ_Expansion_AI_Preload
+        BZBusLog.Info("[CHOFER] chofer: eAI (" + m_Config.DriverClass + ")");
         m_Group = eAIGroup.CreateGroup(eAIFaction.Create("Passive"));
         m_Driver.SetGroup(m_Group);
 
@@ -4997,7 +5414,7 @@ class BZBusService {
         }
 
         // ACTIVAR el FSM de Boris al spawn. Sin una tarea el bot eAI queda "maniqui" (Idle = velocidad 0,
-        // sin animacion) y el waypoint de boarding (1s despues) no lo despierta. Insight de un jugador 2026-06-15:
+        // quieto) y el waypoint de boarding (1s despues) no lo despierta. Insight de un jugador 2026-06-15:
         // "spawnean tiesos porque no tienen que hacer; ganan movimiento al subirse". Le damos un roam ->
         // FSM vivo -> responde al waypoint de la puerta en BoardDriver.
         m_Group.SetFormationState(eAIGroupFormationState.IN);
@@ -5005,6 +5422,7 @@ class BZBusService {
         m_Group.SetWaypointBehaviour(eAIWaypointBehavior.ROAMING_LOCAL);
         m_Driver.SetMovementSpeedLimits(1, 2);
         if (m_Driver.GetPathFinding()) m_Driver.GetPathFinding().ForceRecalculate(true);
+#endif
 
         // Vestir a Boris de policia
         DressDriver(m_Driver);
@@ -5092,9 +5510,17 @@ class BZBusService {
         // primeros samples quieto en la terminal: los primeros wps tienen
         // targetSpeed=0, la cruise control aplica throttle bajo, el bus arranca
         // despacio. La validacion por distancia falla pero el spawn es valido.
-        Car bus_v = Car.Cast(m_Bus);
-        if (bus_v && bus_v.GetSpeedometerAbsolute() > 0.5) {
-            BZBusLog.Info("ValidateSpawn OK: bus en movimiento (kmh=" + bus_v.GetSpeedometerAbsolute() + "), spawn exitoso, no retry");
+        Car bus_v = AutoDelBus();
+        float kmhVal = 0;
+        bool kmhValFinito = false;
+        if (bus_v) {
+            kmhVal = bus_v.GetSpeedometerAbsolute();
+            kmhValFinito = BZMath.Finite(kmhVal);
+            // medido: 'nan > 0.5' dio verdadero y el spawn quedo validado sin que nada se moviera
+            if (!kmhValFinito) BZBusLog.Info("ValidateSpawn: el velocimetro no da un numero (" + kmhVal.ToString() + "): no cuenta como movimiento");
+        }
+        if (bus_v && kmhValFinito && kmhVal > 0.5) {
+            BZBusLog.Info("ValidateSpawn OK: bus en movimiento (kmh=" + kmhVal.ToString() + "), spawn exitoso, no retry");
             m_SpawnAttempt = 0;
             return;
         }
@@ -5106,11 +5532,22 @@ class BZBusService {
         // failure real que guarda ValidateSpawn es "el driver NUNCA se sento" -> si esta sentado,
         // no hay nada que reintentar. (Validado RPT 2026-06-14: "no se movio 0.51m" -> intento 2,
         // y en el intento 2 arranca normal = boarding lento, no spawn fallido.)
-        Car bus_seat = Car.Cast(m_Bus);
+        Car bus_seat = AutoDelBus();
         if (bus_seat && m_Driver && bus_seat.CrewMember(0) == m_Driver) {
             BZBusLog.Info("ValidateSpawn OK: Boris sentado en seat 0 (boarding completo), spawn exitoso, no retry");
             m_SpawnAttempt = 0;
             return;
+        }
+
+        // LA MOTO: el chequeo de arriba es del Car y no la ve. Andando o con el chofer sentado, el spawn es bueno
+        BZVehiculo vVal = V();
+        if (vVal && vVal.EsMoto()) {
+            bool motoSentado = (m_Driver && vVal.T().CrewMember(0) == m_Driver);
+            if (vVal.KmhAbs() > 0.5 || motoSentado) {
+                BZBusLog.Info("ValidateSpawn OK: moto andando o con el chofer sentado, spawn exitoso, no retry");
+                m_SpawnAttempt = 0;
+                return;
+            }
         }
 
         float distFromSpawn = vector.Distance(m_Bus.GetPosition(), m_SpawnInitialPos);
@@ -5153,6 +5590,7 @@ class BZBusService {
     private bool   m_BoardHasDoor;
     private string m_BoardDoorSrc;
 
+#ifdef DZ_Expansion_AI_Preload
     void BoardDriver() {
         BZBusLog.Info("BoardDriver: iniciando boarding animado desde afuera");
         if (!m_Bus || !m_Driver) { BZBusLog.Warn("BoardDriver: bus o driver null"); return; }
@@ -5273,6 +5711,25 @@ class BZBusService {
             }
         }
     }
+#else
+    // SIN EXPANSION: el maniqui no camina ni abre puertas (eso es la FSM de eAI). Se sienta directo con la receta de
+    // vanilla (SentarEnPlaza) y StepBoarding (fase 2) espera a que sea el CrewMember(0) y haya terminado la subida
+    // (ChoferVanillaSentado); si no, repite la orden. Es la receta medida en el laboratorio de motos (herramienta aparte) el 27/09.
+    void BoardDriver() {
+        BZBusLog.Info("BoardDriver: chofer maniqui vanilla (sin Expansion): se sienta directo");
+        if (!m_Bus || !m_Driver) { BZBusLog.Warn("BoardDriver: bus o driver null"); return; }
+        Transport transport = Transport.Cast(m_Bus);
+        if (!transport) { BZBusLog.Warn("BoardDriver: bus no es Transport"); return; }
+        m_BoardHasDoor = false;
+        m_BoardDoorSrc = "";
+        m_ChoferOrdenes = 1;
+        m_ChoferOrdenT = 0;
+        SentarEnPlaza(m_Driver, transport, 0, true, "chofer maniqui al spawn");
+        m_BoardPhase = 2;
+        m_BoardTimer = 0;
+        m_CrewBoard = new array<ref BZBoardState>();
+    }
+#endif
 
     // Progresa el boarding animado un paso. Lo llama Tick mientras m_BoardPhase esta en 1..2.
     private void StepBoarding() {
@@ -5307,7 +5764,9 @@ class BZBusService {
             float d2 = BoardDistXZ(m_Driver.GetPosition(), doorPos);   // XZ: ignora la altura de la puerta
             if (d2 <= 4.0) {
                 if (m_BoardHasDoor) m_Bus.SetAnimationPhase(m_BoardDoorSrc, 1.0);   // abrir
+#ifdef DZ_Expansion_AI_Preload
                 m_Driver.LookAtDirection("0 0 1");
+#endif
                 SentarEnPlaza(m_Driver, transport, 0, false, "chofer al spawn");   // subida ANIMADA
                 m_BoardPhase = 2;
                 BZBusLog.Info("[Boarding] al lado de la puerta (d2=" + d2 + "), abre + sube animado");
@@ -5316,7 +5775,11 @@ class BZBusService {
         } else if (m_BoardPhase == 2) {
             // Subiendo: cuando ya esta adentro del vehiculo, cerrar puerta y terminar.
             HumanCommandVehicle vc = m_Driver.GetCommand_Vehicle();
+#ifdef DZ_Expansion_AI_Preload
             if (vc && !vc.IsGettingIn()) {
+#else
+            if (ChoferVanillaSentado(transport, vc)) {
+#endif
                 if (m_BoardHasDoor) m_Bus.SetAnimationPhase(m_BoardDoorSrc, 0.0);   // cerrar
                 EnsureDriverAnim();   // bindear la anim de conductor (volante/pedales/palanca) al observador
                 m_BoardPhase = 3;
@@ -5353,6 +5816,7 @@ class BZBusService {
     // (eAI_SetPassive true); en cualquier otra plaza, no. Ojo: eAI_SetThreatDistanceLimit(0) NO deja ciego al bot
     // -- con <= 0 eAI pone el valor por defecto del server (eAIBase.c:1764) --, asi que lo que pacificaba era
     // solo SetPassive. Por eso aca solo se toca SetPassive.
+#ifdef DZ_Expansion_AI_Preload
     void SentarEnPlaza(eAIBase bot, Transport tr, int seat, bool teleport, string porQue)
     {
         if (!bot || !tr) return;
@@ -5370,6 +5834,79 @@ class BZBusService {
         if (vcP) vcP.SetVehicleType(tr.GetAnimInstance());
         BZBusLog.Info("[PLAZA] " + porQue + ": TELEPORT a la plaza " + seat.ToString() + " (receta de vanilla: tipo de asiento " + tipoAsiento.ToString() + " + SetVehicleType)");
     }
+#else
+    // SIN EXPANSION: la misma receta de vanilla que la rama teleport de arriba (StartCommand_Vehicle con el tipo de
+    // asiento de la plaza + SetVehicleType), sin Notify_Transport ni SetPassive, que son de eAI. El maniqui no camina:
+    // la subida "animada" (teleport false) tambien se resuelve asi.
+    void SentarEnPlaza(PlayerBase bot, Transport tr, int seat, bool teleport, string porQue)
+    {
+        if (!bot || !tr) return;
+        bot.SetPosition(tr.GetPosition());
+        int tipoAsiento = tr.GetSeatAnimationType(seat);
+        HumanCommandVehicle vcP = bot.GetCommand_Vehicle();
+        if (!vcP) vcP = bot.StartCommand_Vehicle(tr, seat, tipoAsiento, false);
+        if (vcP) vcP.SetVehicleType(tr.GetAnimInstance());
+        BZBusLog.Info("[PLAZA] " + porQue + ": maniqui a la plaza " + seat.ToString() + " (receta de vanilla: tipo de asiento " + tipoAsiento.ToString() + " + SetVehicleType)");
+    }
+
+    // ---- EL CHOFER SIN EXPANSION: un maniqui vanilla (SurvivorM_*) ----
+    // Se crea con CreateObjectEx (setup + fisica, a la altura pedida, sin vida util), es invencible como Boris
+    // (DriverInvincible) y sigue la vida de m_Driver: CleanupEntities lo borra con el vehiculo. La clase es la
+    // DriverClass de la ruta sin el prefijo "eAI_" (eAI_SurvivorM_Boris -> SurvivorM_Boris); si no existe o no es un
+    // sobreviviente, SurvivorM_Mirek, la medida en el laboratorio de motos (herramienta aparte).
+    static const string CHOFER_VANILLA_DEF = "SurvivorM_Mirek";
+    static const int    CHOFER_VANILLA_ORDENES = 3;
+    static const float  CHOFER_VANILLA_REINTENTO_S = 1.5;
+    private int   m_ChoferOrdenes;   // ordenes de sentarse dadas al maniqui en este embarque
+    private float m_ChoferOrdenT;    // segundos desde la ultima orden
+    private static bool s_AvisoSinExpansion;
+
+    private PlayerBase CrearChoferVanilla(vector pos)
+    {
+        string cls = "";
+        if (m_Config) cls = m_Config.DriverClass;
+        if (cls.IndexOf("eAI_") == 0) cls = cls.Substring(4, cls.Length() - 4);
+        if (cls == "" || !GetGame().IsKindOf(cls, "SurvivorBase")) cls = CHOFER_VANILLA_DEF;
+        int flags = ECE_SETUP | ECE_CREATEPHYSICS | ECE_KEEPHEIGHT | ECE_NOLIFETIME;
+        Object o = GetGame().CreateObjectEx(cls, pos, flags);
+        PlayerBase pb = PlayerBase.Cast(o);
+        if (!pb) {
+            if (o) GetGame().ObjectDelete(o);
+            BZBusLog.Err("[CHOFER] no se pudo crear el maniqui " + cls);
+            return null;
+        }
+        BZBusLog.Info("[CHOFER] chofer: maniqui vanilla (sin Expansion) · " + cls);
+        return pb;
+    }
+
+    // sentado = es el CrewMember(0) del vehiculo Y ya no esta en la animacion de subida (medido en el laboratorio de motos, herramienta aparte: CrewDriver()
+    // ya lo devuelve durante la subida, y al terminarla el motor puede soltar la marcha). Si a los 1,5 s de la orden no
+    // lo es, se repite la orden (hasta 3); el timeout de StepBoarding (6 s) queda de red.
+    private bool ChoferVanillaSentado(Transport tr, HumanCommandVehicle vc)
+    {
+        bool esChofer = (tr.CrewMember(0) == m_Driver);
+        if (esChofer && vc && !vc.IsGettingIn()) {
+            BZBusLog.Info("[CHOFER] maniqui VERIFICADO en la plaza 0 (" + m_ChoferOrdenes.ToString() + " orden/es)");
+            return true;
+        }
+        m_ChoferOrdenT = m_ChoferOrdenT + 0.5;
+        if (!esChofer && m_ChoferOrdenT >= CHOFER_VANILLA_REINTENTO_S && m_ChoferOrdenes < CHOFER_VANILLA_ORDENES) {
+            m_ChoferOrdenes = m_ChoferOrdenes + 1;
+            m_ChoferOrdenT = 0;
+            BZBusLog.Warn("[CHOFER] el maniqui no esta en la plaza 0: orden " + m_ChoferOrdenes.ToString());
+            SentarEnPlaza(m_Driver, tr, 0, true, "chofer maniqui: reintento");
+        }
+        return false;
+    }
+
+    // una sola linea al boot, en ingles: es para el que instala
+    private void AvisarSinExpansion()
+    {
+        if (s_AvisoSinExpansion) return;
+        s_AvisoSinExpansion = true;
+        BZBusLog.Warn("[BZ AutoDrive] Expansion not loaded: vanilla dummy driver, no AI behaviour (escort, quests, walking boarding)");
+    }
+#endif
 
     // Liga la ANIMACION DE CONDUCTOR (volante, pedales, palanca) al comando de vehiculo de Boris.
     //
@@ -5404,6 +5941,7 @@ class BZBusService {
     // cerrar. Cada crew usa SU propio grupo (ya lider) para navegar a su puerta. Timeout-fallback por bot.
     // DIAGNOSTICO: vuelca el sistema de asientos del vehiculo (cuantos, entrada, puerta) al RPT.
     // Para entender empiricamente como es el seating de cada vehiculo (ej V3S carga por atras).
+#ifdef DZ_Expansion_AI_Preload
     private void DumpSeatSystem(Transport transport) {
         if (!transport || !m_Bus) return;
         int cs = transport.CrewSize();
@@ -5419,6 +5957,7 @@ class BZBusService {
             BZBusLog.Info("[SEATS] seat " + s + " entryWS=" + ep + " dist=" + d + " hasDoor=" + hd + " doorSrc=" + ds + " ocupado=" + (occ != null));
         }
     }
+#endif
 
     // Proyecta un punto al PISO (Y = superficie). CLAVE: el pathfinder de eAI no rutea a puntos
     // ELEVADOS (la entrada de una puerta de blindado esta ~0.8m sobre el suelo) -> no encuentra
@@ -5437,6 +5976,7 @@ class BZBusService {
         return dx * dx + dz * dz;
     }
 
+#ifdef DZ_Expansion_AI_Preload
     private void StepCrewBoarding() {
         if (!m_CrewBoard || !m_Bus) return;
         Transport transport = Transport.Cast(m_Bus);
@@ -5538,6 +6078,12 @@ class BZBusService {
             }
         }
     }
+#else
+    // sin Expansion AI no hay crew: el embarque del crew termina en el acto
+    private void StepCrewBoarding() {
+        if (m_CrewBoard) m_CrewBoard.Clear();
+    }
+#endif
 
     private bool AnyCrewBoarding() {
         if (!m_CrewBoard) return false;
@@ -5587,7 +6133,7 @@ class BZBusService {
         }
 
         // Rellenar fluidos al maximo (aplica a cualquier Car)
-        Car car = Car.Cast(bus);
+        Car car = BZVehiculoFabrica.AutoDe(bus);
         if (car) {
             car.Fill(CarFluid.FUEL,    car.GetFluidCapacity(CarFluid.FUEL));
             car.Fill(CarFluid.OIL,     car.GetFluidCapacity(CarFluid.OIL));
@@ -5604,6 +6150,9 @@ class BZBusService {
                 BZBusLog.Info("[Battery] CompEM energizada -> faros habilitados");
             }
         }
+        // la moto (1.30): sus fluidos, por el adaptador (el Car.Cast de arriba no la ve)
+        BZVehiculo vEq = BZVehiculoFabrica.De(bus);
+        if (vEq && vEq.EsMoto()) vEq.LlenarFluidos();
     }
 
     // Aplica steering + throttle + auto gearbox para que el bus vaya hacia el waypoint.
@@ -5693,7 +6242,7 @@ class BZBusService {
         }
         if (rvIdxTr < 0) return false;
         float distRvTr = vector.Distance(m_Bus.GetPosition(), m_Config.Waypoints[rvIdxTr].GetVector());
-        return (distRvTr < 12.0 && bus.GetSpeedometerAbsolute() > 3.5);
+        return (distRvTr < 12.0 && KmhDe(bus) > 3.5);
     }
 
     // EL TRAMO decide si estamos en reversa, NO el waypoint individual (2026-07-21, EL VOLANTAZO — cazado
@@ -5811,7 +6360,7 @@ class BZBusService {
     // [AUDITORIA 26/07] EXTRAIDO de DriveTowards para liberar presupuesto de instrucciones.
     // b42 INVERSE MODEL OVERRIDE. Comportamiento identico; el gate queda en DriveTowards.
     private void ApplyInverseModelControl(BZWaypoint target, float effApproachSpeed, float kmh, inout float throttle, inout float brake, float steering) {
-        Car bus = Car.Cast(m_Bus);
+        Car bus = AutoDelBus();
             // Compute slope desde los wps adyacentes
             float slopeIM = 0;
             int nextWpIdxIM = m_WaypointIndex + 1;
@@ -6063,7 +6612,7 @@ class BZBusService {
     // [AUDITORIA 26/07] EXTRAIDO de DriveTowards para liberar presupuesto de instrucciones.
     // b34 DIRECT REPLAY (P-controller reversa/parking/maniobra, taper endpoint). Identico; gate queda en DriveTowards.
     private void ApplyDirectReplayControl(BZWaypoint target, float kmh, inout float throttle, inout float brake, inout float steering) {
-        Car bus = Car.Cast(m_Bus);
+        Car bus = AutoDelBus();
             // === STEERING ===
             // En parking mode (mode=="parking"): MANTENEMOS Stanley computado
             // arriba. El input steering del recording es binario (0/-1/+1) y
@@ -6539,7 +7088,7 @@ class BZBusService {
     }
 
     private void SpawnProbe(string tag, float desde) {
-        Car probeCar = Car.Cast(m_Bus);
+        Car probeCar = AutoDelBus();
         if (!probeCar) return;
         vector org = probeCar.GetPosition();
         float pisoOrg = GetGame().SurfaceY(org[0], org[2]);
@@ -6547,7 +7096,7 @@ class BZBusService {
         ln = ln + " | origen.y-piso " + (org[1] - pisoOrg).ToString() + " m";
         ln = ln + " | activo " + dBodyIsActive(probeCar).ToString();
         ln = ln + " | masa " + dBodyGetMass(probeCar).ToString() + " kg";
-        ln = ln + " | kmh " + probeCar.GetSpeedometerAbsolute().ToString();
+        ln = ln + " | kmh " + probeCar.GetSpeedometerAbsolute().ToString() + " (velocimetro crudo)";
         ln = ln + " | rpm " + probeCar.EngineGetRPM().ToString();
         BZBusLog.Info(ln);
         int nw = probeCar.WheelCount();
@@ -6614,7 +7163,7 @@ class BZBusService {
             // (la transicion handbrake esta justo antes de la reversa). Sin esto Boris se
             // clavaba en el handbrake forever (el avance por proximidad no progresa parado,
             // tomas 3/4 del Golf 2026-06-12). Si no hay reverse adelante, queda como stop.
-            if (bus.GetSpeedometerAbsolute() < 1.5) {
+            if (KmhDe(bus) < 1.5) {
                 // Saltar el cluster de handbrake-stop FORWARD hasta el proximo wp que sea REVERSE
                 // (ENTRADA a reversa) o forward SIN handbrake (SALIDA de reversa / stop cualquiera).
                 // FIX 2026-07-02: antes solo buscaba reverse -> en la SALIDA de reversa (sin reverse
@@ -6701,7 +7250,7 @@ class BZBusService {
         // (sin necesidad de asistencia humana con H). Cada evento logged para pattern analysis.
         if (m_Config && m_Config.AutoRecoveryEnabled) {
             float arNow = GetGame().GetTickTime();
-            float arKmh = bus.GetSpeedometerAbsolute();
+            float arKmh = KmhDe(bus);
 
             // Track wp progress
             if (m_WaypointIndex != m_AR_LastWpIdx) {
@@ -6957,7 +7506,7 @@ class BZBusService {
         if (!m_Config.Waypoints[m_LegEnd].legBreak) return false;          // solo piernas que TERMINAN en intercambio
 
         vector busPosMc = bus.GetPosition();
-        float kmhMc = bus.GetSpeedometerAbsolute();
+        float kmhMc = KmhDe(bus);
         float chassisKmhMc = GetVelocity(bus).Length() * 3.6;   // Camino V1 (2026-08-19): velocidad REAL del CHASIS. kmhMc es velocimetro (RUEDA) y engaña con el wheelspin del spawn frio (rueda gira, chasis no avanza).
         if (chassisKmhMc >= m_Config.ManeuverLaunchKmh) m_ManeuverLaunchTicks = 0;   // ya rueda EL CHASIS -> fuera del despegue. Antes usaba la RUEDA -> el wheelspin reseteaba la rampa (re-ciclo -> floor -> mas wheelspin).
         bool revMc = ActiveLegIsReverse();
@@ -7351,7 +7900,7 @@ class BZBusService {
         // LEARNER (gancho 2/4): observa el cross-track HONESTO -offset firmado contra el wp que Boris
         // ESTA siguiendo, exacto, sin closest-point- para promediar el sistematico entre vueltas.
         if (m_CorridorValid && m_Config.CorridorLearnerEnabled) BZCorridorLearner.GetInstance().Observe(m_WaypointIndex, busPos);
-        float kmhForStanley = bus.GetSpeedometerAbsolute();
+        float kmhForStanley = KmhDe(bus);
         float vForStanley = kmhForStanley / 3.6;
         // V-FLOOR REVERSE (un jugador 2026-06-24): en reversa pisar la velocidad usada por Stanley a un
         // minimo mas alto. La correccion = K*offset/v EXPLOTA a baja v (1/v) -> sobre-corrige ->
@@ -7642,7 +8191,7 @@ class BZBusService {
 
         float throttle = 1.0;
         float brake    = 0.0;
-        float kmh = bus.GetSpeedometerAbsolute();
+        float kmh = KmhDe(bus);
         // TRACER: baseline = steering del pure-pursuit (ya computado) + throttle/brake default. Lo que
         // CUALQUIER capa posterior cambie se atribuye a esa capa (por variable: t/b/s). Ver CtlSnap.
         CtlReset(throttle, brake, steering);
@@ -8603,7 +9152,7 @@ class BZBusService {
             // FRENAR suave para bajar la velocidad off-path y darle al Stanley autoridad de volver
             // (a menor velocidad la correccion 1/v es mas fuerte). A baja velocidad, mantener el
             // force-throttle (recuperar momentum, uso original). UNIVERSAL: un desvio ya no es un choque.
-            float offKmhRec = bus.GetSpeedometerAbsolute();
+            float offKmhRec = KmhDe(bus);
             float offTgtRec = target.targetSpeed;
             // NO forzar gas si va PASADO del target (tÃƒÂ­pico en CURVA: el corredor la corta -> offset alto
             // falso -> la recovery le metÃƒÂ­a throttle=0.6 y PISABA el overspeed-cut -> entraba embalado a la
@@ -8723,7 +9272,7 @@ class BZBusService {
         // fondo): queda casi parado y el throttle computado no alcanza para re-arrancar.
         // Si esta en reverse, casi parado, LEJOS del final, y no frenando a proposito ->
         // piso de throttle fuerte para despegarlo. Se libera apenas se mueve (>1 km/h).
-        if (target && target.mode == "reverse" && bus.GetSpeedometerAbsolute() < 1.0 && brake < 0.1 && m_Config && m_Config.Waypoints) {
+        if (target && target.mode == "reverse" && KmhDe(bus) < 1.0 && brake < 0.1 && m_Config && m_Config.Waypoints) {
             int lastIdxAS = m_Config.Waypoints.Count() - 1;
             float distFinalAS = vector.Distance(m_Bus.GetPosition(), m_Config.Waypoints[lastIdxAS].GetVector());
             if (distFinalAS > REVERSE_ARRIVAL_TOL && throttle < 0.8) {
@@ -9496,6 +10045,7 @@ class BZBusService {
         m_StopAheadDist = -1.0;
         if (!m_Config || !m_Config.Waypoints || !m_Config.StopLookaheadShrink) return;
         int cntSa = m_Config.Waypoints.Count();
+        if (m_WaypointIndex < 0 || m_WaypointIndex >= cntSa) return;   // sin indice valido no se lee nada (medido: -1 tras un STUCK -> NULL pointer)
         int hiSa = m_WaypointIndex + 60;
         if (hiSa > cntSa - 1) hiSa = cntSa - 1;
         int qSa;
@@ -9773,7 +10323,7 @@ class BZBusService {
     // reverse/handbrake/stop) para no pisar el volante recto del straighten ni el 0 de las paradas.
     void FastSteerTick() {
         if (!m_Config) return;
-        Car c = Car.Cast(m_Bus);
+        Car c = AutoDelBus();
         if (!c) return;
         // MICROTICK DE CENTRADO PULSADO (2026-07-12): NO recomputa el pursuit (eso fue el fast-loop que fallo).
         // Solo agrega un toque chico hacia la linea sobre el steering base del tick lento. Rutea aca y sale.
@@ -9797,7 +10347,7 @@ class BZBusService {
         // con el log. Por eso "el cruise es impecable y las maniobras no": la recta cae en un rumbo donde
         // el wrap acierta de casualidad. No era un problema de baja velocidad.
         float currentYaw = Math.Atan2(dir[0], dir[2]);
-        float kmh = c.GetSpeedometerAbsolute();
+        float kmh = KmhDe(c);
         float s = ComputePurePursuitSteering(busPos, currentYaw, kmh);
         s = ApplyPurePursuitBlend(s, busPos);   // BLEND FF complementario: el loop rapido no pisa el blend
         if (s > 1.0) s = 1.0;
@@ -9828,7 +10378,7 @@ class BZBusService {
         if (!m_Config.Waypoints) { m_CachedSteering = m_MicroBaseSteer; return; }
         int count = m_Config.Waypoints.Count();
         if (count < 3) { m_CachedSteering = m_MicroBaseSteer; return; }
-        float kmh = c.GetSpeedometerAbsolute();
+        float kmh = KmhDe(c);
         if (kmh < m_Config.CenterMicroTickMinKmh) { m_CachedSteering = m_MicroBaseSteer; return; }
         // duty-cycle: fase OFF -> soltar a la base
         int period = m_Config.CenterMicroTickOnTicks + m_Config.CenterMicroTickOffTicks;
@@ -10679,7 +11229,11 @@ class BZBusService {
     //
     // CreateAttachment es por string -> si un classname no existe o su mod no esta cargado,
     // falla en SILENCIO (no es dependencia dura). El admin debe poner classnames validos.
+#ifdef DZ_Expansion_AI_Preload
     private void DressDriver(eAIBase driver) {
+#else
+    private void DressDriver(PlayerBase driver) {
+#endif
         if (!driver) return;
         // Default del framework (se usa si la ruta NO define DriverClothing).
         array<string> outfit = new array<string>();
@@ -11101,6 +11655,7 @@ class BZBusService {
     // (default Raiders) es HOSTIL al jugador pero AMIGA de Passive = Boris -> sin fuego
     // amigo (ver reference_expansion_ai_api). Arma via ExpansionHumanLoadout.Apply. Los
     // trackea en m_Guards para limpiarlos en CleanupEntities. Devuelve cuantos creo.
+#ifdef DZ_Expansion_AI_Preload
     private int SpawnGuards(Car car, int count, string faction, string loadout, string botClass) {
         if (!car) return 0;
         if (!m_Guards) m_Guards = new array<eAIBase>();
@@ -11124,10 +11679,17 @@ class BZBusService {
         }
         return made;
     }
+#else
+    private int SpawnGuards(Car car, int count, string faction, string loadout, string botClass) {
+        BZBusLog.Warn("[EVENT] spawn_guard needs Expansion AI: skipped");
+        return 0;
+    }
+#endif
 
     // Spawnea los bots de m_Config.Crew (NO los sienta aca Ã¢â‚¬â€ eso lo hace BoardDriver
     // cuando bus+motor estan listos para CrewGetIn). Faction Raiders por default = hostil
     // al jugador, amiga de Passive=Boris (sin fuego amigo). Arma via ExpansionHumanLoadout.
+#ifdef DZ_Expansion_AI_Preload
     private void SpawnCrewBots() {
         if (!m_Config || !m_Config.Crew) return;
         if (m_Config.Crew.Count() == 0) return;
@@ -11153,8 +11715,16 @@ class BZBusService {
         m_CrewPend = 0;
         SpawnCrewPaso();
     }
+#else
+    // sin Expansion AI no se crean bots: si la ruta declara Crew, se dice una vez y la ruta sale sin ellos
+    private void SpawnCrewBots() {
+        if (!m_Config || !m_Config.Crew || m_Config.Crew.Count() == 0) return;
+        BZBusLog.Warn("[crew] the route declares " + m_Config.Crew.Count() + " crew bot(s): needs Expansion AI, skipped");
+    }
+#endif
 
     // Un bot por paso (ver SpawnCrewBots). Cuando no quedan, cierra la formacion.
+#ifdef DZ_Expansion_AI_Preload
     private void SpawnCrewPaso() {
         if (!m_Config || !m_Config.Crew || !m_Bus || !m_Group) return;
         if (m_CrewPend < m_Config.Crew.Count()) {
@@ -11169,10 +11739,16 @@ class BZBusService {
         m_Group.SetFormationState(eAIGroupFormationState.IN);
         BZBusLog.Info("[crew] " + m_Crew.Count() + " bots en el grupo de Boris (Via A: suben de pasajeros via eAI nativo)");
     }
+#else
+    private void SpawnCrewPaso() {
+        // sin Expansion AI no hay crew que crear de a uno (CleanupEntities lo saca de la cola igual)
+    }
+#endif
 
     // NO MAS BOTS QUE PLAZAS. El vehiculo publica cuantas tiene (CrewSize incluye al chofer);
     // el que sobraba se quedaba parado en el spawn para siempre -- fue el primer bot abandonado de la corrida
     // del usuario, y solo se veia leyendo el RPT. Ahora no se crea, y se dice por que.
+#ifdef DZ_Expansion_AI_Preload
     private void SpawnUnCrew(int idx) {
         if (!m_Config || !m_Config.Crew || !m_Bus || !m_Group) return;
         if (!m_Crew) m_Crew = new array<eAIBase>();
@@ -11214,6 +11790,7 @@ class BZBusService {
             BZBusLog.Info("[crew] '" + ccls + "' seat=" + cseat + " offset(F=" + offF + ",R=" + offR + ") -> grupo de Boris (Via A, seguidor)");
         }
     }
+#endif
 
     // R3 + R4: EL DESPLIEGUE CON CORREA. Baja a los bots vivos (animado) y los deja patrullando un
     // ANILLO de radio `radioM` alrededor del vehiculo.
@@ -11230,6 +11807,7 @@ class BZBusService {
     // jugador que dispara de lejos recibe fuego desde el perimetro y nada mas: nadie sale a buscarlo.
     // ThreatDistanceLimit NO se toca -- el usuario quiere que si lo ven a 30 m lo ataquen.
     private const int GS_ANILLO_PUNTOS = 8;
+#ifdef DZ_Expansion_AI_Preload
     private int DesplegarGuardia(Car car, float radioM)
     {
         if (!m_Crew || !car || !m_Bus) return 0;
@@ -11307,15 +11885,22 @@ class BZBusService {
         }
         return bajaronG;
     }
+#endif
 
     // Verbo dismount_guard: los bots del crew se bajan del vehiculo CON ANIMACION
     // (GetOutVehicle abre la puerta). El bus debe estar detenido. Devuelve cuantos bajaron.
     // el cuerpo se fue a DesplegarGuardia. Lo que hacia aca era bajarlos y ponerles una patrulla
     // cuadrada de 7 m EN EL GRUPO DE BORIS -- o sea que se volvian a subir (ver el aviso de DesplegarGuardia).
     // Delegando, dismount_guard y el despliegue del ambush heredan el arreglo y hay UNA sola bajada en el mod.
+#ifdef DZ_Expansion_AI_Preload
     private int DismountCrew(Car car) {
         return DesplegarGuardia(car, GS_RADIO_DEF);
     }
+#else
+    private int DismountCrew(Car car) {
+        return 0;   // sin Expansion AI no hay crew que bajar
+    }
+#endif
 
     // aca vivia el cuerpo viejo de DismountCrew (bajada + patrulla cuadrada de 7 m EN EL
     // GRUPO DE BORIS). Se retira entero: esa patrulla no podia funcionar -- con el lider sentado, la FSM de
@@ -11326,7 +11911,7 @@ class BZBusService {
     // coreografiar: ej freeze ahora, dismount a los N seg (cuando el bus ya paro).
     void ExecuteActionDeferred(BZAction action, int evIdx) {
         if (!action) return;
-        Car car = Car.Cast(m_Bus);
+        Car car = AutoDelBus();
         if (!car) return;
         ExecuteAction(car, action, evIdx);
     }
@@ -11388,21 +11973,21 @@ class BZBusService {
         // la trampa de bootstrap que lanzo al Agera 110 m. Ademas, aun con el 12 listo,
         // el CALIB roba el tick de Plan y persiste muestras BASURA al envelope (el
         // movimiento lo causa el 12, no su rampa). El cerebro 1.2 mide con SU banco.
-        Car busCal = Car.Cast(m_Bus);
+        Car busCal = AutoDelBus();
         if (!m_Usar12 && busCal && !m_Paused && CalibrateBreakaway(busCal)) return;
 
         // despues del FIN del 1.2 nada mueve el indice ni abre tramos (el anti-cuelgue del 1.1 abria 319..375 con el
         // vehiculo congelado en el 578 y RunnerWpIdx le mentia al panel)
         if (!(m_Usar12 && m_C12Terminada)) UpdateLegBounds();   // tramo activo: Boris solo conoce su pierna
         if (m_Bus) UpdateStopAhead(m_Bus.GetPosition());   // mira corta cerca de paradas
-        Car busBk = Car.Cast(m_Bus);
-        if (!m_Usar12 && busBk && m_Config && m_Config.DeadZoneInverseEnabled) LearnBreakaway(busBk.GetSpeedometerAbsolute(), busBk.GetPosition());
-        Car busCo = Car.Cast(m_Bus);
+        Car busBk = AutoDelBus();
+        if (!m_Usar12 && busBk && m_Config && m_Config.DeadZoneInverseEnabled) LearnBreakaway(KmhDe(busBk), busBk.GetPosition());
+        Car busCo = AutoDelBus();
         // (higiene 12-mode: idlePrev lee el CACHE, que con el applier12 queda RANCIO --
         // muestrearia "coasteo" mientras el cerebro acelera y contamina el envelope)
         if (!m_Usar12 && busCo && m_Config && m_Config.CoastGuardEnabled) {
             bool idlePrev = (m_CachedThrottle < 0.05 && m_CachedBrake < 0.05 && busCo.GetGear() != 0);
-            LearnCoast(busCo.GetSpeedometerAbsolute(), idlePrev, busCo.GetPosition());
+            LearnCoast(KmhDe(busCo), idlePrev, busCo.GetPosition());
         }
         if (m_TickCount % 10 == 0) {
             // `AR=` CUENTA LOS RESCATES DEL AR QUE ESTA MANEJANDO. Antes mostraba
@@ -11420,22 +12005,25 @@ class BZBusService {
                 arDet = " (" + arL.ToString() + "L+" + arF.ToString() + "F)";
             }
             string hb = "wp " + m_WaypointIndex + "/" + RunnerWpTotal() + " | " + (int)RunnerSpeedKmh() + "km/h | " + m_PrevTickMode + " | AR=" + arHb + arDet;
+            if (m_Moto12 && m_Carga12 && m_Carga12.Cinta()) hb = hb + " | moto: arco " + BZConductorMoto.Red(m_Moto12.Arco()) + "/" + BZConductorMoto.Red(m_Carga12.Cinta().SFin()) + " m";
             if (m_AR_Count > 0) hb = hb + " | TP=" + m_AR_Count;
             // LLEGA EL COMANDO AL AUTO? apply = veces que ApplyBusInput escribio en el vehiculo desde el
             // ultimo heartbeat (5 s). Si es ~0 mientras pedimos gas, OnInput no esta corriendo.
-            Car busHb = Car.Cast(m_Bus);
+            Car busHb = AutoDelBus();
             float rpmHb = 0;
             if (busHb) rpmHb = busHb.EngineGetRPM();
+            else if (V()) rpmHb = V().Rpm();
             // `thr=` mostraba m_CachedThrottle, que en modo 12 el applier NO escribe: marcaba 0
             // con el vehiculo a 57 km/h y 5245 rpm. Es el mismo caso que `AR=N` contando teleports.
             float thrHb = m_CachedThrottle;
             if (m_Usar12 && m_Ctrl12) thrHb = m_Ctrl12.GasAplicado();
+            if (m_Moto12) thrHb = m_Moto12.GasPedido();
             hb = hb + " | apply=" + m_ApplyCount + " thr=" + thrHb + " rpm=" + (int)rpmHb;
             m_ApplyCount = 0;
             // diagnostico del aprendizaje de coasteo: veh=clase leida, co=muestras aceptadas, id=ticks en coasteo
             hb = hb + " | veh=" + m_CoDbgClass + " co=" + m_CoSamples + " id=" + m_CoIdleTicks;
             if (m_Paused) hb = hb + " | PAUSED";
-            LogI(hb);
+            if (BZDiag.On()) LogI(hb);   // el latido cada 5 s: diagnostico (Diagnostics)
         }
         // Parada a demanda (gesto OK): chequear cada ~1s (cada 2 ticks de 500ms)
         if (m_TickCount % 2 == 0 && s_Settings && s_Settings.HailGestureEnabled) CheckHailGesture();
@@ -11469,7 +12057,16 @@ class BZBusService {
         VigilarChofer();
         if (!m_Bus) return;   // VigilarChofer solto el vehiculo (botin): ya no es nuestro
 
-        Car bus = Car.Cast(m_Bus);
+        // LA MOTO (DayZ 1.30): su propio tick (TickMoto), que reusa el embarque, el spawn-hold con la carga de la ruta, las
+        // pausas y el fin de ruta, y maneja con BZConductorMoto (el cerebro del auto supone reversa y cuatro ruedas).
+        // Va ANTES de la compuerta del Car: el camino del auto sigue igual, linea por linea.
+        BZVehiculo vMoto = V();
+        if (vMoto && vMoto.EsMoto()) {
+            TickMoto(vMoto);
+            return;
+        }
+
+        Car bus = AutoDelBus();
         if (!bus) return;
 
         // Boarding animado en progreso (chofer Y/O crew): no manejar hasta que TODOS esten sentados.
@@ -11608,7 +12205,7 @@ class BZBusService {
         // Asegurar motor encendido
         if (!bus.EngineIsOn()) {
             bus.EngineStart();
-            BZBusLog.Info("Tick: EngineStart, gear=" + bus.GetGear() + " kmh=" + bus.GetSpeedometerAbsolute());
+            BZBusLog.Info("Tick: EngineStart, gear=" + bus.GetGear() + " kmh=" + KmhDe(bus));
         }
 
         // === FRAME REPLAY (2026-07-05) ===
@@ -11644,7 +12241,7 @@ class BZBusService {
         if (!m_AtStop && m_NextStopIndex >= 0 && m_NextStopIndex < m_Config.Waypoints.Count()) {
             BZWaypoint stopWp = m_Config.Waypoints[m_NextStopIndex];
             float distToStop = vector.Distance(m_Bus.GetPosition(), stopWp.GetVector());
-            float stopCheckKmh = bus.GetSpeedometerAbsolute();
+            float stopCheckKmh = KmhDe(bus);
             // Radio del disparo de parada = STOP_FINAL_RADIUS (3m). El "ajuste fino" del bloque AtStop es el que
             // CREEPEA al punto exacto y CLAVA el endpoint -> disparar a 3m es lo correcto (radio chico paraba corto).
             bool reachedRadius    = (distToStop <= STOP_FINAL_RADIUS);
@@ -11702,7 +12299,7 @@ class BZBusService {
                 float dzEpL = bposEpL[2] - wpvEpL[2];
                 float distEpL = Math.Sqrt(dxEpL * dxEpL + dzEpL * dzEpL);
                 if (distEpL < m_EndpointMinDist) m_EndpointMinDist = distEpL;
-                float kmhEpL = bus.GetSpeedometerAbsolute();
+                float kmhEpL = KmhDe(bus);
                 // radio del latch: 0.6 por defecto. Con EndpointGlide la aproximacion final es LENTA a
                 // proposito (2 km/h a 0.5m) -> con 0.6 el latch congelaria a Boris a mitad del glide en
                 // cuanto la velocidad baje de 0.5 (ej: una subidita). Se cierra al radio del glide.
@@ -11739,7 +12336,7 @@ class BZBusService {
             if (m_NextStopIndex >= 0 && m_NextStopIndex < m_Config.Waypoints.Count()) {
                 vector stopExactPos = m_Config.Waypoints[m_NextStopIndex].GetVector();
                 float distToExact = vector.Distance(m_Bus.GetPosition(), stopExactPos);
-                float stopAdjustKmh = bus.GetSpeedometerAbsolute();
+                float stopAdjustKmh = KmhDe(bus);
                 // ENDPOINT GLIDE (2026-07-17, MEDIDO): el creep de abajo tiene 3 defectos que se suman:
                 //   (a) distToExact es 3D y con SampleTerrainY la Y del wp es la del TERRENO mientras el origen
                 //       del vehiculo va ~0.52m mas arriba -> NUNCA baja de 0.52 -> el guard "> 0.5" es SIEMPRE
@@ -11834,7 +12431,7 @@ class BZBusService {
         // la transicion pero el cuerpo del bot no se movio (validado AI log
         // 2026-05-31: wp_idx salto 301 -> 373 en 4 ticks, bot movio solo 2.7m
         // total, quedo trabado al pie de la rampa pretendiendo estar arriba).
-        float kmhAdv = bus.GetSpeedometerAbsolute();
+        float kmhAdv = KmhDe(bus);
         // 2026-07-01 FIX FREEZE CRUISE ALTA VELOCIDAD (Nissan wp405, 219m, ai_run 162057 server A):
         // el 0.5 era el periodo de tick ASUMIDO (500ms). El cap = movimiento del bot en un tick de
         // EXACTAMENTE 0.5s, sin margen. Pero el tick real jitterea (0.5-0.6s, visible en el propio
@@ -11903,7 +12500,7 @@ class BZBusService {
             // Fix: si Boris esta fisicamente mas cerca del wp+N que del wp actual,
             // avanzar directo a ese wp. Mismo principio que AR distance-based pero proactivo.
             // Solo aplica en modos especiales con velocidad > 5 km/h (descarta clusters lentos).
-            if ((cur.mode == "maniobra" || cur.mode == "parking" || cur.mode == "reverse") && cur.hasInputData && bus.GetSpeedometerAbsolute() > 5.0) {
+            if ((cur.mode == "maniobra" || cur.mode == "parking" || cur.mode == "reverse") && cur.hasInputData && KmhDe(bus) > 5.0) {
                 vector busPosPS = m_Bus.GetPosition();
                 float distToCurPS = vector.Distance(busPosPS, cur.GetVector());
                 int bestIdxPS = m_WaypointIndex;
@@ -11984,7 +12581,7 @@ class BZBusService {
             int curBotGearAdv = bus.GetGear();
             bool curWantsReverse = (cur.mode == "reverse");
             bool botInReverseAdv = (curBotGearAdv == 0);
-            if (curWantsReverse != botInReverseAdv && bus.GetSpeedometerAbsolute() > 1.5) break;
+            if (curWantsReverse != botInReverseAdv && KmhDe(bus) > 1.5) break;
 
             // GATE DE POSE en la SALIDA de reversa: no dar la transicion por cumplida hasta estar
             // ALINEADO con el heading grabado del wp de salida (ver PoseGateEnabled en el config).
@@ -12019,7 +12616,7 @@ class BZBusService {
             if (m_NextStopIndex >= 0 && m_NextStopIndex < m_Config.Waypoints.Count()) {
                 vector stopExactPos2 = m_Config.Waypoints[m_NextStopIndex].GetVector();
                 float distToExact2 = vector.Distance(m_Bus.GetPosition(), stopExactPos2);
-                float currentKmh2 = bus.GetSpeedometerAbsolute();
+                float currentKmh2 = KmhDe(bus);
                 // ENDPOINT GLIDE: este bloque es un DUPLICADO del de arriba (mismos 3 defectos: 3D, sin signo
                 // y con return). MEDIDO: es el que mandaba -> creep fijo 0.25 acelero a 8.63 km/h, ahi supero
                 // los 5 -> cayo al brake=1.0 de abajo -> freno y quedo CORTO a 0.658m. Y su return bloqueaba
@@ -12044,7 +12641,7 @@ class BZBusService {
         // Fallback: si el vehiculo no esta en la tabla, dejar que la AT
         // (CarScript EOnPostSimulate) maneje el gear basandose en RPM.
         string vehicleClass = bus.GetType();
-        float currentKmh = bus.GetSpeedometerAbsolute();
+        float currentKmh = KmhDe(bus);
         // REVERSE: forzar m_DesiredGear = 0 cuando el wp pide reverse mode.
         // Sin esto el InferGear forward devuelve FIRST/SECOND, CarScript OnInput
         // hace ShiftTo(desired) cada frame y mi reverse shift dura solo 1 frame.
@@ -12125,7 +12722,7 @@ class BZBusService {
         DriveTowards(bus, target);
 
         // Log de estado post-DriveTowards (diagnostico; gateado - OFF en release)
-        if (m_Config && m_Config.DriveDiagLog) BZBusLog.Info("Tick: gear=" + bus.GetGear() + " kmh=" + bus.GetSpeedometerAbsolute());
+        if (m_Config && m_Config.DriveDiagLog) BZBusLog.Info("Tick: gear=" + bus.GetGear() + " kmh=" + KmhDe(bus));
 
         // Stuck timer: si no avanzamos nada en este tick, incrementar; si pasa
         // el timeout, forzar un advance manual (escape hatch para bug raro).
@@ -12152,7 +12749,7 @@ class BZBusService {
         // -> el ModeSnap reposiciona al punto exacto + mata velocidad -> reversa limpia.
         if (m_Config && m_Config.Waypoints) {
             BZWaypoint curDwell = CurrentWaypoint();
-            float kmhDwell = bus.GetSpeedometerAbsolute();
+            float kmhDwell = KmhDe(bus);
             if (curDwell && kmhDwell < 1.0 && curDwell.targetSpeed < 0.5 && (curDwell.mode == "normal" || curDwell.mode == "")) {
                 // CREEP-FIRST (un jugador 2026-06-24): saltar SOLO si Boris ya esta SOBRE el punto (gap < 0.5m).
                 // Si quedo corto, el creep-to-point lo maneja primero -> evita que el dwell-skip le gane
@@ -12222,7 +12819,7 @@ class BZBusService {
         // Insight 2026-06-03: el T6 stuck en (8137,9301) NO era choque contra
         // obstaculo (el usuario verifico visualmente sin colision). Throttle=1
         // sostenido 10s con kmh=0 = receptor no respondio. Falta saber por que.
-        float kmhDiag = bus.GetSpeedometerAbsolute();
+        float kmhDiag = KmhDe(bus);
         if (kmhDiag < 1.0 && m_CachedThrottle > 0.5) {
             m_StuckDiagTimer += 0.5; // tick es cada 500ms
             float now = GetGame().GetTickTime();
@@ -12370,16 +12967,16 @@ class BZBusService {
     // VEHICULO INVIOLABLE: el estado (m_VehiclePartsLocked) se fija sobre el auto por NetSync en el CarScript moddeado, asi
     // el cliente ni muestra "quitar rueda" y el server rechaza igual. Idempotente (el CarScript solo marca dirty si cambia).
     private void AplicarBloqueoDePiezas() {
-        CarScript cpl = CarScript.Cast(m_Bus);
-        if (cpl) cpl.BZSetPartsLocked(m_VehiclePartsLocked);
+        BZVehiculo vPz = V();
+        if (vPz) vPz.BloquearPiezas(m_VehiclePartsLocked);
     }
 
     // 2026-06-27 FASE 1 luces+claxon: primitivas del DSL.
     // ToggleHeadlights()/IsScriptedLightsOn() viven en CarScript (NO en la base Car):
     // hay que castear a CarScript (confirmado leyendo el scripts.pbo vanilla).
     void SetVehicleLights(bool on) {
-        CarScript car = CarScript.Cast(m_Bus);
-        if (!car) return;
+        BZVehiculo vLz = V();
+        if (!vLz || !vLz.TieneLucesBZ()) return;
         // OJO (2026-06-27): IsScriptedLightsOn() devuelve false en el AI car server-side -> el guard
         // por estado-real fallaba y toggleaba CADA tick (flip-flop = parpadeo = se ven apagadas). El RPT
         // lo mostro: "[Lights] ON" cada ~0.5s. Guard por m_LightsOn (creencia) -> toggle UNA sola vez = estable.
@@ -12395,7 +12992,7 @@ class BZBusService {
         // via NetSyncVariable propia (m_BZLightsWanted) y en OnVariablesSynchronized() fuerza el flag
         // native LOCAL del observador con LightOn()/LightOff() + UpdateLights(). Asi el cliente ve
         // LightIsOn()==true y dibuja m_Headlight.
-        car.BZSetLights(on);
+        vLz.Luces(on);
         m_LightsOn = on;
         string st = "OFF";
         if (on) st = "ON";
@@ -12406,9 +13003,9 @@ class BZBusService {
     // CarScript.SetCarHornState(int) + enum global ECarHornState { OFF=0, SHORT=1, LONG=2 }.
     // Reemplaza al EffectSound + SoundSet adivinado de la Fase 1.
     void SetVehicleHorn(int state) {
-        CarScript car = CarScript.Cast(m_Bus);
-        if (!car) return;
-        car.SetCarHornState(state);
+        BZVehiculo vBc = V();
+        if (!vBc) return;
+        vBc.Bocina(state);
     }
 
     // 2026-06-27 FASE 2c: estado de luces deseado segun LightsMode de la ruta.
@@ -12427,8 +13024,8 @@ class BZBusService {
         if (m_LightsHeartbeatAccum >= LIGHTS_HEARTBEAT_S) {
             m_LightsHeartbeatAccum = 0;
             if (m_LightsOn) {
-                CarScript lightsCar = CarScript.Cast(m_Bus);
-                if (lightsCar) lightsCar.BZPulseLights();
+                BZVehiculo vLt = V();
+                if (vLt) vLt.LatidoLuces();
             }
         }
     }
@@ -12493,6 +13090,28 @@ class BZBusService {
         return hay;
     }
 
+    // el numero de la primera linea no vacia de una bandera (0 si no existe o no es un numero)
+    private static float LeerBanderaFloat(string path)
+    {
+        if (!FileExist(path)) return 0;
+        FileHandle fh = OpenFile(path, FileMode.READ);
+        if (fh == 0) return 0;
+        string ln = "";
+        float val = 0;
+        while (FGets(fh, ln) >= 0)
+        {
+            ln = ln.Trim();
+            if (ln != "")
+            {
+                val = ln.ToFloat();
+                break;
+            }
+        }
+        CloseFile(fh);
+        if (!BZMath.Finite(val)) return 0;
+        return val;
+    }
+
     // las banderas de presencia que ENCENDIAN el 1.2 ya no deciden; si siguen ahi, se dice una vez.
     private static bool s_AvisoBanderasViejas;
     private static void AvisarBanderasViejas()
@@ -12517,6 +13136,8 @@ class BZBusService {
     {
         m_C12Listo = false;
         m_C12Fallo = false;
+        m_Moto12 = null;
+        m_WpArcoMoto = null;   // el arco de los waypoints es por ruta
         m_C12Paso = 0;
         m_C12PeorPasoMs = 0;
         m_C12PeorPaso = -1;
@@ -12688,6 +13309,7 @@ class BZBusService {
     // la tripulacion no subio al spawn EXACTAMENTE cuando el chofer habia subido por el rescate.
     private bool m_MusterDiagDado;
 
+#ifdef DZ_Expansion_AI_Preload
     private string PorQueNoSube(eAIBase b)
     {
         string r = "";
@@ -12727,7 +13349,9 @@ class BZBusService {
         if (r == "") r = "las condiciones de eAI se CUMPLEN (plazas" + plazas + "): el problema esta en otro lado";
         return r;
     }
+#endif
 
+#ifdef DZ_Expansion_AI_Preload
     private bool MusterListo()
     {
         if (!m_Config || !m_Config.Crew || m_Config.Crew.Count() == 0) return true;   // sin crew, nada que esperar
@@ -12798,6 +13422,12 @@ class BZBusService {
         }
         return false;
     }
+#else
+    private bool MusterListo()
+    {
+        return true;   // sin Expansion AI no hay crew que esperar
+    }
+#endif
 
     // Setup perezoso en el primer tick de manejo: el vehiculo y el chofer YA existen (el
     // shell los puso). Mismo orden que BZ12TestDrive.Begin, sin Spawn/Seat.
@@ -13119,8 +13749,9 @@ class BZBusService {
         vector dir12 = bus.GetDirection();
         m_St12.yaw = BZMath.HeadingXZ(dir12[0], dir12[2]);
         m_St12.pitch = Math.Asin(Math.Clamp(dir12[1], -1.0, 1.0));
-        m_St12.kmh = bus.GetSpeedometerAbsolute();
+        m_St12.kmh = KmhDe(bus);
         vector vel12 = GetVelocity(bus);
+        if (!BZMath.FiniteVec(vel12)) vel12 = vector.Zero;   // tampoco el cuerpo entra con NaN al cerebro
         m_St12.chassisKmh = vel12.Length() * 3.6;
         m_St12.courseRad = m_St12.yaw;
         // (C1): la velocidad proyectada sobre el rumbo del chasis, con signo.
@@ -13143,12 +13774,16 @@ class BZBusService {
         m_St12.contactoClase = "";
         m_St12.contactoHaceS = -1;
         m_St12.contactoImp = 0;
-        CarScript csC12 = CarScript.Cast(bus);
-        if (csC12 && csC12.m_BzContactoT >= 0)
+        m_St12.contactoZona = "";
+        string claseC12;
+        float cuandoC12;
+        float impC12;
+        if (BZVehiculoFabrica.Contacto(bus, claseC12, cuandoC12, impC12))
         {
-            m_St12.contactoClase = csC12.m_BzContactoClase;
-            m_St12.contactoHaceS = GetGame().GetTickTime() - csC12.m_BzContactoT;
-            m_St12.contactoImp = csC12.m_BzContactoImp;
+            m_St12.contactoClase = claseC12;
+            m_St12.contactoHaceS = GetGame().GetTickTime() - cuandoC12;
+            m_St12.contactoImp = impC12;
+            m_St12.contactoZona = BZVehiculoFabrica.ContactoZona(bus);
         }
     }
 
@@ -13197,7 +13832,8 @@ class BZBusService {
             if (offR12 > 0.01) accR12 = "zona segura +" + offR12.ToString() + " m desde el punto trabado";
             AplicarReubicacion(sOrR12, offR12, "escalera fisica", accR12, "FISICO");
         }
-        m_WaypointIndex = m_Ctrl12.GetWaypointIndex();   // panel/quest/verbos leen este
+        int wi12 = m_Ctrl12.GetWaypointIndex();   // panel/quest/verbos leen este; sin leg (-1) se conserva el ultimo
+        if (wi12 >= 0) m_WaypointIndex = wi12;
         SincronizarBloqueo12();   // el estado, antes de drenar los eventos
         Eventos12();
     }
@@ -13573,7 +14209,7 @@ class BZBusService {
                     m_RouteStopped  = true;   // frena YA y bloquea avance/AutoRecovery durante el hold
                     m_EndHoldActive = true;   // handbrake explicito en el Tick durante el hold
                     m_EndHoldTime   = GetGame().GetTickTime();
-                    Car endHoldCar = Car.Cast(m_Bus);   // 2026-07-07: freno nativo anti-rollback (aguanta la
+                    Car endHoldCar = AutoDelBus();   // 2026-07-07: freno nativo anti-rollback (aguanta la
                     if (endHoldCar) endHoldCar.SetBrakesActivateWithoutDriver(true);  // pendiente sin depender del input del bot)
                     BZBusLog.Info("[EndHold] fin de ruta: hold " + endHoldSec + "s antes de despawn/respawn");
                 }
@@ -13624,17 +14260,20 @@ class BZBusService {
         // fail-safe del log en cola — si el casco se va antes de
         // llegar al reposo, el handle no puede quedar abierto.
         if (m_Ctrl12) m_Ctrl12.CerrarLogYa();
+        if (m_Moto12) m_Moto12.CerrarLogYa();   // la caja negra de la moto, igual
         m_EndHoldActive = false;
         CleanupEntities();                  // saca vehiculo + driver + cancela Tick/respawn pendiente
         BZBusService.UnregisterRunner(this);
     }
 
     private void SetNextWaypoint() {
+#ifdef DZ_Expansion_AI_Preload
         BZWaypoint wp = CurrentWaypoint();
         if (!wp || !m_Group) return;
 
         m_Group.ClearWaypoints();
         m_Group.AddWaypoint(wp.GetVector());
+#endif
     }
 
     // ===== FRENO UNIVERSAL DEL ENDPOINT (2026-07-17) =====
@@ -13680,7 +14319,7 @@ class BZBusService {
                 signedG = dxG * fxG + dzG * fzG;
             }
         }
-        float kmhG = bus.GetSpeedometerAbsolute();
+        float kmhG = KmhDe(bus);
         // [EndGap] (2026-07-29): EndpointGlideControl maneja los ultimos ~3m (DriveTowards ya no corre aca -> por eso
         // ai_run/drive_state/[CTL] cortaban a ~3m). Logueamos a que distancia del punto QUEDA Boris cuando para,
         // para medir la precision real del endpoint sin depender de acordarse donde estaba el marcador. kmhG<0.5=parado.
@@ -13839,7 +14478,7 @@ class BZBusService {
                 signedF = dxF * fxF + dzF * fzF;
             }
         }
-        float kmhF = car.GetSpeedometerAbsolute();
+        float kmhF = KmhDe(car);
         // LATCH per-frame: si llego/cruzo el punto, clavar YA (no esperar hasta 500ms -> no rueda otro tramo)
         if (signedF <= m_Config.EndpointGlideStopM) {
             if (!m_EndpointLatched) BZBusLog.Info("[FrameLatch] endpoint CLAVADO per-frame a signed=" + signedF + "m (gap=" + gapF + " kmh=" + kmhF + ")");
@@ -14395,7 +15034,7 @@ class BZBusService {
             BZBusLog.Info("[CALIB] midiendo zona muerta de " + m_Config.VehicleClass + " (subiendo el gas desde 0)");
         }
         SetCachedHandbrake(0);   // el freno de mano invalida la medicion
-        float vCal = bus.GetSpeedometerAbsolute();
+        float vCal = KmhDe(bus);
         if (m_CalState == 1) {
             if (vCal > 1.0) {
                 BZVehicleEnvelope.Get(m_Config.VehicleClass).SampleBreakaway(m_CalThr, surfCal);
@@ -14482,9 +15121,9 @@ class BZBusService {
         if (m_LegEnd < cntLg - 1 && m_Bus) {
             vector pEndLg = m_Config.Waypoints[m_LegEnd].GetVector();
             float dEndLg = vector.Distance(m_Bus.GetPosition(), pEndLg);
-            Car busLg = Car.Cast(m_Bus);
+            Car busLg = AutoDelBus();
             float vLg = 99.0;
-            if (busLg) vLg = busLg.GetSpeedometerAbsolute();
+            if (busLg) vLg = KmhDe(busLg);
             // NO ALCANZA CON LLEGAR: HAY QUE LLEGAR ALINEADO (2026-07-21, un jugador). El intercambio es una POSE
             // (punto + rumbo), no un punto. Antes cerraba solo por distancia y velocidad -> Boris lo daba
             // por hecho estando torcido (medido saliendo de la reversa: -11 deg el M3, -5 el Sedan, +23 el
@@ -14665,7 +15304,7 @@ class BZBusService {
     // Jugadores sentados dentro del bus (viajando)
     private bool HasOnboardPassengers() {
         if (!m_Bus) return false;
-        Car bus = Car.Cast(m_Bus);
+        Car bus = AutoDelBus();
         if (!bus) return false;
 
         // Asiento 0 = conductor AI, empezamos en 1
@@ -14694,6 +15333,10 @@ class BZBusService {
         ScriptRPC rpc = new ScriptRPC();
         rpc.Write(key);
         rpc.Write(isAdmin);
+        // y si las lineas de diagnostico estan encendidas (solo a un admin): su cliente las usa para las del panel
+        bool diagCli = false;
+        if (isAdmin) diagCli = BZDiag.On();
+        rpc.Write(diagCli);
         rpc.Send(recipient, BZBusRPC.RECEIVE_PANEL_SETTINGS, true, sender);
         BZBusLog.Info("[Panel] Settings sync a " + steamId + " key=" + key + " admin=" + isAdmin);
     }
@@ -14711,8 +15354,8 @@ class BZBusService {
         int  wpTotal = 0;
         if (m_Config && m_Config.Waypoints) wpTotal = m_Config.Waypoints.Count();
         float kmh = 0;
-        Car carBus = Car.Cast(m_Bus);
-        if (carBus) kmh = carBus.GetSpeedometerAbsolute();
+        Car carBus = AutoDelBus();
+        if (carBus) kmh = KmhDe(carBus);
         string mode = m_PrevTickMode;
         int arCount = m_AR_Count;
 
@@ -14920,8 +15563,11 @@ class BZBusService {
         // -> dos chasis solapados peleando fisica = free-rev / flota / ruedas al reves en el arranque (el fantasma
         // que un jugador cazo). Le sacamos el waypoint del grupo para que Boris NO tenga hacia donde manejar durante el
         // borrado diferido -> el bus viejo queda quieto hasta que el Delete lo saca del mundo. Cierra la ventana.
+#ifdef DZ_Expansion_AI_Preload
         if (m_Group) m_Group.ClearWaypoints();
+#endif
 
+#ifdef DAYZ_1_29
         if (m_Driver) { m_Driver.Delete(); m_Driver = null; }
         if (m_Guards) {
             for (int gci = 0; gci < m_Guards.Count(); gci++) {
@@ -14939,7 +15585,33 @@ class BZBusService {
         }
         if (m_CrewSeats) m_CrewSeats.Clear();
         if (m_Bus)    { m_Bus.Delete();    m_Bus    = null; }
+#else
+        // 1.30 y siguientes: NUNCA se borra un vehiculo con alguien sentado (medido en la 1.30: borrar el vehiculo con un
+        // Man sentado tumba el server, siempre; y el mismo cuadro tampoco es seguro, porque el delete es diferido).
+        // BZRetiro baja y borra a lo nuestro (chofer, crew, guardias) y borra el vehiculo recien VACIO, en un cuadro
+        // posterior; si queda alguien ajeno sentado (un jugador), el vehiculo espera. El runner sigue ya: lo solto.
+        array<Human> retiroBots = new array<Human>();
+        if (m_Driver) retiroBots.Insert(m_Driver);
+        if (m_Guards) {
+            for (int rgi = 0; rgi < m_Guards.Count(); rgi++) {
+                if (m_Guards[rgi]) retiroBots.Insert(m_Guards[rgi]);
+            }
+            m_Guards.Clear();
+        }
+        if (m_Crew) {
+            for (int rci = 0; rci < m_Crew.Count(); rci++) {
+                if (m_Crew[rci]) retiroBots.Insert(m_Crew[rci]);
+            }
+            m_Crew.Clear();
+        }
+        if (m_CrewSeats) m_CrewSeats.Clear();
+        if (m_Bus || retiroBots.Count() > 0) BZRetiro.Retirar(m_Bus, retiroBots, m_RouteName);
+        m_Bus = null;
+        m_Driver = null;
+#endif
+#ifdef DZ_Expansion_AI_Preload
         m_Group = null;
+#endif
         // (bug 2 de ): este es el embudo de baja (9 caminos) y no cancelaba la carga en vuelo.
         // Un STOP sobre un vehiculo que estaba cargando dejaba la cola drenando 48,7 s para un runner que ya no
         // existia (RPT 19/09 22:22:30 -> 22:23:19). Idempotente: sin trabajo no hace nada, y SpawnBus la repite gratis.
@@ -15072,7 +15744,7 @@ class BZBusService {
     private void LogAITick(string mode, float distToNextStop) {
         if (!m_AILoggerActive || !m_Bus) return;
 
-        Car bus = Car.Cast(m_Bus);
+        Car bus = AutoDelBus();
         if (!bus) return;
 
         vector pos = bus.GetPosition();
@@ -15081,7 +15753,7 @@ class BZBusService {
         if (heading < 0) heading += 360.0;
 
         float t        = GetGame().GetTickTime() - m_AILogStartTime;
-        float speedKmh = bus.GetSpeedometerAbsolute();
+        float speedKmh = KmhDe(bus);
         int   gear     = bus.GetGear();
         float throttle = m_CachedThrottle;
         float brake    = m_CachedBrake;
@@ -15101,8 +15773,8 @@ class BZBusService {
         // + energia del CompEM de la bateria. Sirven para verificar el fix del heartbeat de
         // luces la proxima corrida (lights=1 estable + battery_energy no se vacia).
         int lightsAi = 0;
-        CarScript carLightsAi = CarScript.Cast(m_Bus);
-        if (carLightsAi && carLightsAi.IsScriptedLightsOn()) lightsAi = 1;
+        BZVehiculo vLa = V();
+        if (vLa && vLa.LucesPrendidas()) lightsAi = 1;
         float battEnergyAi = -1;
         ItemBase battAi = ItemBase.Cast(m_Bus.GetInventory().FindAttachment(CarBattery.SLOT_ID));
         if (!battAi) battAi = ItemBase.Cast(m_Bus.GetInventory().FindAttachment(TruckBattery.SLOT_ID));
@@ -15278,6 +15950,13 @@ class BZBusService {
         int cleared = 0;
         foreach (Object o : m_RampObjects) {
             if (o) {
+#ifndef DAYZ_1_29
+                Object rampaOcupada = o;   // otro nombre: el lint confunde 'o' con el BZBoardState de BoardEntryClear
+                if (BZRetiro.Ocupantes(rampaOcupada) > 0) {
+                    BZBusLog.Warn("Rampa: se deja " + rampaOcupada.GetType() + ": tiene alguien sentado");
+                    continue;
+                }
+#endif
                 GetGame().ObjectDelete(o);
                 cleared++;
             }
@@ -15450,7 +16129,7 @@ class BZBusService {
         float heading = Math.Atan2(dir[0], dir[2]) * Math.RAD2DEG;
         if (heading < 0) heading += 360.0;
 
-        float speedKmh = bus.GetSpeedometerAbsolute();
+        float speedKmh = KmhDe(bus);
         float rpm      = bus.EngineGetRPM();
         int   gear     = bus.GetGear();
         float actualThrottle = m_CachedThrottle;
@@ -15548,6 +16227,11 @@ class BZBusService {
     // un aviso AUTOMATICO: al RPT siempre; a los admins por el modo del tipo.
     private void AvisoAdmins(string msg, string modo) {
         BZBusLog.Info("[GLOBAL] " + msg);
+        EnviarAAdmins(msg, modo);
+    }
+
+    // el envio solo, sin la linea [GLOBAL] del RPT: para un aviso que ya dejo su propia linea
+    private void EnviarAAdmins(string msg, string modo) {
         if (!GetGame().IsServer()) return;
         if (modo == "off") return;
         array<Man> bzPlayers = new array<Man>();

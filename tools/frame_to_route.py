@@ -71,13 +71,69 @@ STOP_HOLD_S    = 6     # seg detenido en el endpoint: le da TIEMPO al creep fino
                        # no converge -> Boris queda ~2m corto. El creep es lento (~0.32 m/s): con 3s
                        # llego a 1.10m todavia convergiendo -> 6s para cerrar los ~2m. un jugador: "detenido 2 seg".
 
+def cusps_de_la_toma(rows):
+    """{indice: sentido_saliente} del cuadro del REPOSO de cada cambio de sentido EFECTIVO (adelante <-> reversa): el
+    ultimo cuadro antes del cambio de marcha que precede al movimiento en el sentido nuevo. Un cambio que no llega a
+    mover el vehiculo (R -> 1a -> R con el vehiculo quieto, o la marcha puesta al terminar) no cuenta, ni el primero
+    si el vehiculo todavia no se movio (una toma que arranca en reversa con la 1a puesta); el neutral no cambia el sentido.
+    Medido: el wp de un cusp se emitia donde la toma bajaba de ~1 km/h, 0,3-0,5 m ANTES de donde el vehiculo quedo
+    quieto y cambio la marcha; el lector cierra el leg en esa parada grabada y el cierre media contra un wp corrido
+    (remFr -0,4..-0,5 con el vehiculo en su lugar). El reposo de la toma es la referencia: ahi va el wp."""
+    cusps = {}
+    sent = None
+    movio = False   # se movio con el sentido vigente (sin eso, el cambio solo fija el sentido inicial: no es un cusp)
+    i = 0
+    n = len(rows)
+    while i < n:
+        g = rows[i]["gear"]
+        nuevo = None
+        if g == 0:
+            nuevo = -1
+        elif g >= 2:
+            nuevo = 1
+        if nuevo is None or sent is None or nuevo == sent:
+            if nuevo is not None and sent is None:
+                sent = nuevo
+            if sent is not None and rows[i]["spd"] >= STOP_KMH_DET:
+                movio = True
+            i += 1
+            continue
+        # candidato: el cambio en i; es efectivo si el vehiculo se mueve con el sentido nuevo antes de otro cambio
+        j = i
+        efectivo = False
+        while j < n:
+            gj = rows[j]["gear"]
+            sj = None
+            if gj == 0:
+                sj = -1
+            elif gj >= 2:
+                sj = 1
+            if sj is not None and sj != nuevo:
+                break
+            if rows[j]["spd"] >= STOP_KMH_DET:
+                efectivo = True
+                break
+            j += 1
+        if efectivo:
+            if movio:
+                cusps[i - 1] = sent
+            sent = nuevo
+            movio = True
+            i = j
+        else:
+            i = j if j > i else i + 1
+    return cusps
+
 def resample(rows):
-    """Muestrea la linea a arc-length adaptativo por velocidad. Conserva primero, ultimo y
-    los frames con marca. Devuelve la sublista de rows elegidos (posiciones NATIVAS, no promediadas)."""
+    """Muestrea la linea a arc-length adaptativo por velocidad. Conserva primero, ultimo, los frames con marca y el
+    cuadro del reposo de cada cambio de sentido (cusps_de_la_toma). Devuelve la sublista de rows elegidos
+    (posiciones NATIVAS, no promediadas)."""
+    cusps = cusps_de_la_toma(rows)
     out = [rows[0]]
     acc = 0.0
     prev = rows[0]
-    for q in rows[1:]:
+    for qi in range(1, len(rows)):
+        q = rows[qi]
         step = math.hypot(q["x"] - prev["x"], q["z"] - prev["z"])
         prev = q
         # DETENIDO NO ACUMULA NI EMITE (2026-07-22, un jugador). Quedarse quieto para un cruce, armar una
@@ -91,12 +147,17 @@ def resample(rows):
             acc += step
         v_ms = q["spd"] / 3.6
         target = min(SPACING_MAX, max(SPACING_MIN, v_ms * SPACING_K))
-        if q["mark"] != 0:                    # marca (1 = evento, 2 = intercambio): SIEMPRE se conserva
+        if qi in cusps:                       # el reposo del intercambio: SIEMPRE se conserva, con su sentido saliente
+            q["cusp"] = cusps[qi]
+            out.append(q); acc = 0.0
+        elif q["mark"] != 0:                  # marca (1 = evento, 2 = intercambio): SIEMPRE se conserva
             out.append(q); acc = 0.0
         elif not parado and acc >= target:    # emite solo moviendose (detenido colapsa a nada)
             out.append(q); acc = 0.0
     if out[-1] is not rows[-1]:
         out.append(rows[-1])
+    if cusps:
+        print("  intercambios: %d wp(s) en el reposo de la toma (el ultimo cuadro antes del cambio de marcha)" % len(cusps))
     return preservar_paradas(rows, out)
 
 STOP_KMH_DET = 0.6    # por debajo de esto se considera DETENIDO
@@ -276,7 +337,295 @@ def descartar_rebobinados(limpias):
     return out, eventos, abortados
 
 
-def emitir_cinta(frame_path, out_path):
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ★ LA MOTO (DayZ 1.30, 27/09). El header la declara (vehicleKind=moto, neutralGear=0). Dos cosas de la toma que en
+# el auto no existen:
+#  (1) N NO ES REVERSA. En la moto la marcha 0 es neutral (no hay reversa); todo el pipeline lee gear==0 como reversa
+#      (is_reverse, las fases de la cinta, los legs). Se corre la marcha en uno: N = 1, 1ra = 2 -- la convencion del auto
+#      (0 R, 1 N, 2+ adelante). El conductor de moto (BZConductorMoto.MarchaMotoDe) la vuelve a correr al mandarla.
+#  (2) CAMINAR LA MOTO NO ES MANEJAR (27/09). El humano la lleva a pie (para girarla o acomodarla) con CUALQUIER
+#      marcha y con el motor prendido o apagado, hacia adelante o hacia atras: es locomocion del personaje, no un regimen
+#      del vehiculo. Los WAYPOINTS no llevan esos tramos; la CINTA si (28/09): la columna 15 `camina` trae la velocidad
+#      FIRMADA de la toma (+ adelante, - atras) y el conductor de moto los reproduce por empuje fisico, con la animacion
+#      de caminar en los dos sentidos. Un tramo es caminado si todas sus filas van a paso de hombre (0,3 m/s a 8 km/h) sin
+#      gas (en N cualquier gas: no mueve la moto) y el tramo (a) va hacia ATRAS (la moto no tiene reversa), o (b) arranca
+#      DE QUIETA y va SIN TRACCION: motor apagado, N, o rpm en el ralenti con marcha puesta (el embrague abierto). La
+#      frenada hasta parar en marcha viene de mas de 8 km/h y no se corta; rodar en N desde mas rapido, tampoco (se
+#      reproduce). La primera fila despues del tramo lleva corte=1 (columna 13 de la cinta): ahi la toma retoma, y el
+#      conductor sigue desde donde esta. No hay estado del motor que diga "caminando" (1.30: ni en Motorbike ni en el
+#      comando de vehiculo): se infiere de gas, marcha, rpm, velocidad y sentido.
+# Una toma de auto no pasa por aca.
+MOTO_CAMINA_VMIN_MS = 0.3
+MOTO_CAMINA_VMAX_KMH = 8.0     # a paso de hombre: la caminata medida en la 1.30 no pasa de 0,74 m/s (Enduro)
+MOTO_CAMINA_GAS_MAX = 0.05
+MOTO_RPM_APAGADO = 100.0       # rpm por debajo: motor apagado (la toma a pie de la 1.30 graba rpm 0)
+MOTO_RPM_SIN_TRACCION = 1.2    # x ralenti: con marcha puesta y el motor en el ralenti, el embrague esta abierto
+MOTO_ATRAS_M = 0.05            # desplazamiento neto contra el rumbo (m) para llamarlo "hacia atras"
+MOTO_RALENTI_MIN_S = 0.5       # el caso dudoso (marcha puesta, motor en el ralenti): un arranque cuyo gas llega unos
+                               # cuadros tarde no es caminata. Apagado, N o hacia atras no piden duracion: nunca es manejo
+
+
+def es_moto(hk):
+    return hk.get("vehicleKind", "") == "moto"
+
+
+def _camina_candidata(fr, neutral):
+    v = fr["ckmh"]
+    if v / 3.6 <= MOTO_CAMINA_VMIN_MS or v >= MOTO_CAMINA_VMAX_KMH:
+        return False
+    if fr["gear"] == neutral:
+        return True
+    return fr.get("thr", 0.0) <= MOTO_CAMINA_GAS_MAX
+
+
+def moto_filtrar(filas, neutral, idle=None, detalle=None, marcar=False):
+    """(filas con la marcha corrida en uno; cantidad de tramos caminados). Sin `marcar` (los waypoints) los tramos se
+    SACAN y la fila que retoma lleva 'corte'=1; con `marcar` (la cinta) se QUEDAN y cada fila lleva 'camina' = la
+    velocidad firmada de la toma (m/s; + adelante, - atras; 0 fuera). No toca las filas originales: copia. Con `detalle`
+    (lista), agrega un dict por tramo."""
+    n = len(filas)
+    cortar = [False] * n
+    cortes = 0
+    i = 0
+    while i < n:
+        if not _camina_candidata(filas[i], neutral):
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and _camina_candidata(filas[j + 1], neutral):
+            j += 1
+        seg = filas[i:j + 1]
+        desde_quieta = i == 0 or filas[i - 1]["ckmh"] / 3.6 <= MOTO_CAMINA_VMIN_MS
+        avance = 0.0
+        for k in range(i + 1, j + 1):
+            h = math.radians(filas[k]["hdg"])
+            avance += (filas[k]["x"] - filas[k - 1]["x"]) * math.sin(h) + (filas[k]["z"] - filas[k - 1]["z"]) * math.cos(h)
+        atras = avance < -MOTO_ATRAS_M
+        apagado = sum(1 for f in seg if 0 <= f.get("rpm", -1.0) < MOTO_RPM_APAGADO) * 2 > len(seg)
+        en_n = sum(1 for f in seg if f["gear"] == neutral) * 2 > len(seg)
+        ralenti = (bool(idle) and all(0 <= f.get("rpm", -1.0) <= idle * MOTO_RPM_SIN_TRACCION for f in seg)
+                   and sum(f.get("dt", 0.0) for f in seg) >= MOTO_RALENTI_MIN_S)
+        if atras or (desde_quieta and (apagado or en_n or ralenti)):
+            cortes += 1
+            for k in range(i, j + 1):
+                cortar[k] = True
+            if detalle is not None:
+                marchas = sorted(set(f["gear"] for f in seg))
+                detalle.append({"a": i, "b": j, "s": sum(f.get("dt", 0.0) for f in seg), "atras": atras,
+                                "motor": "apagado" if apagado else "prendido",
+                                "marcha": ",".join("N" if g == neutral else str(g - neutral) for g in marchas),
+                                "vmax": max(f["ckmh"] for f in seg) / 3.6, "avance": avance})
+        i = j + 1
+    out = []
+    if marcar:
+        signo = [0.0] * n
+        i = 0
+        while i < n:
+            if not cortar[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and cortar[j + 1]:
+                j += 1
+            av = 0.0
+            for k in range(i + 1, j + 1):
+                h = math.radians(filas[k]["hdg"])
+                av += (filas[k]["x"] - filas[k - 1]["x"]) * math.sin(h) + (filas[k]["z"] - filas[k - 1]["z"]) * math.cos(h)
+            sg = -1.0 if av < -MOTO_ATRAS_M else 1.0
+            for k in range(i, j + 1):
+                signo[k] = sg
+            i = j + 1
+        for k, fr in enumerate(filas):
+            nf = dict(fr)
+            nf["gear"] = fr["gear"] - neutral + 1
+            nf["corte"] = 0
+            nf["camina"] = round(signo[k] * fr["ckmh"] / 3.6, 3) if cortar[k] else 0.0
+            out.append(nf)
+        return out, cortes
+    en_tramo = False
+    for k, fr in enumerate(filas):
+        if cortar[k]:
+            en_tramo = True
+            continue
+        nf = dict(fr)
+        nf["gear"] = fr["gear"] - neutral + 1
+        nf["corte"] = 1 if (en_tramo and out) else 0
+        en_tramo = False
+        out.append(nf)
+    return out, cortes
+
+
+def detalle_caminata(det):
+    """una linea por tramo cortado: donde, cuanto, hacia donde, con que marcha y motor, y la velocidad maxima."""
+    lineas = []
+    for d in det:
+        lineas.append("[moto]   caminando: filas %d-%d, %.1f s, %s (%.2f m), marcha %s, motor %s, v max %.2f m/s: se reproduce por empuje"
+                      % (d["a"], d["b"], d["s"], "hacia ATRAS" if d["atras"] else "hacia adelante", d["avance"],
+                         d["marcha"], d["motor"], d["vmax"]))
+    return lineas
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ★ LOS CHOQUES DE LA TOMA (27/09): el grabador escribe los contactos del vehiculo en la columna `contacto`. Una toma con
+# un choque grabado se REPRODUCE HACIA EL CHOQUE (el laboratorio de motos, herramienta aparte, lo vio: la Enduro choco las tres veces donde choco la toma), y
+# el que la grabo tiene que saberlo. Se AVISA y va al hdr; no se corta ni se edita la toma.
+CHOQUE_AGRUPA_M = 3.0
+# un contacto es un CHOQUE si viene con una perdida de velocidad: la maxima de los CHOQUE_VENTANA_S anteriores menos la
+# minima de los CHOQUE_VENTANA_S siguientes, >= CHOQUE_PERDIDA_KMH. Rodar sobre escombros u objetos del piso da contacto
+# sin perdida (medido el 28/09): no se avisa, pero el hdr lo guarda con su perdida
+CHOQUE_VENTANA_S = 0.2
+CHOQUE_PERDIDA_KMH = 5.0
+
+
+def _perdida_kmh(filas, i):
+    t0 = filas[i]["t"]
+    antes = filas[i]["spd"]
+    k = i - 1
+    while k >= 0 and t0 - filas[k]["t"] <= CHOQUE_VENTANA_S:
+        antes = max(antes, filas[k]["spd"])
+        k -= 1
+    despues = filas[i]["spd"]
+    k = i + 1
+    while k < len(filas) and filas[k]["t"] - t0 <= CHOQUE_VENTANA_S:
+        despues = min(despues, filas[k]["spd"])
+        k += 1
+    return antes - despues
+
+
+def retrocesos_de_la_toma(filas):
+    """[(arco_ini, arco_fin, metros)] de los episodios (> 0,3 m) donde la POSICION grabada va en contra del rumbo con
+    marcha adelante (gear >= 2) y rodando (> 3 km/h): la correccion de posicion del server al grabar (rubber-band). La
+    cinta los reproduce como estan (el lector descarta esas cuerdas al anclar); el aviso es para regrabar el tramo."""
+    import math as _m
+    eps = []
+    cur = None
+    s = 0.0
+    for p, r in zip(filas, filas[1:]):
+        dx = r["x"] - p["x"]
+        dz = r["z"] - p["z"]
+        s += _m.hypot(dx, dz)
+        hd = _m.radians(r["hdg"])
+        proy = dx * _m.sin(hd) + dz * _m.cos(hd)
+        if r["gear"] >= 2 and abs(r["ckmh"]) > 3.0 and proy < -0.05:
+            if cur is not None and s - cur[1] < 1.0:
+                cur[1] = s
+                cur[2] += proy
+            else:
+                cur = [s, s, proy]
+                eps.append(cur)
+    return [(a, b, -c) for a, b, c in eps if c < -0.3]
+
+
+def arrastres_antes_de_cambio(filas):
+    """[(arco_del_cambio, metros)] de los cambios de sentido (adelante <-> reversa) antes de los cuales el vehiculo avanzo
+    mas de 0,3 m SIN freno (< 0,5) a < 3 km/h, contando hacia atras desde el cambio hasta la ultima detencion con freno.
+    El lector cierra el leg en la ultima parada grabada y reproduce el arrastre, pero es un arrastre: mejor grabarlo con
+    el freno pisado hasta poner la otra marcha."""
+    import math as _m
+    arcos = [0.0]
+    for p, r in zip(filas, filas[1:]):
+        arcos.append(arcos[-1] + _m.hypot(r["x"] - p["x"], r["z"] - p["z"]))
+    out = []
+    sentido = None   # 1 adelante, -1 reversa (el neutral no cambia el sentido)
+    for i, r in enumerate(filas):
+        g = r["gear"]
+        if g == 0:
+            nuevo = -1
+        elif g >= 2:
+            nuevo = 1
+        else:
+            continue
+        if sentido is not None and nuevo != sentido:
+            j = i - 1
+            metros = 0.0
+            while j > 0 and abs(filas[j]["ckmh"]) < 3.0:
+                if filas[j]["brk"] >= 0.5 and abs(filas[j]["ckmh"]) < 1.0:
+                    break
+                if filas[j]["brk"] < 0.5:
+                    metros += arcos[j] - arcos[j - 1]
+                j -= 1
+            if metros > 0.3:
+                out.append((arcos[i], metros))
+        sentido = nuevo
+    return out
+
+
+def choques_de_la_toma(filas):
+    """[{arco, t, kmh, con, perdida_kmh}] de las filas con contacto, agrupadas por cercania de arco (arco 2D acumulado de la
+    toma); perdida_kmh = la mayor perdida de velocidad alrededor de los contactos del grupo."""
+    import math as _m
+    ev = []
+    s = 0.0
+    prev = None
+    for i, f in enumerate(filas):
+        if prev is not None:
+            s += _m.hypot(f["x"] - prev["x"], f["z"] - prev["z"])
+        prev = f
+        c = f.get("contacto", "")
+        if not c:
+            continue
+        perd = _perdida_kmh(filas, i)
+        if ev and s - ev[-1]["_ult"] <= CHOQUE_AGRUPA_M:
+            for p in c.split("|"):
+                if p not in ev[-1]["con"]:
+                    ev[-1]["con"].append(p)
+            ev[-1]["_ult"] = s
+            if perd > ev[-1]["perdida_kmh"]:
+                ev[-1]["perdida_kmh"] = round(perd, 1)
+            continue
+        ev.append({"arco": round(s, 1), "t": round(f["t"], 2), "kmh": round(f["spd"], 1), "con": c.split("|"), "_ult": s,
+                   "perdida_kmh": round(perd, 1)})
+    for e in ev:
+        del e["_ult"]
+        e["con"] = "|".join(e["con"])
+    return ev
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ★ EL RELOJ DE LA TOMA (27/09). La primera toma de moto con AutoDrive grabo el tiempo al DOBLE (el cliente llamaba
+# EOnPostSimulate dos veces por paso y cada una sumaba su timeSlice): la cinta va por arco y no se entera, pero el tiempo,
+# la frenada del endpoint, el coast, el yaw_rate y todo lo que se deriva del tiempo, si. El cociente velocidad-por-
+# posiciones / speed_kmh en tramos de 2 s por encima de 15 km/h (p50) da ~1 en una toma sana (Hatchback 0,98; una toma del laboratorio de motos, herramienta aparte, 1,00) y
+# 0,50 en esa. Fuera de 0,9-1,1 no se usa.
+RELOJ_VENTANA_S = 2.0
+RELOJ_VMIN_KMH = 15.0
+RELOJ_MIN_TRAMOS = 3
+RELOJ_MIN = 0.9
+RELOJ_MAX = 1.1
+
+
+def cociente_reloj(filas):
+    """(p50 del cociente, tramos) sobre filas con t, x, z, spd (km/h); (None, tramos) si hay menos de RELOJ_MIN_TRAMOS."""
+    import math as _m
+    coc = []
+    n = len(filas)
+    i = 0
+    while i < n - 1:
+        j = i
+        while j < n - 1 and filas[j]["t"] - filas[i]["t"] < RELOJ_VENTANA_S:
+            j += 1
+        dt = filas[j]["t"] - filas[i]["t"]
+        if dt < RELOJ_VENTANA_S:
+            break
+        seg = filas[i:j + 1]
+        if min(f["spd"] for f in seg) > RELOJ_VMIN_KMH:
+            d = 0.0
+            for k in range(1, len(seg)):
+                # en 3D: speed_kmh es el modulo de la velocidad; en plano, una toma por lomas daba 0,96 (y una 0,89)
+                d += _m.sqrt((seg[k]["x"] - seg[k - 1]["x"]) ** 2 + (seg[k].get("y", 0.0) - seg[k - 1].get("y", 0.0)) ** 2
+                             + (seg[k]["z"] - seg[k - 1]["z"]) ** 2)
+            v_med = sum(f["spd"] for f in seg) / len(seg) / 3.6
+            if v_med > 0:
+                coc.append((d / dt) / v_med)
+        i = j
+    if len(coc) < RELOJ_MIN_TRAMOS:
+        return None, len(coc)
+    coc.sort()
+    return coc[len(coc) // 2], len(coc)
+
+
+def emitir_cinta(frame_path, out_path, moto_neutral=None, moto_idle=None, info=None):
     filas = []
     with open(frame_path, encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
@@ -292,6 +641,9 @@ def emitir_cinta(frame_path, out_path):
                     "hb": float(r.get("handbrake", 0) or 0),
                     "dt": float(r.get("dt", 0) or 0),
                     "mark": int(float(r.get("is_marker", 0) or 0)),
+                    "st": float(r.get("steering", 0) or 0),
+                    "rpm": float(r.get("rpm") or -1),   # la moto: motor apagado / sin traccion (caminando)
+                    "roll": float(r.get("roll_deg") or 0),   # la moto: la inclinacion de la toma (la guarda es relativa a ella)
                 })
             except (ValueError, KeyError):
                 pass
@@ -390,6 +742,13 @@ def emitir_cinta(frame_path, out_path):
         avisos.append("[cinta]   (!) glitch en racha: %d filas desde la fila %d (hasta el final de la toma)" % (racha_n, racha_ini))
     antes = len(limpias)
     limpias, rebob, rebob_abort = descartar_rebobinados(limpias)
+    cortes_moto = 0
+    if moto_neutral is not None:
+        limpias, cortes_moto = moto_filtrar(limpias, moto_neutral, moto_idle, marcar=True)
+        antes = len(limpias)
+        if len(limpias) < 2 or all(f.get("camina", 0.0) != 0.0 for f in limpias):
+            print("[cinta] moto: la toma entera es caminando: NO se emite")
+            return 0
     # ⚠⚠⚠ EL EJE s: ARCO DE POSICIONES (la escala que MIDE el consumidor -- el
     # server avanza por delta-posicion), INTERPOLADO POR PESOS DE VELOCIDAD dentro
     # de las mesetas. Dos mediciones lo forzaron (espejo, toma 06):
@@ -448,12 +807,18 @@ def emitir_cinta(frame_path, out_path):
         svals[i2] = sank[k2] + (sank[k2 + 1] - sank[k2]) * t2
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["s", "x", "y", "z", "heading", "chassis_kmh", "front_wheel_deg",
-                    "throttle", "brake", "gear", "handbrake", "dt"])
+        cab = ["s", "x", "y", "z", "heading", "chassis_kmh", "front_wheel_deg",
+               "throttle", "brake", "gear", "handbrake", "dt"]
+        if moto_neutral is not None:
+            cab = cab + ["steering", "corte", "roll", "camina"]   # MOTO: columnas 12-15 (la inclinacion; la caminata)
+        w.writerow(cab)
         for i2 in range(npts):
             fr = limpias[i2]
-            w.writerow([round(svals[i2], 3), fr["x"], fr["y"], fr["z"], fr["hdg"], fr["ckmh"],
-                        fr["fw"], fr["thr"], fr["brk"], fr["gear"], fr["hb"], fr["dt"]])
+            fila = [round(svals[i2], 3), fr["x"], fr["y"], fr["z"], fr["hdg"], fr["ckmh"],
+                    fr["fw"], fr["thr"], fr["brk"], fr["gear"], fr["hb"], fr["dt"]]
+            if moto_neutral is not None:
+                fila = fila + [fr["st"], fr.get("corte", 0), fr.get("roll", 0.0), fr.get("camina", 0.0)]
+            w.writerow(fila)
     s = svals[npts - 1]
     print("[cinta] %s: %d frames (glitches descartados: %d) · arco total %.1f m"
           % (os.path.basename(out_path), len(limpias), glitches, s))
@@ -461,6 +826,27 @@ def emitir_cinta(frame_path, out_path):
         print("[cinta]   rebobinados descartados: %d (%d filas del tramo duplicado)%s"
               % (rebob, antes - len(limpias),
                  "  · %d NO reparados: no volvio a pasar el punto en %.0f s" % (rebob_abort, REBOB_TOPE_S) if rebob_abort else ""))
+    if moto_neutral is not None:
+        # los tramos caminados, para el hdr y la salida: arco inicial y final, largo, sentido y velocidad media de la toma
+        tramos = []
+        i3 = 0
+        while i3 < npts:
+            if limpias[i3].get("camina", 0.0) == 0.0:
+                i3 += 1
+                continue
+            j3 = i3
+            while j3 + 1 < npts and limpias[j3 + 1].get("camina", 0.0) != 0.0:
+                j3 += 1
+            vs = [limpias[k3]["camina"] for k3 in range(i3, j3 + 1)]
+            vm = sum(vs) / len(vs)
+            tramos.append({"s_ini": round(svals[i3], 2), "s_fin": round(svals[j3], 2), "largo": round(svals[j3] - svals[i3], 2),
+                           "sentido": "atras" if vm < 0 else "adelante", "v_media": round(vm, 2)})
+            i3 = j3 + 1
+        if info is not None:
+            info["caminata"] = tramos
+        print("[cinta]   MOTO: marcha corrida en uno (N=1, 1ra=2) · %d tramo(s) caminado(s) MARCADO(S) en la columna camina: se reproducen por empuje · columnas steering, corte, roll y camina" % cortes_moto)
+        for t3 in tramos:
+            print("[cinta]     caminado: arco %.2f a %.2f m (%.2f m) hacia %s a %.2f m/s" % (t3["s_ini"], t3["s_fin"], t3["largo"], t3["sentido"].upper() if t3["sentido"] == "atras" else t3["sentido"], t3["v_media"]))
     for aviso in avisos:
         print(aviso)
     # (regla B4): las detenciones grabadas SIN marca de parada se INFORMAN, como los trompos y los saltos.
@@ -534,6 +920,8 @@ def load_frames(frame_path):
                     # que emitir_cinta (chassis_kmh con respaldo speed_kmh; dt del frame). No se escriben.
                     "ckmh": float(r.get("chassis_kmh", 0) or r["speed_kmh"]),
                     "dt": float(r.get("dt", 0) or 0),
+                    "rpm": float(r.get("rpm") or -1),   # la moto: motor apagado / sin traccion (caminando)
+                    "contacto": (r.get("contacto") or "").strip(),   # los contactos del vehiculo en esa fila (grabador)
                 })
             except (ValueError, KeyError):
                 pass
@@ -855,6 +1243,47 @@ def main():
     rows = load_frames(args.frame)
     if len(rows) < 2:
         raise SystemExit("[ERROR] grabacion vacia o ilegible: " + args.frame)
+    # ★ el reloj de la toma: fuera de 0,9-1,1 NO se convierte
+    # (el Wizard reconoce los textos del reloj, del choque y de la caminata y los repite en su idioma:
+    # route_wizard.ps1, Show-AvisosDeToma; cambiarlos alla tambien)
+    coc_r, tramos_r = cociente_reloj(rows)
+    if coc_r is None:
+        print("[reloj] no se pudo medir el reloj de la toma (%d tramos de 2 s por encima de 15 km/h; hacen falta %d)" % (tramos_r, RELOJ_MIN_TRAMOS))
+    elif coc_r < RELOJ_MIN or coc_r > RELOJ_MAX:
+        raise SystemExit("[ERROR] toma con el reloj roto (cociente %.2f en %d tramos: velocidad por posiciones / speed_kmh tiene que dar ~1). "
+                         "NO se convierte: graba otra con el grabador arreglado." % (coc_r, tramos_r))
+    else:
+        print("[reloj] cociente %.2f en %d tramos: el reloj de la toma esta sano" % (coc_r, tramos_r))
+    choques_toma = choques_de_la_toma(rows)
+    for _c in choques_toma:
+        if _c["perdida_kmh"] >= CHOQUE_PERDIDA_KMH:
+            print("[toma] (!) toma con choque en el arco %.1f m (t %.2f s, %.1f km/h, perdio %.1f km/h) con %s: la ruta se reproduce HACIA el choque; no se corta ni se edita"
+                  % (_c["arco"], _c["t"], _c["kmh"], _c["perdida_kmh"], _c["con"]))
+        else:
+            print("[toma] contacto sin perdida de velocidad en el arco %.1f m (%.1f km/h, perdio %.1f km/h) con %s: no es un choque (escombros u objetos del piso)"
+                  % (_c["arco"], _c["kmh"], _c["perdida_kmh"], _c["con"]))
+    # (el Wizard los repite en su idioma: Show-AvisosDeToma)
+    for _a, _b, _m in retrocesos_de_la_toma(rows):
+        print("[toma] (!) toma con retroceso en el arco %.1f-%.1f m (%.2f m hacia atras): el server corrigio la posicion al grabar; regrabar ese tramo si el NPC se desvia ahi"
+              % (_a, _b, _m))
+    for _arco, _m in arrastres_antes_de_cambio(rows):
+        print("[toma] (!) antes del cambio de marcha en el arco %.1f m el vehiculo avanzo %.2f m sin freno: al grabar, mantene el freno pisado hasta poner la otra marcha"
+              % (_arco, _m))
+    moto = es_moto(hk)
+    moto_neutral = None
+    moto_idle = None
+    cortes_moto = 0
+    if moto:
+        moto_neutral = int(float(hk.get("neutralGear", 0) or 0))
+        moto_idle = float(hk.get("engineRPMIdle", 0) or 0) or None
+        det_camina = []
+        rows, cortes_moto = moto_filtrar(rows, moto_neutral, moto_idle, det_camina)
+        print("[moto] %s: marcha corrida en uno (N=1, 1ra=2), sin reversa · %d tramo(s) caminando: fuera de los waypoints, "
+              "en la cinta (se reproducen por empuje)" % (hk.get("vehicleClass", "?"), cortes_moto))
+        for _l in detalle_caminata(det_camina):
+            print(_l)
+        if len(rows) < 2:
+            raise SystemExit("[ERROR] moto: la toma entera es caminando (la caminata no es manejo: no se convierte)")
 
     # ★ --sin-marca: se aplica ANTES de todo lo demas, porque la marca alimenta dos caminos
     # distintos -- declarar la parada (preservar_paradas fuerza 0 km/h en su bloque detenido) y
@@ -901,7 +1330,9 @@ def main():
     WP = []
     for i, w in enumerate(keep):
         prev = keep[i - 1] if i > 0 else None
-        rev  = is_reverse(w, prev)
+        rev  = False if moto else is_reverse(w, prev)   # la moto no tiene reversa (y su N ya no es 0)
+        if not moto and w.get("cusp") is not None:
+            rev = (w["cusp"] < 0)                        # el reposo del intercambio cierra el tramo SALIENTE
         WP.append({
             "pos": [round(w["x"], 3), round(w["y"], 3), round(w["z"], 3)],
             "isStop": False, "name": "", "stopDuration": 0, "stopRadius": 0.0,
@@ -1036,7 +1467,7 @@ def main():
     # --- fingerprint + header (mismo layout que bz_speedroute / el editor) ---
     ms    = float(hk["maxSteeringAngle"]); wb = float(hk["wheelbase"])
     mass  = float(hk.get("mass", 1000));   gears = int(hk.get("gearsCount", 6))
-    rmin  = round(wb / math.tan(math.radians(ms)), 2)
+    rmin  = round(wb / math.tan(math.radians(ms)), 2) if ms > 0.1 else 0.0   # guarda: angulo 0 = sin dato
     atts  = [a.strip() for a in hk.get("attachments", "").split(",") if a.strip()]
     fp = {"VehicleClass": hk["vehicleClass"], "MaxSteeringAngle": ms, "Wheelbase": round(wb, 3),
           "RminM": rmin, "Mass": mass, "GearsCount": gears}
@@ -1143,10 +1574,24 @@ def main():
     # escribir) -- el server no puede saber el tamanio de un archivo sin leerlo dos veces.
     # Se reescribe el header DESPUES de la cinta porque recien ahi se sabe CintaRows.
     hdr["WpRows"] = len(WP)
+    if choques_toma:
+        hdr["ChoquesToma"] = choques_toma
+    if moto:
+        hdr["Ruedas"] = 2
+        hdr["SinReversa"] = True
+        hdr["MarchaCinta"] = "moto+1"
+        hdr["CortesNoRep"] = 0   # desde el 28/09 los tramos caminados se reproducen (MotoCaminata)
+        # el reloj de la toma medido al convertir: una ruta de moto sin esta clave se convirtio antes de la guarda (el
+        # cargador lo avisa); con menos de 3 tramos va -1 (no se pudo medir)
+        hdr["RelojCociente"] = round(coc_r, 3) if coc_r is not None else -1
+        hdr["RelojTramos"] = tramos_r
     if args.cinta:
-        n_cinta = emitir_cinta(args.frame, os.path.join(args.profile, base + "_cinta.csv"))
+        info_cinta = {}
+        n_cinta = emitir_cinta(args.frame, os.path.join(args.profile, base + "_cinta.csv"), moto_neutral, moto_idle, info_cinta)
         if n_cinta:
             hdr["CintaRows"] = n_cinta
+        if moto and "caminata" in info_cinta:
+            hdr["MotoCaminata"] = info_cinta["caminata"]
     with open(os.path.join(args.profile, base + "_hdr.json"), "w", encoding="utf-8") as f:
         json.dump(hdr, f, indent=2)
     print("RUTA '%s' -> %s" % (args.route_name, args.profile))

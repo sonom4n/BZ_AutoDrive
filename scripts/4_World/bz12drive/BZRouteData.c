@@ -203,7 +203,6 @@ class BZRouteData
         m_ArmI     = 0;   // los cursores de las pasadas por unidades
         m_ArmH     = 0;
         m_ArmFirstValid = -1;
-        m_ArmTangente = false;
         m_ArmSuave.Clear();
         m_ArmLo    = 0;
         m_ArmLegL  = 0;
@@ -325,7 +324,6 @@ class BZRouteData
     private int   m_ArmI;            // cursor de la pasada en curso
     private float m_ArmH;            // rumbos: el del ultimo segmento valido (un segmento degenerado hereda; era el local `h`)
     private int   m_ArmFirstValid;
-    private bool  m_ArmTangente;
     private ref array<float> m_ArmSuave;
     private int   m_ArmLo;           // SegmentLegs: el inicio del leg abierto (era el local `lo`)
     private int   m_ArmLegL;         // ReindexLegOf: el leg en curso
@@ -453,8 +451,6 @@ class BZRouteData
         {
             if (m_ArmSub == 0)
             {
-                m_ArmTangente = FileExist(HEAD_TANGENTE_FILE);
-                if (m_ArmTangente) Print("[Route] ⚠ BZ12_HEAD_TANGENTE.txt presente: esta carga usa la TANGENTE DERIVADA (convencion vieja) para Head/curvatura");
                 m_ArmH = 0;
                 m_ArmFirstValid = -1;
                 m_ArmI = 0;
@@ -475,9 +471,9 @@ class BZRouteData
                         if (m_ArmFirstValid < 0) m_ArmFirstValid = i1;
                     }
                 }
-                // el rumbo GRABADO manda sobre la tangente derivada (ver la nota larga arriba de HEAD_TANGENTE_FILE)
+                // el rumbo GRABADO manda sobre la tangente derivada
                 float hg1 = m_RecHeadRad.Get(i1);
-                if (hg1 > -900.0 && !m_ArmTangente)
+                if (hg1 > -900.0)
                 {
                     if (m_IsRev.Get(i1)) hg1 = BZMath.WrapPi(hg1 + Math.PI);
                     m_ArmH = hg1;
@@ -1049,21 +1045,6 @@ class BZRouteData
 
     // Tangente por wp. m_Head[i] = rumbo del segmento i -> i+1. El ultimo hereda.
     // Un segmento degenerado (puntos repetidos) hereda el anterior: nunca inventa rumbo.
-    // ⚠ BANDERA DE AISLAMIENTO. Cuatro numerados (Scammel, r32, esc, Willys)
-    // empeoraron con el rumbo grabado AUN teniendo curvatura fisica en las dos convenciones
-    // -- o sea que si el culpable es el rumbo grabado, esta en Head()-como-DIRECCION, no en
-    // el cap. Pero no hay baseline del mismo binario para atribuirlo sin adivinar.
-    //
-    // Si el archivo existe, la ruta se carga con la TANGENTE DERIVADA (la convencion vieja)
-    // y el A/B se corre en el MISMO binario. El mod SOLO LEE la bandera: la escribe y la
-    // borra el operador entre corridas, como BZ12_DRIVE/BZ12_CALIBRATE.
-    //
-    // Evidencia que el A/B tiene que confirmar o tirar: en CURVA la discrepancia
-    // |yaw grabado - tangente| de los que empeoraron es 8.8-13.5 grados p90, contra 3.4-5.0
-    // de los supercars... pero el hx58 tiene 9.9 y CLAVA, asi que la evidencia apoya y no
-    // prueba. Por eso bandera y no arreglo.
-    private static const string HEAD_TANGENTE_FILE = "$profile:BZ_AutoDrive\BZ12_HEAD_TANGENTE.txt";
-
     // ComputeHeadings vive en ArmarUnidad fase 1, por unidades (BackfillHeadings sigue abajo).
 
     // ⚠⚠⚠ EL RUMBO GRABADO ES EL YAW DEL VEHICULO, Y EL YAW TIEMBLA. La toma limpia

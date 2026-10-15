@@ -21,17 +21,23 @@ modded class MissionServer {
     // Hook de ciclo de vida de Expansion-Quests (declarado en MissionBaseWorld para override).
     // Al arrancar una quest, enganchamos sus bots VIVOS al framework. STEP 1: validar acceso (loguear).
     // Ver [[reference_expansion_quest_api]]. Reparto: Quest=bots+logica, Framework=vehiculo+manejo.
+#ifdef DZ_Expansion_Quests_Preload
     override void Expansion_OnQuestStart(ExpansionQuest quest) {
         super.Expansion_OnQuestStart(quest);
+#ifdef DZ_Expansion_AI_Preload
         if (GetGame() && GetGame().IsServer())
             BZBusService.GetInstance().OnQuestStart(quest);
+#endif
     }
 
     // Objetivos completos (ej. convoy entero muerto) -> el framework decide el destino del vehiculo
     // (este caso: despawn). Ver opciones en el manual (cap 7.7) y [[reference_expansion_quest_api]].
     override void Expansion_OnQuestObjectivesComplete(ExpansionQuest quest) {
         super.Expansion_OnQuestObjectivesComplete(quest);
+#ifdef DZ_Expansion_AI_Preload
         if (GetGame() && GetGame().IsServer())
             BZBusService.GetInstance().OnQuestComplete(quest);
+#endif
     }
+#endif
 }

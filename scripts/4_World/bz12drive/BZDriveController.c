@@ -186,6 +186,7 @@ class BZDriveController
     // ventana para atribuir el choque a un contacto reportado por el motor. El evento de fisica llega en
     // el mismo frame que el colapso de velocidad; medio segundo es holgura, no tolerancia de ajuste.
     private const float CHOQUE_CONTACTO_S = 0.5;
+    private const float CHOQUE_RUEDAS_S = 0.5;     // la historia de ruedas en el suelo que muestra la linea del choque
     // BACHE. Una desaceleracion imposible para un neumatico PERO sin contacto reportado por el motor
     // y con poca velocidad perdida es el TERRENO (un bache, un cordon), no un obstaculo. Medido en las 4 corridas
     // de KRASNOSTAV del 17/09: 15 episodios, TODOS sin contacto, de 1,5 a 3,5 km/h, y REPETIBLES POR POSICION
@@ -201,6 +202,7 @@ class BZDriveController
     // el 107 imprimio 4 lineas en 13 s por un solo choque. Decision del analista: UNA LINEA POR EPISODIO, sin tope.
     private const float CHOQUE_EPISODIO_S = 5.0;   // un impacto a menos de esto del anterior es el mismo episodio
     private float m_ChoqueKmhPrev;
+    private ref BZHistRuedas m_HistRuedas;   // las ruedas en el suelo de los ultimos cuadros (solo instrumento)
     private bool  m_AvanzoEsteTick;
     // El mecanismo de direccion solo salia en la caja negra, que vuelca cuando algo YA fallo.
     // Una corrida LIMPIA no dejaba ni un dato de por que el lateral es el que es. Con esto,
@@ -302,6 +304,21 @@ class BZDriveController
     // el reloj del ultimo *** CHOQUE *** con la definicion de la LINEA (para RunnerChoqueHaceS; -1 = nunca) y el
     // episodio abierto (impactos, choques con contacto o perdida grande, duracion, minimo, cabecera y numero impresos).
     private float  m_ChoqueHaceS = -1;
+    // los *** CHOQUE *** contra un OBJETO (el motor reporto una entidad: clase o "modelo X"; el terreno no cuenta) y su
+    // lista, para el veredicto. El FIN pendiente: la llegada arma la cola del log y el veredicto sale del REPOSO.
+    private int    m_ChoquesObjeto;
+    private bool   m_FinPendiente;
+    private bool   m_FinDecidido;
+    private bool   m_FinRendido;
+    private int    m_FinWp = -1;
+    private float  m_ReposoFinM = -1;
+    private bool   m_FrenoTomaAcoplado;
+    private int    m_FrenoCuspLeg = -1;    // el leg cuya frenada de cusp ya se acoplo al manual
+    private float  m_FrenoCuspMs2 = -1;
+    // los choques contra objeto, por (wp, clase) con su cuenta: la lista del veredicto no repite el mismo golpe
+    private ref array<int>    m_ChObjWp;
+    private ref array<string> m_ChObjClase;
+    private ref array<int>    m_ChObjN;
     private int    m_ChoqueEpN;
     private int    m_ChoqueEpChoques;
     private float  m_ChoqueEpHaceS = -1;
@@ -413,6 +430,13 @@ class BZDriveController
     private int   m_CintaRodoLeg;
     private bool  m_CintaQuieto;
     private float m_CintaReposoT;   // cuanto lleva detenido con la cinta poseyendo
+    // ★ LA OPORTUNIDAD DE ARRANCAR. Al cumplirse una meseta (o al salir de un hold) el casco lleva segundos quieto por
+    // construccion: el reloj del reposo y el del progreso arrancan de cero y el enganche de la meseta siguiente espera
+    // ENG_GRACIA_S. Medido: 29 ms despues de cumplir una meseta de 6 s el enganche saltaba a la ultima parada, 2,9 m
+    // adelante, y el arrastre grabado no se replayaba (el leg cerraba 3 m antes y la reversa arrancaba corrida).
+    private const float ENG_GRACIA_S = 1.5;
+    private float m_EngGraciaT;
+    private bool  m_EnMesetaPrev;
     // re-armado por POSICION. Distancia que el vehiculo tiene que recorrer desde donde se
     // solto la cinta para pasar la meseta (-1 = sin objetivo: re-arma por velocidad como antes).
     private float  m_CintaRearmaDist;
@@ -518,6 +542,22 @@ class BZDriveController
     // cicatriz del null-space en la ley): C2 con volante grabado RECTO.
     private const float REV_C2_RECTA       = 1.0;
     private const float REV_C2_FW_RECTA_DEG = 3.0;
+    // ★ EL IMAN EN REVERSA, CON MAS GANANCIA: C1 y C2 por REV_IMAN_FACTOR y el tope en REV_IMAN_CAP_DEG. Los legs de
+    // reversa miden 30-40 m y el lazo de siempre tarda ~43 m de camino en cerrar un error (misma longitud de onda que
+    // en avance, donde los legs son largos y las curvas suaves); a <= 15 km/h un ajuste de 12 grados no es un volantazo.
+    // Banco cinematico (reversa final de HB02R/HB03R, cursor en su lugar): |lat| max 0,23/0,27 con el iman de siempre,
+    // 0,16/0,16 con x3; llegada +0,18/+0,15 -> +0,08/+0,02. Con el cursor atrasado ninguna ganancia alcanza (0,91): el
+    // anclaje de reversa de la cinta va primero.
+    private const float REV_IMAN_FACTOR = 3.0;
+    private const float REV_IMAN_CAP_DEG = 12.0;
+    // ★ LA MISMA GANANCIA EN AVANCE, ANTES DE UN CUSP. El lateral de un cusp en avance se fabrica en la curva de entrada
+    // (medido: 0,11 -> 0,63 m en los 7 m previos a la zona de maniobra, a 21 km/h, con el iman de siempre pidiendo -3
+    // grados contra un subviraje de +10 grados/s) y los 6 m de maniobra no alcanzan para cerrarlo. Banco cinematico con
+    // la perturbacion medida: x3 solo dentro de la maniobra deja 0,34 m; desde 2 zonas de maniobra, 0,13 m. Entra cuando
+    // el leg termina en un cusp (no en una parada: el fin de ruta y las paradas semanticas siguen igual) y quedan
+    // CUSP_IMAN_ZONA_WB batallas por el cursor, o ya en maniobra. Una linea por leg cuando engancha.
+    private const float CUSP_IMAN_ZONA_WB = 6.0;   // 2 x la zona de maniobra del arbitro (3 batallas)
+    private int m_ImanCuspLeg = -1;
     // latDot/psiMed: SOLO DIAG (columnas del CSV) desde — los dos
     // intentos de meterlos a la ley fallaron en el motor (ver cicatriz).
     // EMA α=0.1; prev/ema se invalidan sin posesion (cero spike post-seed).
@@ -744,6 +784,7 @@ class BZDriveController
         }
         m_Route  = route;
         m_Manual = manual;
+        m_FrenoTomaAcoplado = false;
         m_Probe  = probe;
         m_Ready  = false;
         if (!route) return;
@@ -956,6 +997,7 @@ class BZDriveController
     {
         m_Arbiter.ForceHalt();
         m_Out.SetHalt();
+        m_FinPendiente = false;   // la ruta se corta: no hay veredicto que esperar
         m_Mode = BZDriveMode.BZDM_HALTED;   // el estado expuesto tiene que reflejarlo YA,
                                             // no recien en el proximo Plan()
     }
@@ -978,6 +1020,7 @@ class BZDriveController
     void AbrirLog(string etiqueta)
     {
         CerrarLogYa();   // DURO — abrir sobre un handle en cola lo filtraria
+        if (!BZCajaNegra.Encendida()) return;   // apagadas por defecto (BlackBox en BZAutoDrive_settings.json)
         int lh = 0;
         int lm = 0;
         int ls = 0;
@@ -993,6 +1036,7 @@ class BZDriveController
             Print("[BZDrive] LOG CSV: no se pudo abrir " + lpath);
             return;
         }
+        BZCajaNegra.Anotar(etiqueta, "BZ12_LOG_" + etiqueta + "_" + hh + ".csv");
         // px,pz al final: la posicion REAL del casco — sin ella el
         // fixture no pudo reproducir la adopcion exacta del teleport (la
         // geometria fina del punto decide que proyeccion es interior). Con
@@ -1007,7 +1051,7 @@ class BZDriveController
         // cursor no es el casco). `remFr` es el mismo remanente medido por
         // FRAME contra la pose final -- la diferencia entre las dos columnas
         // ES el error de muestreo que sortea la entrada. INSTRUMENTO PURO.
-        FPrintln(m_LogFh, "t,wp,s_est,kmh,gear,lat,psiGeo,psiMed,latDot,pide,aplica,cStr,modo,aplica_quien,legIdx,faseRev,ultCons,skipCons,d,px,pz,imanI,rem,remFr,remG,latFr,thr,brk");
+        FPrintln(m_LogFh, "t,wp,s_est,kmh,gear,lat,psiGeo,psiMed,latDot,pide,aplica,cStr,modo,aplica_quien,legIdx,faseRev,ultCons,skipCons,d,px,pz,imanI,rem,remFr,remG,latFr,thr,brk,ruedas,cont_zona,cont_con,cont_imp,cont_hace,frenoFin");
         m_LogOn = true;
         m_LogT = 0;
         Print("[BZDrive] LOG CSV abierto: " + lpath);
@@ -1031,26 +1075,42 @@ class BZDriveController
     private float m_LogColaT;
     private float m_LogQuietoT;
 
+    // la cola corre CON O SIN caja negra: la linea REPOSO (donde quedo el casco contra la pose final, una vez quieto) es
+    // del FIN, no del archivo. Las filas solo se escriben si la caja esta abierta (VolcarLog se guarda solo).
     void CerrarLog()
     {
-        if (!m_LogOn) return;
-        if (m_LogCola) return;      // ya en cola: no re-armar
+        if (m_LogCola || m_FinDecidido) return;      // ya en cola, o el veredicto ya salio del reposo: no re-armar
         m_LogCola = true;
         m_LogColaT = 0;
         m_LogQuietoT = 0;
     }
 
-    bool LogEnCola() { return m_LogOn && m_LogCola; }
+    bool LogEnCola() { return m_LogCola; }
 
     // La fila de la cola: MISMA forma que la de manejo (el parser no cambia).
     void VolcarLogCola(BZVehicleState st, float dt)
     {
-        if (!m_LogOn || !m_LogCola) return;
+        if (!m_LogCola) return;
         VolcarLog(st, dt);
         m_LogColaT = m_LogColaT + dt;
         if (Math.AbsFloat(st.chassisKmh) < LOG_COLA_QUIETO_KMH) m_LogQuietoT = m_LogQuietoT + dt;
         else m_LogQuietoT = 0;
-        if (m_LogQuietoT >= LOG_COLA_QUIETO_S || m_LogColaT >= LOG_COLA_TOPE_S) CerrarLogYa();
+        if (m_LogQuietoT >= LOG_COLA_QUIETO_S || m_LogColaT >= LOG_COLA_TOPE_S)
+        {
+            // ★ LA MEDIDA UNICA DE LA LLEGADA, EN REPOSO: la distancia a la POSE FINAL del ultimo leg, longitudinal (+ =
+            // falta llegar, - = pasada) y lateral (+ = a la izquierda de la linea de llegada) por separado, y la total. El
+            // veredicto (COMPLETE/INCOMPLETE) se decide ACA, con esta medida (DecidirFin), no al cerrar el leg: la red de
+            // ACEPTA_ENDPOINT_RED_M ya no da COMPLETE. `d` de la caja negra es la distancia al CURSOR de la cinta, no a la pose final.
+            float lonR = RemanenteFrameM(st);
+            float latR = LateralFrameM(st);
+            float totR = Math.Sqrt(lonR * lonR + latR * latR);
+            string rep = "[C12] REPOSO tras " + m_LogColaT.ToString() + " s (" + st.chassisKmh.ToString() + " km/h): a " + totR.ToString() + " m de la pose final";
+            rep = rep + " (longitudinal " + lonR.ToString() + " m, lateral " + latR.ToString() + " m)";
+            if (m_LogQuietoT < LOG_COLA_QUIETO_S) rep = rep + " · todavia rodando al medir";
+            if (!s_Quiet) Print(rep + SufijoRunner());
+            if (m_FinPendiente) DecidirFin(m_LogColaT, totR, lonR, latR);
+            CerrarLogYa();
+        }
     }
 
     // Cierre DURO. Lo usa la cola al terminar, el despawn (fail-safe: si el
@@ -1058,10 +1118,10 @@ class BZDriveController
     // AbrirLog (abrir sobre un handle vivo seria un leak).
     void CerrarLogYa()
     {
+        m_LogCola = false;
         if (!m_LogOn) return;
         CloseFile(m_LogFh);
         m_LogOn = false;
-        m_LogCola = false;
     }
 
     private string LogPad2(int n)
@@ -1144,6 +1204,24 @@ class BZDriveController
         // los pedales APLICADOS en este cuadro, al FINAL de la fila para que ningun parser por posicion se corra:
         // es la unica forma de ver el sosten de la meseta (y cualquier pelea de pedales) en el pedal, a 40 Hz.
         fila = fila + "," + m_Out.throttle.ToString() + "," + m_Out.brake.ToString();
+        // las ruedas en el suelo y el ultimo contacto del motor (dentro de CHOQUE_CONTACTO_S; vacio si no hubo): un
+        // aterrizaje o un choque cuadro a cuadro. "terreno" = el motor no dio objeto (`other` nulo)
+        string lczB = "";
+        string lccB = "";
+        string lciB = "";
+        string lchB = "";
+        if (st.contactoHaceS >= 0 && st.contactoHaceS <= CHOQUE_CONTACTO_S)
+        {
+            lczB = st.contactoZona;
+            lccB = st.contactoClase;
+            if (lccB == "") lccB = "terreno";
+            lczB.Replace(",", ";");
+            lccB.Replace(",", ";");
+            lciB = st.contactoImp.ToString();
+            lchB = st.contactoHaceS.ToString();
+        }
+        fila = fila + "," + st.wheelsOnGround.ToString() + "," + lczB + "," + lccB + "," + lciB + "," + lchB;
+        fila = fila + "," + m_FrenoFinB.ToString();
         FPrintln(m_LogFh, fila);
     }
 
@@ -1170,6 +1248,7 @@ class BZDriveController
     void SetCinta(BZCintaRunner c)
     {
         m_Cinta = c;
+        m_FrenoTomaAcoplado = false;   // la frenada final de esta cinta al manual (cuando la cinta este armada)
         // la identidad viaja con la cinta. SetCinta se llama DESPUES de SetAutoRecovery
         // (12739 contra 12664 en el servicio), asi que este es el punto donde la etiqueta llega de verdad.
         if (m_Cinta) m_Cinta.SetEtiqueta(m_EtiqRunner);
@@ -1593,6 +1672,12 @@ class BZDriveController
             m_Out.SetHalt();
             return m_Out;
         }
+        if (m_FinPendiente)
+        {
+            m_Out.SetHalt();   // llegada hecha, veredicto pendiente del reposo: nada que decidir ni avanzar
+            return m_Out;
+        }
+        if (!m_FrenoTomaAcoplado) AcoplarFrenoToma();
         m_UltimoPos = st.pos;
         m_UltimoKmh = st.chassisKmh;
         m_LegMachine.Update(st, m_Leg);
@@ -1625,7 +1710,7 @@ class BZDriveController
             }
             else if (fisEnCursoSS)
             {
-                ClasificarFisico(st, "SAFE_STOP del arbitro (20 s sin avance del cursor)");
+                ClasificarFisico(st, "SAFE_STOP del arbitro (" + m_Arbiter.GetFallbackPorQue() + ")");
                 m_Arbiter.Reset();
             }
             else if (puedeAbrirSS)
@@ -1635,7 +1720,7 @@ class BZDriveController
                 // STUCK sin un solo intento. El alcance del framework es que el vehiculo no quede detenido para siempre:
                 // declarar sin intentar es exactamente lo que no puede pasar. Ahora el SAFE_STOP ABRE la escalera (la misma
                 // que abre el CLAVADO; al abrirse avisa BLOQUEADO) y STUCK queda para cuando esta agotada o desactivada.
-                ClasificarFisico(st, "SAFE_STOP del arbitro (20 s sin avance del cursor): abre la escalera");
+                ClasificarFisico(st, "SAFE_STOP del arbitro (" + m_Arbiter.GetFallbackPorQue() + "): abre la escalera");
                 m_Arbiter.Reset();
             }
             else
@@ -1660,6 +1745,11 @@ class BZDriveController
             else if (CintaClavoElCusp(st))
             {
                 m_CierrePorQue = "la cinta clavo el cusp: detenida en su freno grabado al final del leg";
+                OnLegDone();
+            }
+            else if (FrenoFinLegClavo(st))
+            {
+                m_CierrePorQue = "el freno al fin del leg clavo el cusp: la toma se agoto o iba a paso de arrastre con el casco rodando";
                 OnLegDone();
             }
         }
@@ -1735,6 +1825,8 @@ class BZDriveController
         m_Out.mode = m_Mode;
         m_TargetSteer = m_Out.steering;
         CacheEndPose();
+        // la frenada del cusp de este leg, con la pose final recien cacheada (el leg cambia en Sample; la pose se refresca aca)
+        if (m_Leg && m_Leg.valid && m_Leg.legIdx != m_FrenoCuspLeg && m_Manual) AcoplarFrenoCusp();
         // la foto del remanente longitudinal QUE ACOMPAÑA a este `m_Leg`.
         // Va DESPUES de CacheEndPose para que mida contra la pose final del leg vigente
         // (si el leg cambio en este tick, la pose vieja daria un delta sin sentido).
@@ -2053,7 +2145,7 @@ class BZDriveController
         m_FeatherActivo = true;
         m_FeatherReportes++;
         bool avisar = (m_FeatherReportes < 4 || (m_FeatherReportes % 8) == 0);
-        if (avisar && !s_Quiet) Print(TextoSostener(st, aFree, aReal, vBog, tCruce, rec, thrSostener));
+        if (avisar && !s_Quiet && BZDiag.On()) Print(TextoSostener(st, aFree, aReal, vBog, tCruce, rec, thrSostener));
         m_Out.throttle = thrSostener;
         m_Out.brake = 0;   // sostener es sostener: ver el bloque de la mordida
     }
@@ -2115,7 +2207,7 @@ class BZDriveController
         }
         m_PlaneoReportes++;
         if (m_PlaneoReportes > 1 && (m_PlaneoReportes % COAST_CADA) != 0) return;
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         float aObs = ((st.chassisKmh - kmhPrev) / 3.6) / dt;
         float aPred = m_Manual.FreeAccel(st.chassisKmh, st.pitch, m_SurfKind);
         string s = "[BZDrive] PLANEO #" + m_PlaneoReportes.ToString();
@@ -2167,7 +2259,7 @@ class BZDriveController
         // El primero del episodio se lleva la caja negra: lo que hay que ver es lo
         // de ANTES, no lo de despues.
         if (m_SubvelReportes == 1) VolcarAnillo("subvelocidad en wp " + m_Leg.nearWp.ToString());
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         string s = "[BZDrive] SUBVELOCIDAD #" + m_SubvelReportes.ToString() + ReporteDeslizamiento(st);
         s = s + " · kmh " + st.chassisKmh.ToString() + " vs grabado " + rec.ToString();
         s = s + " · modo " + m_Mode.ToString() + " · fase " + BZMcPhase.Name(m_Maneuver.GetPhase());
@@ -2851,7 +2943,7 @@ class BZDriveController
         float yawPrev = m_YawPrev;
         m_YawPrev = st.yaw;
         m_DirTicks = m_DirTicks + 1;
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if ((m_DirTicks % DIR_CADA) != 0) return;
         if (!m_Leg || !m_Leg.valid || !m_Pursuit) return;
         if (yawPrev < -900.0) return;
@@ -3077,7 +3169,7 @@ class BZDriveController
         // nunca se sostenia. El freno del cusp lo pone el slam DESPUES, donde toca.
         m_Out.brake = 0;
         m_BiteReportes = m_BiteReportes + 1;
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if (m_BiteReportes > 1 && (m_BiteReportes % 8) != 0) return;
         string s = "[BZDrive] MORDIDA #" + m_BiteReportes.ToString();
         s = s + " · planeaba hacia el bog a " + st.chassisKmh.ToString() + " kmh";
@@ -3103,7 +3195,7 @@ class BZDriveController
             return;
         }
         m_PatinajeReportes++;
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if (m_PatinajeReportes > 1 && (m_PatinajeReportes % 4) != 0) return;
         string s = "[BZDrive] DESLIZA #" + m_PatinajeReportes.ToString();
         s = s + ReporteDeslizamiento(st);
@@ -3395,7 +3487,84 @@ class BZDriveController
         if (!m_CintaRodo || !m_Cinta || !m_Cinta.Valida() || !m_CintaM) return false;
         if (!m_Leg || !m_Leg.valid || !m_Manual) return false;
         if (m_CintaReposoT < m_AR.WaitS()) return false;
-        if (m_CintaM.brk <= 0.5) return false;
+        // solo en la ULTIMA parada grabada de la fase (ver BZCintaRunner.ParadaDeFase): una parada anterior se cumple
+        // (su meseta) y el replay sigue. Sin parada grabada en la fase, el freno grabado decide como siempre.
+        int pfC = m_Cinta.ParadaDeFase(m_Leg.isReverse);
+        if (pfC == 2) return false;
+        if (pfC == 0 && m_CintaM.brk <= 0.5) return false;
+        if (m_Leg.remainM > m_Maneuver.CreepZone(m_Manual)) return false;
+        return true;
+    }
+
+    // ★ EL FRENO AL FIN DEL LEG. La cinta replaya pedales por ARCO: si el casco llega mas rapido que la toma a la parada de
+    // un cusp, las filas de freno a fondo no alcanzan (v^2 - 2 a ds deja un resto) y lo que sigue es el arrastre del que
+    // grabo (freno 0, 1-2 km/h en marcha) o nada (el clamp de borde: la fase se agoto): nadie frena, y la maniobra cierra el
+    // leg RODANDO y pasado. Medido (PRUEBA_01, leg 2): llegada a las filas de arrastre a 4,8 km/h, s_est clavado en el
+    // borde 1,2 s con freno grabado 0,03, leg cerrado a -0,55 / -0,64 m a 2,4 km/h; y una parada grabada de 14 cuadros
+    // en 1,6 cm de arco que el cursor salto en un paso (a 4,8 km/h avanza 3,3 cm por consulta: la meseta nunca engancho).
+    // Con el cursor atrasado de antes el casco leia el freno a fondo tarde, justo donde estaba, y paraba a +0,09 por
+    // casualidad. Aca: cuando la toma en el cursor ya no rueda (v grabada < FIN_LEG_ARRASTRE_KMH) o se agoto (borde) y el
+    // casco si rueda, el freno por cuadro apunta a la pose final del leg con la ley del endpoint (v^2/2d contra el freno
+    // del endpoint, techado por la toma) como PISO sobre el freno grabado: nunca le saca freno a la toma, y lejos de la
+    // pose vale ~0. Solo en legs intermedios (el ultimo es del ENDPOINT, que ya tiene el suyo) y sin F1, re-ubicacion
+    // ni ahogo en curso. Con la toma rodando no actua: la toma trae su propio freno.
+    private const float FIN_LEG_APUNTA_M = 0.05;      // apunta 5 cm antes de la pose: el cierre estricto es a 10
+    private const float FIN_LEG_ARRASTRE_KMH = 3.0;   // v grabada por debajo = el que grabo ya estaba parando o arrastrando
+    // SOLO EN EL ULTIMO TRAMO DEL LEG. remFr es la proyeccion sobre la tangente FINAL del leg: vale en los ultimos metros y
+    // en un leg curvo, lejos, es basura (medido: -127 m al arrancar un leg de 487 m; -8 m al arrancar otro). Las filas
+    // lentas del arranque de cualquier toma (< 3 km/h) cumplian la condicion de arrastre al pasar el casco los 2 km/h y el
+    // piso pedia freno 1 con ese remFr: un tiron de un cuadro, que en una cuesta podria repetirse. La ventana: el
+    // remanente POR ARCO de la compuerta del endpoint (m_RemGate) dentro de la distancia de frenado x el margen + una
+    // batalla, y nunca mas de FIN_LEG_ATRAS_M pasado de la pose.
+    private const float FIN_LEG_MARGEN = 1.25;
+    private const float FIN_LEG_ATRAS_M = 1.0;
+    private int  m_FrenoFinLegLeg = -1;               // el leg donde el freno al fin del leg actuo (para aceptar su clavado)
+    private float m_FrenoFinB;                         // el pedido del piso en este cuadro (0 = no actuo): columna frenoFin
+    private int  m_FrenoFinDicho = -1;                // el leg del que ya salio la linea [C12] FRENO AL FIN DEL LEG
+    private void FrenoAlFinDelLeg(BZVehicleState st)
+    {
+        if (!m_Leg || !m_Leg.valid || !m_Manual || !m_Route || !m_CintaM) return;
+        if (m_Leg.legIdx >= m_Route.LegCount() - 1) return;
+        if (m_Mode == BZDriveMode.BZDM_ENDPOINT || m_F1Activo || m_BogActivo || m_ReubPend) return;
+        if (!m_CintaM.borde && m_CintaM.kmhRec >= FIN_LEG_ARRASTRE_KMH) return;
+        float kmhAbs = Math.AbsFloat(st.chassisKmh);
+        if (kmhAbs < CINTA_RODANDO_KMH) return;   // ya casi quieto: la fila grabada y la meseta mandan
+        float remFrF = RemanenteFrameM(st);
+        if (remFrF < -FIN_LEG_ATRAS_M) return;    // mas de 1 m pasado: eso no es el final del leg, es remFr sin sentido
+        float v = kmhAbs / 3.6;
+        float aMax = m_Manual.MaxBrakeDecelManiobra(m_SurfKind);   // la frenada medida de ESTE cusp (legs intermedios)
+        if (aMax < 0.5) aMax = 0.5;
+        float wbF = m_Manual.wheelbaseM;
+        if (wbF < 2.5) wbF = 2.5;
+        float ventanaF = (v * v) / (2.0 * aMax) * FIN_LEG_MARGEN + wbF;
+        if (m_RemGate > ventanaF) return;         // lejos del final del leg por arco: afuera
+        float d = remFrF - FIN_LEG_APUNTA_M;
+        float b = 1.0;
+        if (d > 0.01) b = Math.Clamp((v * v) / (2.0 * d) / aMax, 0.0, 1.0);
+        if (b < 0.05) return;   // lejos de la pose: nada que frenar todavia
+        m_FrenoFinLegLeg = m_Leg.legIdx;
+        m_FrenoFinB = b;
+        // una linea por leg, la primera vez que actua: con el freno grabado ya a fondo no cambia nada y no se veria
+        if (!s_Quiet && m_FrenoFinDicho != m_Leg.legIdx)
+        {
+            m_FrenoFinDicho = m_Leg.legIdx;
+            string ff = "[C12] FRENO AL FIN DEL LEG " + m_Leg.legIdx.ToString() + ": la toma en el cursor a " + m_CintaM.kmhRec.ToString() + " km/h";
+            if (m_CintaM.borde) ff = ff + " (borde: la fase se agoto)";
+            ff = ff + " · casco " + kmhAbs.ToString() + " km/h · remFr " + remFrF.ToString() + " m · rem " + m_RemGate.ToString() + " m";
+            ff = ff + " · freno grabado " + m_Out.brake.ToString() + " -> pedido " + b.ToString();
+            Print(ff + SufijoRunner());
+        }
+        m_Out.throttle = 0;
+        if (b > m_Out.brake) m_Out.brake = b;
+    }
+
+    // el clavado del freno al fin del leg se acepta como el de la cinta: detenido el tiempo del AR, al alcance de la pose
+    private bool FrenoFinLegClavo(BZVehicleState st)
+    {
+        if (!m_Leg || !m_Leg.valid || !m_Manual) return false;
+        if (m_FrenoFinLegLeg != m_Leg.legIdx) return false;
+        if (m_CintaReposoT < m_AR.WaitS()) return false;
+        if (m_Cinta && m_Cinta.Valida() && m_Cinta.ParadaDeFase(m_Leg.isReverse) == 2) return false;   // quedan filas
         if (m_Leg.remainM > m_Maneuver.CreepZone(m_Manual)) return false;
         return true;
     }
@@ -3408,12 +3577,23 @@ class BZDriveController
     {
         if (s_Quiet || !m_Leg || !m_Leg.valid) return;
         float remFrC = (m_EndPos[0] - m_UltimoPos[0]) * m_EndTanX + (m_EndPos[2] - m_UltimoPos[2]) * m_EndTanZ;
+        // el lateral en el mismo marco (+ = a la izquierda de la linea de llegada, como latFr en la caja)
+        float latC = (m_EndPos[0] - m_UltimoPos[0]) * m_EndTanZ - (m_EndPos[2] - m_UltimoPos[2]) * m_EndTanX;
         string motivoC = m_CierrePorQue;
         if (motivoC == "") motivoC = "sin motivo registrado";
         if (m_Maneuver.GaveUp()) motivoC = motivoC + " (RENDICION de la maniobra)";
         string lc = "[C12] LEG " + m_Leg.legIdx.ToString() + " cerrado · " + motivoC;
-        lc = lc + " · remFr " + remFrC.ToString() + " m · rem " + m_Leg.remainM.ToString() + " m";
+        lc = lc + " · remFr " + remFrC.ToString() + " m · lat " + latC.ToString() + " m · rem " + m_Leg.remainM.ToString() + " m";
         lc = lc + " · kmh " + m_UltimoKmh.ToString() + " · wp " + m_Leg.nearWp.ToString();
+        // la pose del leg es un wp del conversor (medido: 0,4 m antes de la parada real en una toma, 0,45 despues en otra,
+        // segun donde cayo el muestreo y si el que grabo se arrastro despues de parar): la referencia fiel es la ULTIMA
+        // PARADA GRABADA de la fase
+        if (m_Cinta && m_Cinta.Valida())
+        {
+            int cuadroP = -1;
+            float dParada = m_Cinta.DistUltimaParadaDeFase(m_UltimoPos, m_Leg.isReverse, cuadroP);
+            if (cuadroP >= 0) lc = lc + " · la ultima parada grabada de la fase (cuadro " + cuadroP.ToString() + ") queda a " + dParada.ToString() + " m";
+        }
         Print(lc + SufijoRunner());
     }
 
@@ -3463,7 +3643,8 @@ class BZDriveController
         // puede esconderla, y ademas atrapa el sobrepaso (cerrar 50 cm PASADO tampoco es
         // llegar, y antes era invisible porque `signed` negativo no cuenta como rendicion).
         float fin = DistanciaFinalM();
-        // la distancia final se compara contra la RED (1,0 m): entre el bar estricto y la red es una llegada con aviso
+        // la distancia final del cierre se compara contra la RED (1,0 m): mas alla es rendicion. El veredicto lo decide el
+        // REPOSO contra el bar estricto (DecidirFin): la red existe para que el slam no se quede buscando, no para aprobar.
         bool fuera = (fin > BZDriveTol.ACEPTA_ENDPOINT_RED_M);
         if (fuera && m_MotivoRendicion == "")
         {
@@ -3481,9 +3662,133 @@ class BZDriveController
             Emit(BZDriveEv.ARRIVED, m_Leg.legHi);
             return;
         }
-        if (seRindio) Emit(BZDriveEv.ROUTE_INCOMPLETE, m_Leg.legHi);
-        else          Emit(BZDriveEv.ROUTE_COMPLETE, m_Leg.legHi);
+        // ★ EL VEREDICTO SALE DEL REPOSO, NO DE ACA. La compuerta de llegada se abre con el casco todavia rodando: medido,
+        // una ruta salia COMPLETE con el auto en reposo a 1,02 m de la pose final (aprobada por la red) y otra a 0,27 m
+        // tambien. Desde aca la ruta queda en HALTED (freno) y la cola del log mide donde quedo de verdad (0,5 s quieto,
+        // tope LOG_COLA_TOPE_S); el evento ROUTE_COMPLETE/INCOMPLETE lo emite DecidirFin al terminar esa cola, con o sin
+        // caja negra. Lo que ya sabemos de la ruta (legs rendidos o abandonados, la red) viaja en m_FinRendido.
+        m_FinRendido = seRindio;
+        m_FinWp = m_Leg.legHi;
+        m_FinPendiente = true;
+        CerrarLog();
     }
+
+    // ★ EL VEREDICTO, EN REPOSO. ROUTE_COMPLETE exige las tres: (1) el casco quieto a <= ACEPTA_ENDPOINT_M de la pose
+    // final (la medida de la linea REPOSO: longitudinal y lateral contra la tangente de llegada); (2) ningun *** CHOQUE ***
+    // contra un OBJETO en la corrida (un bache, o un impacto sin entidad reportada, no cuenta); (3) ninguna accion FISICA
+    // del AR (maniobra, re-ubicacion). Los re-arranques NO-FISICOS no invalidan: quedan listados en el FIN. Si falla
+    // cualquiera, ROUTE_INCOMPLETE con cada motivo (a cuanto quedo / contra que choco y en que wp / el AR fisico y su wp).
+    // La medida entra en el motivo de cierre, asi el texto del FIN (y RunnerEndReason) la lleva adentro.
+    private void DecidirFin(float tR, float totR, float lonR, float latR)
+    {
+        m_FinPendiente = false;
+        m_FinDecidido = true;
+        m_ReposoFinM = totR;
+        string rp = "REPOSO tras " + tR.ToString() + " s: a " + totR.ToString() + " m de la pose final (longitudinal " + lonR.ToString() + " m, lateral " + latR.ToString() + " m)";
+        if (m_CierrePorQue == "") m_CierrePorQue = rp;
+        else m_CierrePorQue = m_CierrePorQue + " · " + rp;
+        bool lejos = (totR > BZDriveTol.ACEPTA_ENDPOINT_M);
+        int nFisAcc = m_AR.NFisicosAcc();
+        bool ok = (!m_FinRendido && !lejos && m_ChoquesObjeto == 0 && nFisAcc == 0);
+        if (!ok)
+        {
+            string mot = MotivoRendicion();
+            if (lejos) mot = UnirMotivo(mot, "quedo a " + totR.ToString() + " m de la pose final en reposo con tolerancia " + BZDriveTol.ACEPTA_ENDPOINT_M.ToString() + " m");
+            if (m_ChoquesObjeto > 0) mot = UnirMotivo(mot, "choco contra un objeto: " + ListaChoquesObjeto());
+            if (nFisAcc > 0) mot = UnirMotivo(mot, "AR fisico con accion: " + m_AR.ListaFisAcc());
+            m_MotivoRendicion = mot;
+            Emit(BZDriveEv.ROUTE_INCOMPLETE, m_FinWp);
+            return;
+        }
+        Emit(BZDriveEv.ROUTE_COMPLETE, m_FinWp);
+    }
+
+    private string UnirMotivo(string base, string mas)
+    {
+        if (base == "") return mas;
+        return base + " · " + mas;
+    }
+
+    private void AnotarChoqueObjeto(int wp, string clase)
+    {
+        if (!m_ChObjWp)
+        {
+            m_ChObjWp = new array<int>();
+            m_ChObjClase = new array<string>();
+            m_ChObjN = new array<int>();
+        }
+        int i;
+        for (i = 0; i < m_ChObjWp.Count(); i++)
+        {
+            if (m_ChObjWp.Get(i) == wp && m_ChObjClase.Get(i) == clase)
+            {
+                m_ChObjN.Set(i, m_ChObjN.Get(i) + 1);
+                return;
+            }
+        }
+        m_ChObjWp.Insert(wp);
+        m_ChObjClase.Insert(clase);
+        m_ChObjN.Insert(1);
+    }
+
+    private string ListaChoquesObjeto()
+    {
+        if (!m_ChObjWp) return "";
+        string s = "";
+        int i;
+        for (i = 0; i < m_ChObjWp.Count(); i++)
+        {
+            if (s != "") s = s + ", ";
+            s = s + "wp " + m_ChObjWp.Get(i).ToString() + " contra " + m_ChObjClase.Get(i);
+            if (m_ChObjN.Get(i) > 1) s = s + " x" + m_ChObjN.Get(i).ToString();
+        }
+        return s;
+    }
+
+    // la frenada del cusp de ESTE leg al manual (ver MaxBrakeDecelManiobra): corre al arrancar cada leg, con la pose final
+    // ya cacheada. Una linea por leg dice con que numero dosifican la maniobra y el freno al fin del leg.
+    private void AcoplarFrenoCusp()
+    {
+        m_FrenoCuspLeg = m_Leg.legIdx;
+        float v0C = 0;
+        float dsC = 0;
+        int nC = 0;
+        float aC = -1;
+        if (m_Cinta && m_Cinta.Valida()) aC = m_Cinta.FrenadaAntesDePoseMS2(m_EndPos, v0C, dsC, nC);
+        m_FrenoCuspMs2 = aC;
+        m_Manual.SetFrenoCusp(aC);
+        if (s_Quiet) return;
+        string fc = "[C12] FRENADA del cusp del leg " + m_Leg.legIdx.ToString() + ": ";
+        if (aC > 0) fc = fc + aC.ToString() + " m/s2 (pedal a fondo desde " + v0C.ToString() + " km/h en " + dsC.ToString() + " m, " + nC.ToString() + " cuadros)";
+        else fc = fc + "sin medicion";
+        fc = fc + " · la maniobra y el freno al fin del leg dosifican con " + m_Manual.MaxBrakeDecelManiobra(m_SurfKind).ToString() + " m/s2";
+        fc = fc + " (fisico " + m_Manual.MaxBrakeDecel(m_SurfKind).ToString() + ")";
+        Print(fc + SufijoRunner());
+    }
+
+    // la frenada final de la toma al manual, para el endpoint (ver MaxBrakeDecelEndpoint). Corre cuando la cinta ya
+    // esta armada; una linea por ruta dice con que numero planea el endpoint.
+    private void AcoplarFrenoToma()
+    {
+        if (!m_Manual || !m_Cinta || !m_Cinta.Valida()) return;
+        m_FrenoTomaAcoplado = true;
+        float aT = m_Cinta.FrenadaFinalMS2();
+        m_Manual.SetFrenoToma(aT);
+        if (s_Quiet) return;
+        string ft = "[C12] FRENADA de la toma: ";
+        if (aT > 0)
+        {
+            ft = ft + aT.ToString() + " m/s2 (pedal a fondo desde " + m_Cinta.FrenadaFinalV0Kmh().ToString() + " km/h en ";
+            ft = ft + m_Cinta.FrenadaFinalDsM().ToString() + " m)";
+        }
+        else ft = ft + "sin medicion (la toma no termina con el pedal a fondo desde 8 km/h o mas)";
+        ft = ft + " · el endpoint planea y dosifica con " + m_Manual.MaxBrakeDecelEndpoint(m_SurfKind).ToString() + " m/s2";
+        ft = ft + " (fisico del manual " + m_Manual.MaxBrakeDecel(m_SurfKind).ToString() + ")";
+        Print(ft + SufijoRunner());
+    }
+
+    // la medida del veredicto (m); -1 hasta que el REPOSO la decide (o si la ruta termino por otra via: STUCK, abort)
+    float ReposoFinM() { return m_ReposoFinM; }
 
     // La distancia REAL al ultimo waypoint: el mismo par que RecordClose congela. Su hipotenusa
     // es el numero que el runner imprime como ENDPOINT, calculado por otra via (posicion del
@@ -3509,7 +3814,7 @@ class BZDriveController
         float vPrev = m_SlamPrevV;
         float vNow = st.chassisKmh / 3.6;
         m_SlamPrevV = vNow;
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if (m_SlamLogTicks > SLAM_LOG_MAX) return;
         m_SlamLogTicks = m_SlamLogTicks + 1;
         string r = m_Slam.ReporteLongitudinal();
@@ -3540,12 +3845,12 @@ class BZDriveController
         bool sl = m_Slam.GaveUp();
         if (!mc && !sl) return;
         // RED DE SEGURIDAD: el slam que se rinde fuera del bar estricto (0,25 m) pero dentro de ACEPTA_ENDPOINT_RED_M no se
-        // rindio: llego con aviso. Un servicio con el vehiculo congelado y el chofer adentro hasta que alguien lo pare es
+        // rindio: llego con aviso, y el veredicto lo da el REPOSO contra el bar estricto (DecidirFin). Un servicio con el vehiculo congelado y el chofer adentro hasta que alguien lo pare es
         // peor que 40 cm. Se imprime la distancia real y la ruta sigue su ciclo.
         if (sl && !mc && m_Slam.GaveUpDistM() <= BZDriveTol.ACEPTA_ENDPOINT_RED_M)
         {
             m_RendicionAnotadaLeg = m_Leg.legIdx;
-            if (!s_Quiet) Print("[C12] LLEGADA fuera de la tolerancia estricta: " + m_Slam.GaveUpDistM().ToString() + " m (" + BZDriveTol.ACEPTA_ENDPOINT_M.ToString() + " m): se acepta hasta " + BZDriveTol.ACEPTA_ENDPOINT_RED_M.ToString() + " m y la ruta sigue como COMPLETA" + SufijoRunner());
+            if (!s_Quiet) Print("[C12] LLEGADA fuera de la tolerancia estricta: " + m_Slam.GaveUpDistM().ToString() + " m (" + BZDriveTol.ACEPTA_ENDPOINT_M.ToString() + " m): se acepta hasta " + BZDriveTol.ACEPTA_ENDPOINT_RED_M.ToString() + " m: la ruta sigue y el veredicto lo decide el REPOSO" + SufijoRunner());
             return;
         }
         m_RendicionAnotadaLeg = m_Leg.legIdx;
@@ -3747,6 +4052,18 @@ class BZDriveController
         if (!m_Leg.valid) return;
         m_EndPos = m_Route.Pos(m_Leg.legHi);
         float th = m_Route.Head(m_Leg.legHi);
+        // EN REVERSA, LA TANGENTE DE ADENTRO DEL LEG (la misma que BZLegMachine.SignedToEnd). El ultimo waypoint de una
+        // ruta que termina marcha atras suele ser "normal" (la toma mete 1a ya parada): su rumbo es hacia donde MIRA el
+        // vehiculo, opuesto a la marcha. remFr salia NEGATIVO todo el leg: EndpointFrameBrake leia "pasado" y frenaba a
+        // fondo al entrar al endpoint (TRUCK_130_01 clavado a 3,69 m del final), y el descuento por avance de la compuerta
+        // (m_RemGate) no actuaba. Solo en ese caso (leg de reversa cuyo ultimo waypoint NO es de reversa): las rutas que
+        // terminan de cola con el ultimo waypoint en reversa (PATRULLA, SUZUKI, OffroadHB02/03...) ya tenian el rumbo de la
+        // marcha y no cambian; marcha adelante tampoco.
+        if (m_Leg.isReverse && !m_Route.IsRev(m_Leg.legHi))
+        {
+            int tIn = m_Leg.legHi - 1;
+            if (tIn >= 0 && m_Route.LegOf(tIn) == m_Route.LegOf(m_Leg.legHi)) th = m_Route.Head(tIn);
+        }
         m_EndTanX = Math.Sin(th);
         m_EndTanZ = Math.Cos(th);
     }
@@ -3770,6 +4087,9 @@ class BZDriveController
     {
         float kmhPrev = m_ChoqueKmhPrev;
         m_ChoqueKmhPrev = st.chassisKmh;
+        // las ruedas en el suelo de cada cuadro: la linea dice si venia en el aire (un salto) o apoyado. Solo instrumento
+        if (!m_HistRuedas) m_HistRuedas = new BZHistRuedas();
+        m_HistRuedas.Anotar(st.wheelsOnGround, dt);
         // los relojes corren SIEMPRE (antes de los return): el del ultimo choque de la linea y el del episodio.
         if (dt > 0 && m_ChoqueHaceS >= 0) m_ChoqueHaceS = m_ChoqueHaceS + dt;
         if (dt > 0 && m_ChoqueEpN > 0)
@@ -3817,6 +4137,14 @@ class BZDriveController
         {
             m_Choques = m_Choques + 1;
             nB = m_Choques;
+            // contra un OBJETO (entidad reportada por el motor) cuenta para el veredicto; sin entidad es el terreno
+            if (conContactoB && st.contactoClase != "")
+            {
+                m_ChoquesObjeto = m_ChoquesObjeto + 1;
+                int wpCO = -1;
+                if (m_Leg && m_Leg.valid) wpCO = m_Leg.nearWp;
+                AnotarChoqueObjeto(wpCO, st.contactoClase);
+            }
         }
         m_ChoqueEpN = 1;
         m_ChoqueEpHaceS = 0;
@@ -3844,15 +4172,21 @@ class BZDriveController
         // hasta hoy la linea terminaba aca y habia que ir a mirar in-game contra QUE pego (el Landrover
         // estacionado de PATRULLA se descubrio asi). El motor ya lo sabe: CarScript.OnContact trae la entidad.
         // La AUSENCIA de contacto tambien es dato: si el motor no reporto ninguno, no le pego a una entidad.
+        // El contacto de mayor impulso de la ventana y la zona del casco que toco. Con que: la clase del objeto, "modelo X"
+        // si es un objeto del mapa sin clase, o TERRENO cuando el motor lo reporta con `other` nulo (el suelo del mapa no
+        // es una entidad).
         if (st.contactoHaceS >= 0 && st.contactoHaceS <= CHOQUE_CONTACTO_S)
         {
-            if (st.contactoClase != "") s = s + " · CONTRA " + st.contactoClase + " (impulso " + st.contactoImp.ToString() + ", hace " + st.contactoHaceS.ToString() + " s)";
-            else                        s = s + " · CONTRA algo sin clase (contacto con impulso " + st.contactoImp.ToString() + " hace " + st.contactoHaceS.ToString() + " s: terreno o geometria del mapa)";
+            string conC = st.contactoClase;
+            if (conC == "") conC = "terreno (other nulo)";
+            s = s + " · CONTRA " + conC + " (impulso " + st.contactoImp.ToString() + ", hace " + st.contactoHaceS.ToString() + " s, zona " + st.contactoZona + ")";
         }
         else
         {
             s = s + " · SIN CONTACTO reportado por el motor en " + CHOQUE_CONTACTO_S.ToString() + " s: no le pego a una entidad";
         }
+        // las ruedas en el suelo en los cuadros de antes: en el aire y despues el golpe = un aterrizaje
+        s = s + " · ruedas en los " + CHOQUE_RUEDAS_S.ToString() + " s previos: " + m_HistRuedas.Resumen(CHOQUE_RUEDAS_S, st.wheelCount);
         s = s + SufijoRunner();   // un CHOQUE sin runner se atribuye a ojo (por wp y posicion)
         Print(s);
         if (!bacheB && m_Choques == 1) VolcarAnillo("CHOQUE");   // la caja negra no se gasta en un bache
@@ -3922,7 +4256,7 @@ class BZDriveController
     // anillo es lo de ANTES, que es justamente lo que no se podia ver.
     private void VolcarAnillo(string motivo)
     {
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if (!m_RKmh || m_RCant < 2) return;
         if (m_Volcados >= VOLCADOS_MAX) return;
         m_Volcados = m_Volcados + 1;
@@ -3957,6 +4291,13 @@ class BZDriveController
     BZDriveOutput Sample(BZVehicleState st, float dt)
     {
         if (!m_Ready) return m_Out;
+        // con la llegada hecha y el veredicto pendiente: la cola del log mide el reposo y el casco queda frenado
+        if (m_FinPendiente)
+        {
+            VolcarLogCola(st, dt);
+            m_Out.SetHalt();
+            return m_Out;
+        }
         // ★★★ ENTRADA AL ENDPOINT A 40 Hz: la decision de modo vive
         // en Plan (2 Hz) y a 16 km/h su paso (2.2 m) es del orden de la zona de
         // endpoint (3.2 m) -- el instante de entrada, y con el la velocidad de
@@ -3997,6 +4338,7 @@ class BZDriveController
         // y el diag lo muestra. La marcha replayada mata el hunting de caja
         // en el ORIGEN.
         m_CintaTick = false;
+        m_FrenoFinB = 0;
         // el tracker de fase del LEG corre TODOS los ticks (no
         // depende del gate de posesion/modo — esa era la ceguera del detector
         // interno). Al cambiar el leg de fase, la cinta siembra su cursor.
@@ -4123,7 +4465,21 @@ class BZDriveController
             {
                 m_SalirDelHold = false;
                 if (m_CintaRodo) SoltarCintaHastaFinDeMeseta(st, "AL SALIR DEL HOLD");
+                m_CintaReposoT = 0;   // la oportunidad de arrancar (ver ENG_GRACIA_S)
+                m_SinProgresoT = 0;
+                m_EngGraciaT = ENG_GRACIA_S;
             }
+            // la meseta que se acaba de cumplir (Muestra la cierra en el Sample anterior): los relojes de cero y la gracia
+            bool enMesetaAhora = false;
+            if (m_Cinta) enMesetaAhora = m_Cinta.EnMeseta();
+            if (m_EnMesetaPrev && !enMesetaAhora)
+            {
+                m_CintaReposoT = 0;
+                m_SinProgresoT = 0;
+                m_EngGraciaT = ENG_GRACIA_S;
+            }
+            m_EnMesetaPrev = enMesetaAhora;
+            if (m_EngGraciaT > 0) m_EngGraciaT = m_EngGraciaT - dt;
             if (Math.AbsFloat(st.chassisKmh) < LOG_COLA_QUIETO_KMH) m_CintaReposoT = m_CintaReposoT + dt;
             else m_CintaReposoT = 0;
             bool noEsSalida = (m_CintaM.kmhRec > CINTA_RODANDO_KMH || m_CintaM.brk > 0.5);
@@ -4169,7 +4525,15 @@ class BZDriveController
             // Suelta, cualquier disparo exige ademas la cola sin gas hacia un reposo. Poseyendo, el 860 y el 876 siguen iguales.
             bool disparoEng = (detenidoEng || retroEng || clavadoEng);
             if (disparoEng && cintaOkEng && !m_CintaRodo && !clavadoEng) disparoEng = m_Cinta.SinGasHastaElReposo();
-            if (cintaOkEng && disparoEng && m_Mode == BZDriveMode.BZDM_CRUISE && !m_BogActivo && !m_F1Activo && !m_Cinta.EnMeseta())
+            // TAMBIEN EN MANIOBRA. Desde que el leg se cierra solo en la ULTIMA parada grabada de la fase, una parada
+            // intermedia en la maniobra de un cusp se tiene que consumir como en CRUISE: el casco que llega despacio se
+            // detiene 1-2 cm ANTES del bloque, sobre una fila de freno grabado 1, y ahi nadie lo saca (el cursor no avanza
+            // porque el casco no se mueve, el casco no se mueve porque la fila frena; medido: 10 s clavado a 1,6 cm de un
+            // bloque de 14 cuadros, hasta el AR fisico). La ultima parada de la fase no entra aca: la cierra el leg antes
+            // (el cierre corre antes en este mismo Sample; y al cambiar de leg el reposo se reinicia, asi que este disparo
+            // no ve el bloque viejo). Un bloque de 1-2 cuadros se cumple en 25-50 ms y el cursor sale a la fila siguiente.
+            bool modoEng = (m_Mode == BZDriveMode.BZDM_CRUISE || m_Mode == BZDriveMode.BZDM_MANEUVER);
+            if (cintaOkEng && disparoEng && modoEng && m_EngGraciaT <= 0 && !m_BogActivo && !m_F1Activo && !m_Cinta.EnMeseta())
             {
                 bool poseiaEng = m_CintaRodo;
                 if (m_Cinta.EngancharMesetaDetenido())
@@ -4304,7 +4668,9 @@ class BZDriveController
                 // lector (filtro de fase en anclas + monotonia + lejos + rescate
                 // + siembra), no este gate. El REPLAY no cambia: rueda/gas/gear
                 // grabados tal cual — en el cusp son las manos del usuario ahi mismo.
-                if (m_Cinta.Muestra(st.pos, m_CintaM, m_Leg.isReverse))
+                // el anclaje de reversa de la cinta solo con el casco rodando (ver la cuerda en el lector)
+                bool rodandoC = (Math.AbsFloat(st.chassisKmh) >= CINTA_RODANDO_KMH);
+                if (m_Cinta.Muestra(st.pos, m_CintaM, m_Leg.isReverse, rodandoC))
                 {
                     // ⚠⚠⚠ LA RUEDA GRABADA SE CONVIERTE POR LA TRANSFERENCIA DE
                     // PLANTA, NO POR steerMax. El input de steering
@@ -4351,6 +4717,13 @@ class BZDriveController
                     // (ley vieja) vs 0.481 con psiMed (peor).
                     if (m_CintaM.enReversa && Math.AbsFloat(m_CintaM.fwDeg) < REV_C2_FW_RECTA_DEG) c2V = REV_C2_RECTA;
                     float capV = IMAN_CAP_DEG + (IMAN_CAP_ALTA_DEG - IMAN_CAP_DEG) * vAltaF;
+                    float c1V = IMAN_C1_DEG_M;
+                    if (m_Leg.isReverse || ImanDeCuspEnAvance(st))
+                    {
+                        c1V = IMAN_C1_DEG_M * REV_IMAN_FACTOR;
+                        if (c2V < IMAN_C2_DEG_DEG * REV_IMAN_FACTOR) c2V = IMAN_C2_DEG_DEG * REV_IMAN_FACTOR;
+                        capV = REV_IMAN_CAP_DEG;
+                    }
                     // ✖✖ EL FRENTE DEL NULL-SPACE QUEDA ABIERTO — DOS INTENTOS,
                     // DOS ROLLBACKS, Y UNA CONCLUSION ESTRUCTURAL:
                     // la ley −(C1·lat + C2·ψgeo) se anula en lat=−(C2/C1)·ψ y se
@@ -4438,7 +4811,7 @@ class BZDriveController
                     // El integral SE SIGUE CALCULANDO como DIAGNOSTICO (columna
                     // imanI del CSV), igual que latDot/psiMed tras su rollback:
                     // no entra en el control.
-                    m_ImanDeg = -(IMAN_C1_DEG_M * (m_CintaM.latM - m_CintaRef) + sPsiCinta * c2V * psiCinta);
+                    m_ImanDeg = -(c1V * (m_CintaM.latM - m_CintaRef) + sPsiCinta * c2V * psiCinta);
                     // ★ CAP ASIMETRICO DE APERTURA:
                     // la falla ESPEJO del hairpin — entra +1.0 por ADENTRO de la
                     // curva derecha y el iman queda CLAVADO en -4.50 durante 25 m
@@ -4479,7 +4852,7 @@ class BZDriveController
                     // sostenido → ganancia/din. insuficiente; |aplica|==cap →
                     // saturacion; sin lineas → no poseia. Gateado: |lat|>=0.3
                     // y cada 4 ticks (~10 Hz en zona mala, silencio en linea).
-                    if (!s_Quiet && Math.AbsFloat(m_CintaM.latM) >= 0.3)
+                    if (!s_Quiet && BZDiag.On() && Math.AbsFloat(m_CintaM.latM) >= 0.3)
                     {
                         m_DiagIman = m_DiagIman + 1;
                         if ((m_DiagIman % 4) == 1)
@@ -4579,6 +4952,10 @@ class BZDriveController
                         // E3b: iman de gas — fidelidad de velocidad (ver consts)
                         float dvCinta = kmhRecEff - st.chassisKmh;
                         m_ImanGas = Math.Clamp(IMAN_GAS_POR_KMH * dvCinta, -1.0, 0.5);
+                        // con el freno grabado a mas de la mitad la toma esta FRENANDO: no hay velocidad que alcanzar. Medido: el
+                        // iman perseguia saltos de rubber-band de la velocidad grabada (10 -> 15 km/h en 1 cm, dentro de una
+                        // frenada) y ponia gas 0,3 con freno 1 en la entrada a un cusp.
+                        if (m_CintaM.brk >= 0.5 && m_ImanGas > 0) m_ImanGas = 0;
                         m_Out.throttle = Math.Clamp(m_CintaM.thr + m_ImanGas, 0.0, 1.0);
                         m_ImanFrn = 0;
                         if (m_Out.throttle <= 0.001 && -dvCinta > IMAN_FRN_LIBRE_KMH)
@@ -4639,6 +5016,7 @@ class BZDriveController
                         SostenerMeseta(st);
                         m_Out.gear = m_CintaM.gear;
                         if (m_SostenTope >= AHOGO_MARCHA) AplicarTopeDeSosten(st);   // hueco A
+                        FrenoAlFinDelLeg(st);   // la toma se agoto o va a paso de arrastre y el casco rueda: frenar a la pose
                     }
                     m_CintaDist = m_CintaM.distM;
                     m_CintaTick = true;
@@ -4656,7 +5034,7 @@ class BZDriveController
         // (LEJOS/perdida/mismatch-fase). El proximo cambio se dimensiona
         // contra el MOTOR, no el espejo.
         bool diagModoPoseible = (m_Mode == BZDriveMode.BZDM_CRUISE || m_Mode == BZDriveMode.BZDM_APPROACH || m_Mode == BZDriveMode.BZDM_MANEUVER);
-        if (!m_CintaTick && m_Cinta && m_Cinta.Valida() && m_Leg && m_Leg.valid && m_CintaRodo && diagModoPoseible && !s_Quiet)
+        if (!m_CintaTick && m_Cinta && m_Cinta.Valida() && m_Leg && m_Leg.valid && m_CintaRodo && diagModoPoseible && !s_Quiet && BZDiag.On())
         {
             m_DiagNoPosee = m_DiagNoPosee + 1;
             if ((m_DiagNoPosee % 8) == 1)
@@ -4703,6 +5081,29 @@ class BZDriveController
     // pose de ESTE frame. Es la unica distancia al final que el controlador sabe a
     // 40 Hz: `m_Leg.remainM` sale del CURSOR y solo se refresca en Plan (2 Hz).
     // Firmado: + = el final esta adelante, - = ya se paso.
+    // el iman con la ganancia de reversa tambien en avance, en los ultimos metros antes de un cusp (CUSP_IMAN_ZONA_WB)
+    private bool ImanDeCuspEnAvance(BZVehicleState st)
+    {
+        if (!m_Leg || !m_Leg.valid) return false;
+        if (m_Leg.isReverse || m_Leg.endIsStop) return false;
+        bool dentro = (m_Mode == BZDriveMode.BZDM_MANEUVER);
+        if (!dentro)
+        {
+            if (m_Mode != BZDriveMode.BZDM_CRUISE && m_Mode != BZDriveMode.BZDM_APPROACH) return false;
+            float wbC = 2.5;
+            if (m_Manual && m_Manual.wheelbaseM > 0.5) wbC = m_Manual.wheelbaseM;
+            dentro = (m_Leg.remainM <= CUSP_IMAN_ZONA_WB * wbC);
+        }
+        if (dentro && m_ImanCuspLeg != m_Leg.legIdx)
+        {
+            m_ImanCuspLeg = m_Leg.legIdx;
+            string li = "[C12] IMAN DE CUSP en el leg " + m_Leg.legIdx.ToString() + ": ganancia x" + REV_IMAN_FACTOR.ToString() + " desde rem " + m_Leg.remainM.ToString() + " m";
+            li = li + " · lat " + m_CintaM.latM.ToString() + " m · " + st.chassisKmh.ToString() + " km/h";
+            if (!s_Quiet) Print(li + SufijoRunner());
+        }
+        return dentro;
+    }
+
     private float RemanenteFrameM(BZVehicleState st)
     {
         return (m_EndPos[0] - st.pos[0]) * m_EndTanX + (m_EndPos[2] - st.pos[2]) * m_EndTanZ;
@@ -4742,7 +5143,7 @@ class BZDriveController
             return;
         }
         float v = st.chassisKmh / 3.6;
-        float aMax = m_Manual.MaxBrakeDecel(m_SurfKind);
+        float aMax = m_Manual.MaxBrakeDecelEndpoint(m_SurfKind);   // techado por la frenada medida en la toma
         if (aMax < 0.5) aMax = 0.5;
         float aReq = (v * v) / (2.0 * d);
         float b = Math.Clamp(aReq / aMax, 0.0, 1.0);
@@ -4874,7 +5275,7 @@ class BZDriveController
 
     private void ReportarDesliz(BZVehicleState st, float cmd, float kLogra, float deriva)
     {
-        if (s_Quiet) return;
+        if (s_Quiet || !BZDiag.On()) return;
         if (!m_Leg) return;
         string s = "[BZDrive] DESLIZA wp " + m_Leg.nearWp.ToString();
         s = s + " · kmh " + st.chassisKmh.ToString();

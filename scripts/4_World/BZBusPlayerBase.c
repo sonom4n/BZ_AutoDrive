@@ -115,6 +115,11 @@ modded class PlayerBase {
                     BZBusService.GetInstance().ToggleAILogging();
                 break;
 
+            case BZBusRPC.RECEIVE_CONTINUAR_RECHAZADO:
+                if (!GetGame().IsDedicatedServer())
+                    BZBusClientManager.OnReceiveContinuarRechazado(ctx);
+                break;
+
             case BZBusRPC.RECEIVE_TOAST:
                 if (!GetGame().IsDedicatedServer()) {
                     string bzToastMsg;

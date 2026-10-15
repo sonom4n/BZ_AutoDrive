@@ -6,6 +6,72 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.2.1
+
+**DayZ 1.30, motorbikes, and a much more precise framework.** The published 1.2 doesn't compile on 1.30: 1.2.1 runs on both versions with a single PBO. It also brings motorbikes (experimental) and a big round of precision work: a route only counts as complete if it really ends well, and the vehicle follows your line at direction changes and stops too.
+
+### DayZ 1.30
+
+- **Tested on launch day (15/10)** on the 1.30 stable release, without Expansion and with Expansion 1.9.79: eAI driver in cars and on motorbikes, and retirement with a player seated as a passenger (the vehicle waits until they get out).
+- **New: a single PBO for 1.29 and 1.30.** The same file compiles and runs on both versions.
+- **Changed: lights use the new 1.30 system.** On 1.29 they work as before.
+- **Fixed: removing a vehicle with someone seated.** On 1.30, deleting an occupied vehicle crashes the server. The framework now waits until the vehicle is empty before removing it. If the one seated is a player, the vehicle stays braked and isn't deleted until they get out.
+- **Fixed: the route list on 1.30.** With 1.2 it came out empty. It needs the server to start with a **relative** `-profiles` (e.g. `-profiles=profiles`): with an absolute path 1.30 doesn't allow listing files, and the RPT warns at startup (`DayZ 1.30 cannot list files under an absolute -profiles path…`).
+- **New: motorbikes (experimental).** The 1.30 Moped and Enduro aren't cars (they don't use CarScript) and get their own driver: separate front and rear brakes (motorbikes have no reverse), a lean and damping law measured per bike, and arrivals within 1-3 cm. **Walking the bike** (getting off and pushing it, forward or backward) is recorded and replayed with the animation. If a bike gets stuck, it walks back 3 m and tries again. See the manual, §9B.
+- **Improved: the motorbike follows your line at high speed.** A bike takes half a second to lean after the handlebar turns; correcting it like a car made it oscillate and run wide in fast curves (up to 3.7 m). Above 65 km/h it now corrects by leaning according to the upcoming curve of the path. Measured with the Enduro up to 120 km/h: maximum offset 0.4-0.56 m over the whole route.
+- **Improved: the motorbike's final stop.** It brakes to the point while measuring, in that same braking, how hard the bike really brakes. It arrives within 3-4 cm even when coming in fast (before, it could overshoot by up to 0.7 m).
+- **Improved: walking the bike.** If you turned the bike while pushing it in the take (backing it out of a spot and pointing it another way), the NPC reproduces that turn and corrects if it drifts off the line. When the walk ends it pulls away at full throttle, after keeping any wait you made.
+- **Fixed: a speedometer that isn't a number.** On 1.30 a freshly spawned vehicle can have no valid speedometer reading for a few seconds (we saw it on the M1025, which has an automatic gearbox), and the route got stuck at the start. The framework now uses the vehicle's real speed while it lasts and says so in the RPT: `[Velocimetro] GetSpeedometerAbsolute no da un numero … el framework usa la velocidad del cuerpo`.
+
+### When a route is complete (the verdict)
+
+- **Changed: `ROUTE_COMPLETE` is strict.** A route only counts as complete if all three hold: the vehicle came to **rest within 0.25 m** of the take's final point, it **didn't hit any object**, and **AutoRecovery didn't have to move it** (maneuver or relocation). Soft AutoRecovery restarts don't invalidate it, but they are listed. The 1.2 1 m safety net no longer approves a route.
+- **Changed: the end of a route is decided with the vehicle AT REST.** The `FIN` line and the end events come out once the vehicle has stopped (at most about 3 s after arriving), with the line `REPOSO tras T s: a X m de la pose final (longitudinal …, lateral …)`. Same for motorbikes.
+- **New: the reason for a `ROUTE_INCOMPLETE`**, on the same line: how far off it stopped, what it hit and where, or which physical intervention AutoRecovery made.
+
+### Driving: more precise
+
+- **Improved: the final stop.** The vehicle config's brake turned out to be optimistic (8.5 m/s² declared vs 5.5 real on a Sedan). The end of the route is now planned with **the braking you measured yourself in the take** (`FRENADA de la toma` in the log), and each direction change with the braking at that point (`FRENADA del cusp`). Arrivals: 0.10-0.15 m on every test route. The take's braking is now also measured on short stops (from 8 km/h).
+- **Improved: direction changes.** The vehicle follows your line at low speed and in reverse too: at each gear change it stops within centimeters of the point (before, 0.5-1 m past or off to the side) and the reverse leg starts where it should. In the last meters before each gear change it corrects lateral drift more strongly.
+- **Fixed: recorded stops in the middle of a leg.** They are held for the time you recorded and the vehicle moves on; they never trap it. And a leg only ends at your **last** stop before changing gear, not an earlier one.
+- **New: braking at the end of each leg.** If the take runs out (or keeps crawling without brake) while the vehicle is still rolling, the framework brakes it to the gear-change point.
+- **Fixed: throttle and brake at the same time.** While the take is braking, the framework no longer adds throttle to reach a recorded speed.
+- **Improved: takes with position corrections.** If the server pulled your position back while you were recording (a "rubber-band" jerk), the vehicle no longer follows that backwards jump.
+
+### Recording and the Wizard
+
+- **Fixed: the recorder's clock.** New takes store real time. A take with a broken clock (recorded with earlier versions) is not converted, and the Wizard says so.
+- **New: take warnings** on conversion, in the Wizard's language: `(!) The take has N recorded rewind(s)` (the server corrected your position while recording: if the NPC drifts there, record that stretch again) and `(!) At N gear change(s) the vehicle rolled forward without brake before shifting` (when recording, keep the brake pressed until the other gear is in). Crashes in the take are flagged too.
+- **Changed: the point of a direction change** is placed where the vehicle came to rest in the take, not where it dropped below 1 km/h. Applies to routes you convert with this version.
+- **Changed: new takes record more data per frame** (lean, contacts, real clock). That's why a part recorded with 1.2 doesn't join one from 1.2.1 in **[3] Merge recording segments**: record all the parts with the same version.
+
+### The panel
+
+- **Fixed: on 1.30 the panel closes with HOME** (or the key you assign in Controls), the same key that opens it. **ESC** also closes it, without opening the game's pause menu.
+- **Fixed: after closing it with ESC, HOME opens it again on the first press.** On 1.30 you had to press the key twice.
+- **New: SPAWN EMPTY VEHICLE checks that the spot is free.** If there's already a vehicle at that point, it creates nothing and says so on screen: `Spawn point occupied by <class> (N m away)`.
+- **Improved: when an empty spawn can't be done** (spot occupied, a route that doesn't load or has no waypoints, a class that doesn't exist), the warning shows on screen and the `LOADING` row goes away at once. Before, it waited 15 s.
+- **Fixed: the mouse wheel over the route list.** Each notch asked the server for the route's summary card again, and the server re-read the route from disk. Now only a click asks for it, and the scrubber no longer jumps back to the start when you turn the wheel.
+
+### Logs and diagnostics
+
+- **New: `Diagnostics`** in the settings (off by default): with diagnostics off, the RPT of a server running routes shrinks by more than 90%. Load, end-of-route, error and AutoRecovery lines stay.
+- **New: optional black boxes** (`BlackBox`, off by default), with rotation: `BlackBoxKeepPerRoute` keeps the last N per route (10 by default).
+- **Improved: the crash line** (`*** CHOQUE ***`) says what it hit (the object's class, or the terrain), in which zone of the vehicle, and which wheels were touching the ground just before.
+- **Improved: when the framework stops a vehicle for safety** (`SAFE_STOP`), the log says why.
+- **New: a warning for old-format routes** (no `_wp.csv`). Such a route loads all at once and freezes the server while it reads it. Now the RPT says so, and so do the connected admins' notifications (per `AdminSystemNotifications`): `route <file> is in the old format (no _wp.csv): loading it froze the server for N s…`. Convert the take again with the Wizard and the route loads in small slices.
+- **Fixed: `[LOADTIME]` gives real milliseconds.** Up to 1.2 the number came out 10,000 times too big.
+- **New: panel diagnostics.** With `Diagnostics` at 1, an admin's client log records when the panel opens and closes and why (`[Reproductor] ABIERTO` / `CERRADO (tecla|ESC|boton|otro)`). Useful if the key doesn't respond.
+
+### For mods that use AutoDrive (the runner API)
+
+- **Changed:** the end of a route (`PollEvent`, `RunnerRouteEnded/Completed/EndReason`) arrives at rest, up to ~3.5 s after arriving, and `RunnerRouteCompleted()` uses the strict verdict.
+- **New:** `RunnerReposoFinM()`, the distance at rest used for the verdict (cars and motorbikes).
+- **Changed: new fields in the log and in the black boxes.** The `LEG n cerrado` line adds the lateral offset (`lat`, between `remFr` and `rem`) and the distance to the phase's last recorded stop; the car's black boxes add columns (contacts and `frenoFin`). If a tool of yours reads them by position, check it.
+- **Changed: the motorbike's black box adds four columns at the end** (`roll_des`, `mezcla`, `w_cmd`, `vol_cam`); the existing ones don't move.
+
+---
+
 ## v1.2
 
 **A new driving brain: it replays your driving and learns from your takes.** It's the biggest change since 1.0. The framework still reads the vehicle's config, but now it also **replays what you did at each point of the road** and **measures** how each vehicle behaves, instead of assuming it.
@@ -39,6 +105,8 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 - **New: if the starting point is occupied**, the vehicle waits for it to clear (`WAITING` in the panel) instead of appearing off to the side.
 - **Improved: loading a route no longer causes stutters.** Loading is split into ~1 ms slices per frame; before, a single frame could take up to 75 ms.
 - **Improved: the empty-vehicles panel.** The card shows up as soon as you click (with `LOADING`), and a second click no longer creates a vehicle on top of the first.
+- **Fixed: installing from scratch.** The framework creates its profile folders. Before, on a new server, the log of a player driving tried to write into a folder that didn't exist, every frame.
+- **New: startup warnings for a new install.** `AdminSteamIDs is empty: nobody is admin…` if there are no admins yet, and `No routes yet…` if there are no routes. A template route is no longer generated.
 
 ### The vehicle on the route
 

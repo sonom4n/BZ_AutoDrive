@@ -18,7 +18,7 @@ Grabás una ruta manejándola vos. Un NPC (Boris) la maneja para siempre, con la
 - **Reproduce tu manejo:** la *cinta* guarda volante, acelerador, freno y marcha 40 veces por segundo, indexados por **distancia recorrida**. El NPC hace lo que hiciste **en ese punto del camino**: vuela donde volaste, frena donde frenaste.
 - **Cualquier vehículo, sin tuning:** el control lee la física declarada de cada auto y maneja según eso — delantera / trasera / central / 4x4 / **camión** — con **una sola configuración**, sin ajustes por-vehículo. Validado out-of-sample en un banco amplio de tracciones y tamaños. *(Una **grabación** es de su vehículo: para la misma ruta en otro auto, **grabala con ese auto** — así el framework aprende su física.)*
 - **Física real:** el NPC aplica volante, acelerador y freno reales sobre el vehículo simulado — se ve y se siente como una persona manejando, no un teleport scripteado.
-- **Maneja lo difícil:** curvas cerradas, reversa, cambios de sentido (K-turn) **auto-detectados**, y parada final precisa (a unos **10 cm** del punto grabado).
+- **Maneja lo difícil:** curvas cerradas, reversa, cambios de sentido (K-turn) **auto-detectados**, y parada final precisa (a unos **10 cm** del punto grabado). Una ruta solo cuenta como **completa** si el vehículo termina quieto a 0,25 m o menos, sin chocar contra ningún objeto y sin ayuda física del AutoRecovery.
 - **Escala:** carga de rutas **~1700× más rápida** (cambio de formato de datos) + **múltiples vehículos concurrentes sin mover el FPS** del server.
 
 ## Qué incluye
@@ -78,13 +78,15 @@ PathLogger (grabás)  →  Wizard (ruta + cinta + ficha del vehículo)  →  Cer
 
 > ⚠ **No agregues `@DayZ-Expansion-AI` suelto** si ya tenés el Bundle: son las mismas clases en otra versión y **el server no arranca**.
 
-**Mods de vehículos del Workshop** — cualquiera que extienda `CarScript` (la mayoría) funciona automáticamente, sin tocar nada.
+**Mods de vehículos del Workshop** — cualquiera que extienda `CarScript` (la mayoría) funciona automáticamente, sin tocar nada. **En la DayZ 1.30**, un mod de vehículos hecho para la 1.29 necesita que su autor lo actualice (algunos no compilan; otros cargan pero les fallan las puertas, las ruedas o el daño). La 1.2.1 está validada con los vehículos vanilla de la 1.30; los de mods se van sumando a medida que se actualicen.
 
 ## Compilar desde el source
 
 Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork: empaquetá el PBO como prefieras —DayZ Tools (AddonBuilder) o tu propio pipeline— y firmalo con tu **propia** llave. Cada modder empaqueta a su manera.
 
 ## Estado
+
+**v1.2.1** — **lista para la DayZ 1.30**: un solo paquete corre en la 1.29 y en la 1.30; **motos** (experimental, solo 1.30); **veredicto estricto** del fin de ruta, decidido con el vehículo quieto; frenada final medida en tu toma; cambios de sentido a centímetros; logs livianos por defecto (`Diagnostics`, `BlackBox`). En la 1.30, arrancá el server con un `-profiles` relativo.
 
 **v1.2** — **cerebro de manejo nuevo**: reproduce tu manejo (*cinta*) y **mide** cada vehículo (*ficha*); nadie se arrastra solo en ralentí (medido en 43 vehículos); gas de arranque medido en la flota; **AutoRecovery** que detecta la traba por el avance y rescata también en reversa; cambios de sentido más rápidos; la conversión genera **cuatro** archivos y trae **Python incluido**. Se mantiene de antes: **reversa y cambios de sentido auto-detectados**, **parada final precisa**, **DSL de eventos**, **integración con Quests** (convoy/emboscada/escolta), **multi-runner**, UI/Reproductor. Detalle en el [CHANGELOG](CHANGELOG.md).
 

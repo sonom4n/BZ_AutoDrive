@@ -608,6 +608,177 @@ def fusionar_archivos(envs, out_path, clase, forzar):
     return 0
 
 
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ★ LA MOTO (DayZ 1.30, 27/09): lo que el conductor de moto del mod lee del envelope (BZConductorMoto.Configurar):
+# la AUTORIDAD de direccion por franja de velocidad (su ley lateral pide tasa de giro), la FRENADA p95 (anticipacion) y
+# las RPM POR KM/H de cada marcha (bajar en el piso del embrague sin pasar el corte). Van como lineas AJENAS (kinds que el
+# Store del mod no parsea y conserva tal cual); cada toma aporta sus SUMAS una sola vez y el conductor las acumula.
+MOTO_FRANJAS = (5.0, 10.0, 20.0, 35.0, 60.0)
+MOTO_LAGS_MS = (0, 100, 200, 300, 400, 500, 600)
+MOTO_AUT_TAU = 0.10   # s: el mando se filtra (primer orden) antes de medir la autoridad (la rampa de la rueda)
+
+
+def _franja_moto(kmh):
+    b = 0
+    for lim in MOTO_FRANJAS:
+        if kmh >= lim:
+            b += 1
+    return b
+
+
+def lineas_moto(frame_path, hk):
+    import csv as _csv
+    neutral = int(float(hk.get("neutralGear", 0) or 0))
+    idle = float(hk.get("engineRPMIdle", 0) or 0)
+    if idle < 300:
+        idle = 1000.0
+    R = []
+    with io.open(frame_path, encoding="utf-8") as fh:
+        for r in _csv.DictReader(fh):
+            try:
+                R.append((float(r.get("t_cum", 0) or 0),
+                          float(r.get("chassis_kmh", 0) or r.get("speed_kmh", 0) or 0),
+                          float(r.get("steering", 0) or 0),
+                          float(r.get("yaw_rate", 0) or 0),
+                          int(float(r.get("gear", 0) or 0)),
+                          float(r.get("rpm", 0) or 0),
+                          float(r.get("brake", 0) or 0),
+                          float(r.get("handbrake", 0) or 0),
+                          int(float(r.get("cambio", 0) or 0))))
+            except (ValueError, KeyError):
+                pass
+    if len(R) < 50 or "yaw_rate" not in io.open(frame_path, encoding="utf-8").readline():
+        return []
+    out = []
+    # el mando FILTRADO (primer orden, MOTO_AUT_TAU, con el dt de la toma: la rampa de la rueda). Contra los pulsos de
+    # teclado crudos la regresion subestima la autoridad (Moped 20-35 km/h: 0,55 crudo, 0,65 filtrado; Blue_1 10-20:
+    # 0,79 / 1,05) y la ley corrige de mas; con el filtro el r sube o queda igual (0,87-0,97). Solo la moto.
+    sf = []
+    f_ = 0.0
+    for i in range(len(R)):
+        dt_ = R[i][0] - R[i - 1][0] if i > 0 else 0.025
+        if dt_ <= 0:
+            dt_ = 0.025
+        f_ += dt_ / (MOTO_AUT_TAU + dt_) * (R[i][2] - f_)
+        sf.append(f_)
+    # autoridad: por franja y retraso (el steering de hace L ms contra el giro de ahora)
+    acc = {}
+    for li, lag in enumerate(MOTO_LAGS_MS):
+        j = 0
+        for i in range(len(R)):
+            t, kmh, _st, yr, g, _rpm, _b, _h, _c = R[i]
+            if g == neutral:
+                continue
+            objetivo = t - lag / 1000.0
+            while j + 1 <= i and R[j + 1][0] <= objetivo:
+                j += 1
+            if R[j][0] > objetivo + 0.02:
+                continue
+            s = sf[j]
+            if abs(s) <= 0.1:
+                continue
+            k = (_franja_moto(kmh), lag)
+            a = acc.setdefault(k, [0.0, 0.0, 0.0, 0])
+            a[0] += s * yr
+            a[1] += s * s
+            a[2] += yr * yr
+            a[3] += 1
+    for (b, lag) in sorted(acc):
+        a = acc[(b, lag)]
+        out.append("aut,%d,%d,%.6g,%.6g,%.6g,%d" % (b, lag, a[0], a[1], a[2], a[3]))
+    # frenada: la desaceleracion en ~0,25 s con algun freno pisado
+    bins = {}
+    j = 0
+    for i in range(len(R)):
+        t, kmh, _st, _yr, _g, _rpm, br, hb, _c = R[i]
+        if br <= 0.1 and hb <= 0.1:
+            continue
+        while j < i and R[j][0] < t - 0.25:
+            j += 1
+        dt = t - R[j][0]
+        if dt < 0.05:
+            continue
+        dec = (R[j][1] - kmh) / 3.6 / dt
+        if dec <= 0:
+            continue
+        b = int(dec / 0.25)
+        if b > 63:
+            b = 63
+        bins[b] = bins.get(b, 0) + 1
+    for b in sorted(bins):
+        out.append("bfrena,%d,%d" % (b, bins[b]))
+    # rpm por km/h de cada marcha (marcha de la moto, 0 = N)
+    rk = {}
+    for (t, kmh, _st, _yr, g, rpm, _b, _h, cam) in R:
+        if g == neutral or kmh <= 5.0 or rpm < idle * 1.25 or cam:
+            continue
+        a = rk.setdefault(g, [0.0, 0.0, 0])
+        a[0] += rpm * kmh
+        a[1] += kmh * kmh
+        a[2] += 1
+    for g in sorted(rk):
+        a = rk[g]
+        out.append("rpmkmh,%d,%.6g,%.6g,%d" % (g, a[0], a[1], a[2]))
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ★ EL RELOJ DE LA TOMA (27/09). La primera toma de moto con AutoDrive grabo el tiempo al DOBLE (el cliente llamaba
+# EOnPostSimulate dos veces por paso y cada una sumaba su timeSlice): la cinta va por arco y no se entera, pero el tiempo,
+# la frenada del endpoint, el coast, el yaw_rate y todo lo que se deriva del tiempo, si. El cociente velocidad-por-
+# posiciones / speed_kmh en tramos de 2 s por encima de 15 km/h (p50) da ~1 en una toma sana (Hatchback 0,98; una toma del laboratorio de motos, herramienta aparte, 1,00) y
+# 0,50 en esa. Fuera de 0,9-1,1 no se usa.
+RELOJ_VENTANA_S = 2.0
+RELOJ_VMIN_KMH = 15.0
+RELOJ_MIN_TRAMOS = 3
+RELOJ_MIN = 0.9
+RELOJ_MAX = 1.1
+
+
+def cociente_reloj(filas):
+    """(p50 del cociente, tramos) sobre filas con t, x, z, spd (km/h); (None, tramos) si hay menos de RELOJ_MIN_TRAMOS."""
+    import math as _m
+    coc = []
+    n = len(filas)
+    i = 0
+    while i < n - 1:
+        j = i
+        while j < n - 1 and filas[j]["t"] - filas[i]["t"] < RELOJ_VENTANA_S:
+            j += 1
+        dt = filas[j]["t"] - filas[i]["t"]
+        if dt < RELOJ_VENTANA_S:
+            break
+        seg = filas[i:j + 1]
+        if min(f["spd"] for f in seg) > RELOJ_VMIN_KMH:
+            d = 0.0
+            for k in range(1, len(seg)):
+                # en 3D: speed_kmh es el modulo de la velocidad; en plano, una toma por lomas daba 0,96 (y una 0,89)
+                d += _m.sqrt((seg[k]["x"] - seg[k - 1]["x"]) ** 2 + (seg[k].get("y", 0.0) - seg[k - 1].get("y", 0.0)) ** 2
+                             + (seg[k]["z"] - seg[k - 1]["z"]) ** 2)
+            v_med = sum(f["spd"] for f in seg) / len(seg) / 3.6
+            if v_med > 0:
+                coc.append((d / dt) / v_med)
+        i = j
+    if len(coc) < RELOJ_MIN_TRAMOS:
+        return None, len(coc)
+    coc.sort()
+    return coc[len(coc) // 2], len(coc)
+
+
+def reloj_de_archivo(frame_path):
+    import csv as _csv
+    filas = []
+    with io.open(frame_path, encoding="utf-8") as fh:
+        for r in _csv.DictReader(fh):
+            try:
+                filas.append({"t": float(r.get("t_cum", 0) or 0), "x": float(r["x"]), "y": float(r.get("y", 0) or 0), "z": float(r["z"]),
+                              "spd": float(r.get("speed_kmh", 0) or 0)})
+            except (ValueError, KeyError):
+                pass
+    return cociente_reloj(filas)
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -722,6 +893,19 @@ def main(argv):
     e_pisado = None
     if os.path.exists(destino) and pisar:
         e_pisado = leer_envelope_csv(destino)[0]
+    # ★ el reloj de cada toma: una con el reloj roto no entra al envelope
+    sanas = []
+    for fr in frames:
+        coc_r, tramos_r = reloj_de_archivo(fr)
+        if coc_r is not None and (coc_r < RELOJ_MIN or coc_r > RELOJ_MAX):
+            # el Wizard reconoce este texto y lo repite en su idioma (route_wizard.ps1, Show-AvisosDeToma)
+            print("toma con el reloj roto (cociente %.2f en %d tramos): %s NO entra al envelope" % (coc_r, tramos_r, os.path.basename(fr)))
+            continue
+        sanas.append(fr)
+    if not sanas:
+        print("   -> ninguna toma con el reloj sano: el envelope no cambia.")
+        return 4   # no 3: el 3 es "el vehiculo cambio", y el Wizard pregunta si regenerar
+    frames = sanas
     partes = []
     filas_tot = 0
     dur_tot = 0.0
@@ -737,6 +921,10 @@ def main(argv):
         exigir_filas(fil_i, fr)
         ei = acumular(fil_i)
         ei["k"] = acumular_k(fil_i, wb)
+        if hk.get("vehicleKind", "") == "moto":
+            lm = lineas_moto(fr, hk)
+            ei["_ajenas"] = list(ei.get("_ajenas", [])) + lm
+            print("moto: %d lineas aut/bfrena/rpmkmh de %s" % (len(lm), os.path.basename(fr)))
         partes.append(ei)
         filas_tot += len(fil_i)
         dur_tot += fil_i[-1][T] - fil_i[0][T]

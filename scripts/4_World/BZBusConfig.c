@@ -1665,4 +1665,13 @@ class BZAutoDriveSettings {
     // ⚠ Es una RED DE SEGURIDAD, no una perilla de tuning: tiene que estar LEJOS de lo que tarda un
     // embarque sano. Si en el log ves [MUSTER] TOPE en corridas normales, el problema no es el numero.
     float CrewBoardTimeoutS = 120.0;
+    // DIAGNOSTICO DEL RPT. true = salen tambien las lineas que se repiten por tick o por reloj (DIRECCION, OBJETIVO,
+    // IMAN, DESLIZA, el latido de cada runner, [PERF] cada 5 s...): sirven para medir y depurar, y en un server con
+    // varios vehiculos llenan el RPT. Default false: salen solo las de carga, evento, FIN y error.
+    bool Diagnostics = false;
+    // CAJAS NEGRAS. true = cada corrida escribe BZ12_LOG_<ruta>_<hhmmss>.csv en esta carpeta (una fila por cuadro,
+    // ~0,5 MB por corrida). Default false. Encendidas se guardan las ultimas BlackBoxKeepPerRoute de cada ruta y se
+    // borran las mas viejas (0 o negativo = 10).
+    bool BlackBox = false;
+    int  BlackBoxKeepPerRoute = 10;
 }

@@ -84,7 +84,7 @@ class BZWorldProbeLive extends BZWorldProbe
             Object oV = objsV.Get(iV);
             if (!oV) continue;
             if (oV == m_Propio) continue;
-            if (CarScript.Cast(oV)) return true;
+            if (BZVehiculoFabrica.EsVehiculo(oV)) return true;
         }
         return false;
     }

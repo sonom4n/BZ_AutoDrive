@@ -161,6 +161,22 @@ class BZVehicleManual
     // que no se muevan. La medicion es cero; el objetivo no puede serlo.
     float creepKmh;               // OBJETIVO de arrastre de los modulos POSE
     float idleCreepKmh;           // MEDIDO: lo que hace solo. 0 = no repta (dato valido)
+    // la frenada a fondo MEDIDA en la parada final de la toma (m/s2); -1 sin medicion. Solo la lee el ENDPOINT.
+    private float m_FrenoTomaMs2 = -1;
+    private const float FRENO_TOMA_MIN_MS2 = 2.0;   // por debajo no es una frenada a fondo: no se usa
+    void SetFrenoToma(float aMs2) { m_FrenoTomaMs2 = aMs2; }
+    float FrenoToma() { return m_FrenoTomaMs2; }
+    // la frenada a fondo MEDIDA en la parada del cusp del leg en curso (m/s2); -1 sin medicion. La leen la MANIOBRA (pedales
+    // y techo de aproximacion) y el freno al fin del leg; el ENDPOINT usa la de la parada final (FrenoToma).
+    private float m_FrenoCuspMs2 = -1;
+    void SetFrenoCusp(float aMs2) { m_FrenoCuspMs2 = aMs2; }
+    float FrenoCusp() { return m_FrenoCuspMs2; }
+    float MaxBrakeDecelManiobra(int surf)
+    {
+        float aM = MaxBrakeDecel(surf);
+        if (m_FrenoCuspMs2 >= FRENO_TOMA_MIN_MS2 && m_FrenoCuspMs2 < aM) aM = m_FrenoCuspMs2;
+        return aM;
+    }
     bool  idleCreepIsZero;        // hay evidencia POSITIVA de que no repta
     // ¿Alguien YA decidio el objetivo de arrastre? Distinto de "esta medido": el
     // no-reptante lo tiene DERIVADO del freno, y una compuerta que pregunte solo por
@@ -613,6 +629,18 @@ class BZVehicleManual
     }
 
     // Freno fisico maximo: par de frenos sobre radio y masa, techado por el agarre del piso.
+    // ★ EL FRENO CON EL QUE EL ENDPOINT PLANEA Y DOSIFICA: el fisico del config, TECHADO por lo que la toma midio con el
+    // pedal a fondo. Medido (Hatchback, llegada a 20 km/h): el manual deriva 8,5 m/s2 del par de frenos y la fisica
+    // entrega 5,2-5,6; con 8,5 la zona por velocidad no se armaba y el pedal salia a 0,7 donde hacia falta 1,0 -> el
+    // auto se pasaba 0,4-0,5 m del punto. Con la toma como techo la zona se arma antes y el pedal satura donde debe.
+    // Las maniobras y el pursuit siguen con el fisico: un cambio por vez.
+    float MaxBrakeDecelEndpoint(int surf)
+    {
+        float a = MaxBrakeDecel(surf);
+        if (m_FrenoTomaMs2 >= FRENO_TOMA_MIN_MS2 && m_FrenoTomaMs2 < a) a = m_FrenoTomaMs2;
+        return a;
+    }
+
     float MaxBrakeDecel(int surf)
     {
         if (wheelRadiusM < 0.05) return 0;

@@ -336,6 +336,27 @@ function Select-Csv {
 # ============================================================================
 #  2) Convertir la grabacion elegida -> ruta deployada (frame_to_route.py)
 # ============================================================================
+# Los avisos de la toma que imprimen frame_to_route.py y envelope_emit.py (en castellano) se repiten en el idioma del
+# Wizard. Se reconocen por su texto: si se cambia en los .py, cambiarlo aca.
+function Show-AvisosDeToma {
+    param([string]$out)
+    if (-not $out) { return }
+    if ($out -match "\[ERROR\] toma con el reloj roto") { Write-Host ("   " + (T "take.clock_broken")) -ForegroundColor $C_ERR }
+    if ($out -match "\[reloj\] no se pudo medir el reloj") { Write-Host ("   " + (T "take.clock_unmeasured")) -ForegroundColor $C_WARN }
+    $nEnv = ([regex]::Matches($out, "toma con el reloj roto \(cociente [^)]*\): [^\r\n]* NO entra al envelope")).Count
+    if ($nEnv -gt 0) { Write-Host ("   " + ((T "take.clock_envelope") -f $nEnv)) -ForegroundColor $C_WARN }
+    if ($out -match "ninguna toma con el reloj sano") { Write-Host ("   " + (T "take.envelope_same")) -ForegroundColor $C_WARN }
+    $nChoque = ([regex]::Matches($out, "\[toma\] \(!\) toma con choque")).Count
+    if ($nChoque -gt 0) { Write-Host ("   " + ((T "take.crash") -f $nChoque)) -ForegroundColor $C_WARN }
+    $nRetro = ([regex]::Matches($out, "\[toma\] \(!\) toma con retroceso")).Count
+    if ($nRetro -gt 0) { Write-Host ("   " + ((T "take.rewind") -f $nRetro)) -ForegroundColor $C_WARN }
+    $nArr = ([regex]::Matches($out, "\[toma\] \(!\) antes del cambio de marcha")).Count
+    if ($nArr -gt 0) { Write-Host ("   " + ((T "take.creep") -f $nArr)) -ForegroundColor $C_WARN }
+    $mCam = [regex]::Match($out, "\[moto\] [^\r\n]*?(\d+) tramo\(s\) caminando")
+    if ($mCam.Success -and [int]$mCam.Groups[1].Value -gt 0) { Write-Host ("   " + ((T "take.walking") -f $mCam.Groups[1].Value)) -ForegroundColor $C_WARN }
+    if ($out -match "\[ERROR\] moto: la toma entera es caminando") { Write-Host ("   " + (T "take.all_walking")) -ForegroundColor $C_ERR }
+}
+
 function Invoke-Convert {
     param([string]$framePath)
 
@@ -389,6 +410,7 @@ function Invoke-Convert {
         $envCode = $LASTEXITCODE
         $ErrorActionPreference = $prevEAP2
         if ($envOut -and $envOut.Trim() -ne "") { Write-Host ("   " + $envOut.TrimEnd()) -ForegroundColor $C_INFO }
+        Show-AvisosDeToma $envOut
         # ★ 981 (el usuario, 22/09): el envelope se LLENA con cada toma de la clase (fusion en silencio, y la
         # consola dice que crecio) y SOLO pregunta cuando el Fingerprint estable del vehiculo cambio (Mass / marchas /
         # angulo de direccion): envelope_emit.py sale con codigo 3 y deja las dos firmas impresas arriba. La pregunta
@@ -422,6 +444,7 @@ function Invoke-Convert {
     if ($pyOut -and $pyOut.Trim() -ne "") {
         Write-Host ""
         Write-Host ($pyOut.TrimEnd()) -ForegroundColor $C_INFO
+        Show-AvisosDeToma $pyOut
     }
 
     if ($code -ne 0) {
@@ -829,6 +852,7 @@ function Invoke-ImportTransport {
     if ($pyOut -and $pyOut.Trim() -ne "") {
         Write-Host ""
         Write-Host ($pyOut.TrimEnd()) -ForegroundColor $C_INFO
+        Show-AvisosDeToma $pyOut
     }
     if ($code -ne 0) {
         Write-Host ""

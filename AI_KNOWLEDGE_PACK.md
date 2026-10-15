@@ -29,6 +29,17 @@ Tres ideas: (1) **demostración = mapeo de ruta** (DayZ no tiene red de caminos;
 
 ## 2. Estado del proyecto — DÓNDE ESTAMOS (2026-09-25, BZ AutoDrive 1.2)
 
+### 2.0 — La 1.2.1 (2026-09-29): lo que cambió desde la 1.2 *(leé esto primero)*
+- **DayZ 1.30:** un solo PBO compila en la 1.29 y la 1.30 (`#ifdef DAYZ_1_29`). La 1.2 publicada **no compila en la 1.30** (`ToggleHeadlights()` ya no existe): con la 1.30 hay que usar la 1.2.1. Luces con el sistema nuevo. Borrar un vehículo con alguien sentado tira el server en la 1.30: el framework espera a que quede vacío.
+- **Motos (experimental):** `MotorbikeScript` **no es CarScript** y tiene conductor propio (`BZConductorMoto`): `SetBrake` es el freno DELANTERO y `SetHandbrake` el TRASERO (los comentarios de `Motorbike.c` están al revés); sin reversa; ley de inclinación con amortiguación; caminar con la moto se graba y se reproduce (con animación, hacia adelante y atrás); destrabe caminando 3 m atrás. **La planta dirección→inclinación tiene 0,4-0,7 s de retardo:** la ley directa (ganancia 2) oscilaba a 85-100 km/h (hasta 3,7 m), así que arriba de 65 km/h (entera desde 85) corre una **cascada por inclinación** (roll objetivo desde la curvatura grabada 0,3 s adelante; la dirección sigue al roll; constantes `CASC_*`). El roll grabado NO sirve de base (el humano inclina de más con los toques de teclado): queda para la guarda. Final por **eficacia de freno medida** en el slam (m/s² por unidad de pedal). Caminata: el rumbo se impone por orientación cuadro a cuadro (con las ruedas apoyadas la velocidad angular impuesta no gira la moto), el lateral se corrige por el rumbo, y al terminar arranca a fondo. Llegadas de 1-4 cm; Enduro a 120 km/h con desvío ≤ 0,56 m.
+- **Velocímetro NaN (1.30):** `GetSpeedometerAbsolute()` puede dar NaN varios segundos tras el spawn (medido en un Offroad_02 automático). Toda lectura pasa por `KmhDe()` (cae a la velocidad del cuerpo); `BZMath.Finite` decide qué es un número (el motor no compara NaN como IEEE: `NaN > 0.5` dio verdadero). Para probar: `$profile:BZ_AutoDrive\BZ12_PRUEBA_NAN_S.txt` con N segundos fuerza la lectura cruda a NaN.
+- **El veredicto estricto:** `ROUTE_COMPLETE` exige, en **reposo**, ≤ 0,25 m de la pose final **y** ningún choque contra un objeto **y** ninguna intervención física del AR. El FIN y los eventos de fin salen **en el reposo** (≤ ~3,5 s después de llegar), con `[C12] REPOSO tras T s: a X m …`. `RunnerReposoFinM()` nuevo. La red de 1 m ya no aprueba.
+- **Precisión:** la frenada final y la de cada cusp se miden en la toma (`FRENADA de la toma` / `FRENADA del cusp`): el `MaxBrakeDecel` del config sobreestima (8,5 contra 5,5 real). La cuerda del anclaje de la cinta corre en avance y reversa (solo con el casco rodando) y descarta cuerdas contra el rumbo grabado (retrocesos de la toma). El leg cierra solo en la ÚLTIMA parada grabada de la fase; las paradas intermedias se cumplen por tiempo (también en maniobra, con 1,5 s de gracia tras una meseta). Freno al fin del leg si la toma se agota con el casco rodando. Imán lateral ×3 en los últimos ~6 batallas antes de un cusp. Sin imán de gas contra un freno grabado.
+- **Wizard:** reloj real del grabador (una toma con reloj roto no se convierte); avisos `(!)` de retrocesos y de arrastre sin freno antes de un cambio de marcha; el wp de un cusp va en el reposo de la toma.
+- **Panel:** en la 1.30 cierra con la tecla que lo abrió (INICIO por defecto) y con ESC (sin abrir la pausa).
+- **Logs:** `Diagnostics` (off por defecto: RPT > 90 % más chico) y `BlackBox` (off por defecto) / `BlackBoxKeepPerRoute` (10 por defecto) en el settings.
+- **Limitación conocida:** lo que la toma avanzó a < 1 km/h dentro de la última parada antes de un cambio de marcha (típico 30-40 cm) no se repite. Regla de grabación: freno pisado hasta poner la otra marcha.
+
 **El norte (septiembre 2026): el producto es el FRAMEWORK.** BZ_BusDrive, BZ_Convoy, BZ_HeliDrive y BZ_SeaDrive son mods **aparte** que lo usan como dependencia. Reparto de responsabilidades, que es la regla que vas a usar para decir que no:
 ```
 el FRAMEWORK   reproduce la toma y GARANTIZA QUE EL VEHICULO NO SE QUEDE DETENIDO
@@ -463,7 +474,7 @@ Marcador NUMPAD 4 (graba `isStop=true` en el wp) → nodo de evento. `Events[]` 
 - **⚠ wp 0 ocupado** (otro `CarScript` a < 3,5 m): el runner ESPERA (re-intenta cada 5 s; NO corre el punto), `RunnerIsActive()` false + `RunnerEsperandoCabecera()` true: **no es una falla**. Panel `WAITING wp0 ocupado Ns`.
 - **Estado (polling a 1 s):** `RunnerIsActive` · `RunnerWpIdx/WpTotal` · `RunnerPos/SpeedKmh` · `RunnerAtStop` · `IsHeld` (hold) ≠ `RunnerIsPaused` (pausa blanda) · `RunnerRouteEnded/RouteCompleted/EndReason` · `RunnerFellBackTo11` · `RunnerBloqueado/BloqueadoMotivo/BloqueadoDesdeS` (escalera abierta) · `RunnerRecuperando/RecuperandoQue` (superconjunto: + C1, F1, re-ubicación) · `RunnerChoqueHaceS` (definición de la línea `*** CHOQUE ***`; −1 si no hubo) · `RunnerEsperandoCabecera/EsperandoCabeceraS`.
 - **Control:** `HoldRunner` (con meseta grabada a < 8 m engancha EN ella; ⚠ un hold hasta 8 m antes de una parada grabada la da por servida) · `ResumeFromHold` · `SetPaused` · `HornBeep` · `StopRunner` · `SetVehiclePartsLocked(bool)` / `VehiclePartsLocked()` (vehículo inviolable). **Identidad:** `GetInstance` · `GetRunners` · `GetRunnerForCar` · `GetBus/GetDriver` · `GetRouteName` · `Etiqueta/NombreLog` · `GetOrigin` · `IsControlPanelAdmin(sid)` (pública, fail-closed).
-- **Eventos** (`PollEvent`, `BZDriveEv`): 1 ARRIVED · 2 ROUTE_COMPLETE · 3 STUCK · 4 ROUTE_INCOMPLETE · 5 BLOQUEADO (no cierra). **La cola es interna**: el controlador es privado del runner y el runner la drena él mismo; un mod consumidor usa los métodos `Runner*` (polling).
+- **Eventos** (`PollEvent`, `BZDriveEv`): 1 ARRIVED · 2 ROUTE_COMPLETE · 3 STUCK · 4 ROUTE_INCOMPLETE · 5 BLOQUEADO (no cierra). **1.2.1:** 2 y 4 salen en el REPOSO (≤ ~3,5 s después de llegar) con el veredicto estricto; `RunnerReposoFinM()` da la distancia en reposo. **La cola es interna**: el controlador es privado del runner y el runner la drena él mismo; un mod consumidor usa los métodos `Runner*` (polling).
 - **Contar en el RPT:** choques por EPISODIO (`*** CHOQUE #N ***` + `episodio cerrado`; `BACHE` aparte), BLOQUEADO == `BLOQUEO terminado` por coche, puntos negros por POSICIÓN (no por wp), `quedo:` por spawn. ⚠ ms sin ceros a la izquierda (`41.27` = 41,027 s); ⚠ los CSV de 40 Hz se nombran con la hora UTC y SIN fecha: ordenar por fecha de archivo.
 
 **Car API (escribir):** `SetThrottle(0..1)`, `SetSteering(-1..1)`, `SetBrake`, `SetHandbrake`, `ShiftTo(gear)`, `EngineStart/Stop`. **(leer):** `GetSpeedometer()`, `EngineGetRPM()`, `WheelGetContactPosition(i)` (→wheelbase), `WheelGetSurface(i)`, `EngineGetRPMRedline()`, `GetGearCount()` (NO `GetGearsCount`, obsoleto). Config: `GetGame().ConfigGetFloat/Array("CfgVehicles/<cls>/...")`.
@@ -576,6 +587,18 @@ Esto es lo que efectivamente nos pasó y nos costó tiempo. Cuando un admin/modd
 | El launcher seguía cargando el mod viejo aunque edité el archivo | el `meta.cpp` tenía el `name` viejo (dos mods locales con mismo `name` se confunden) + launcher no relee hasta reiniciar | migrar el `name` del `meta.cpp`; reiniciar el launcher del todo |
 | Boot del server ~3 min | JSON de ruta enorme parseado en `Init()` | partir la ruta / usar el par fast-load (FGets); lazy-load (futuro) |
 | 40 mods → "Server can't transmit all data" | techo ~38 mods (Steam query ~255 bytes) | sacar no esenciales o consolidar PBOs chicos |
+
+### 12.x — DayZ 1.30 (medido, septiembre 2026)
+| Síntoma | Causa | Qué hacer |
+|---|---|---|
+| La 1.2 no compila en la 1.30 | `ToggleHeadlights()` ya no existe; las luces son otro sistema | usar la 1.2.1 (un PBO con `#ifdef DAYZ_1_29`) |
+| El server se cae al retirar un vehículo | borrar un vehículo con un Man sentado tira el server en la 1.30 | esperar a que quede vacío (el framework ya lo hace; ojo con otros mods que borran vehículos) |
+| `FindFile("$profile:…")` no encuentra archivos | en la 1.30 lista la raíz del perfil | construir la ruta completa; insistir si el primer `ShiftTo` se pierde |
+| La lista de rutas sale vacía en la 1.30 | con `-profiles` absoluto la 1.30 no deja listar archivos del perfil (RPT: `DayZ 1.30 cannot list files under an absolute -profiles path…`) | arrancar el server con `-profiles` relativo (`-profiles=profiles`) |
+| La moto frena "al revés" | `SetBrake` = delantero, `SetHandbrake` = trasero (los comentarios del vanilla están al revés) | usar los dos para sostenerla quieta |
+| `MotorbikeFluid.OIL` no compila | enum derivada sin `;` en el vanilla | usar `ETransportFluid` / `GetFluidCapacityScript` |
+| El reloj de la moto va al doble | `EOnPostSimulate` corre 2 veces por paso en la moto | medir el tiempo con `GetGame().GetTime()` |
+| Una toma de la 1.29 choca en la 1.30 | el mapa cambió (p. ej. un wreck nuevo en la ruta) | las tomas se prueban en el server donde se grabaron; regrabar donde el mapa cambió |
 
 ---
 

@@ -13,6 +13,7 @@
 //  Garbage temporalmente NO se filtra (puede agregarse al patterns abajo).
 // ============================================================================
 
+#ifdef DZ_Expansion_Core_Preload
 modded class ExpansionWorldObjectsModule {
 
     static const string BZWRECK_PATTERNS[] = {
@@ -44,3 +45,4 @@ modded class ExpansionWorldObjectsModule {
         super.LoadObjects(files, addExtension);
     }
 }
+#endif

@@ -75,6 +75,10 @@ class BZBusClientManager {
         if (!ctx.Read(isAdmin)) return;
         s_ControlPanelKey = key;
         s_IsControlPanelAdmin = isAdmin;
+        // el server dice ademas si las lineas de diagnostico estan encendidas (solo a un admin): el cliente las usa para
+        // las suyas (apertura y cierre del panel)
+        bool diagP;
+        if (ctx.Read(diagP)) BZDiag.Fijar(diagP);
         BZBusLog.Info("[Panel] Settings recibidos: key=" + key + " admin=" + isAdmin);
     }
 
@@ -333,6 +337,22 @@ class BZBusClientManager {
         rpc.Write(slot);
         rpc.Send(player, BZBusRPC.REQUEST_RESPAWN_SLOT, true, null);
         BZBusLog.Info("RequestRespawnSlot enviado: slot=" + slot);
+    }
+
+    // EL SERVER NO HIZO UN SPAWN VACIO (lugar ocupado, ruta que no cargo, vehiculo que no se pudo crear): el panel retira la
+    // fila LOADING de esa ruta y wp en vez de esperar a que venza. s_SpawnRechazoVer sube en cada recepcion (el panel lo
+    // mira en su Update, como s_RIVer).
+    static string s_SpawnRechazoRuta = "";
+    static int    s_SpawnRechazoWp = -1;
+    static int    s_SpawnRechazoVer = 0;
+    static void OnReceiveContinuarRechazado(ParamsReadContext ctx) {
+        string rutaR;
+        int wpR;
+        if (!ctx.Read(rutaR)) return;
+        if (!ctx.Read(wpR)) return;
+        s_SpawnRechazoRuta = rutaR;
+        s_SpawnRechazoWp = wpR;
+        s_SpawnRechazoVer++;
     }
 
     // 2026-07-31: CONTINUAR GRABACION. Spawnea el vehiculo de la toma (por nombre de archivo, como el reproductor)
