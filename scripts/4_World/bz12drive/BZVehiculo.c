@@ -83,9 +83,11 @@ class BZVehiculo {
 
     // un escalar, o el mayor VALOR de una tabla de pares {velocidad, valor, velocidad, valor...} (las de la moto:
     // maxSteeringAngle[]={1,40,5,40,...,80,1}); los indices pares son velocidades y no cuentan
+    // (el nombre de un local no puede ser el de una clase de config de NINGUN mod cargado: un paquete de vehiculos de la
+    // 1.30 trae `class esc` y con un local `esc` el modulo no compilaba)
     static float ConfigMax(string ruta) {
-        float esc = GetGame().ConfigGetFloat(ruta);
-        if (esc > 0) return esc;
+        float valorEscalar = GetGame().ConfigGetFloat(ruta);
+        if (valorEscalar > 0) return valorEscalar;
         array<float> tabla = new array<float>();
         GetGame().ConfigGetFloatArray(ruta, tabla);
         float mx = 0;

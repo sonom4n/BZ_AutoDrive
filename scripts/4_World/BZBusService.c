@@ -2077,8 +2077,8 @@ class BZBusService {
         // seat 2 = trasero: deja el asiento 1 (acompanante delantero) LIBRE para el jugador.
         // (bug 2026-06-22: VIP en seat 1 + player en seat 1 -> se fusionaban y trababan al player)
         int seat = 2;
-        vector door; vector ddir;
-        transport.CrewEntryWS(seat, door, ddir);
+        vector puertaWS; vector ddir;
+        transport.CrewEntryWS(seat, puertaWS, ddir);
         bool hd = false; string ds = "";
         ExpansionFSMHelper.DoorAnimationSource(m_Bus, seat, hd, ds);
         eAIGroup vg = eAIGroup.CreateGroup(eAIFaction.Create("Passive"));
@@ -2093,11 +2093,11 @@ class BZBusService {
         vip.SetMovementSpeedLimits(2, 3);
         vg.ClearWaypoints();
         vg.SetFormationState(eAIGroupFormationState.IN);
-        vg.AddWaypoint(BoardGroundWP(door));
+        vg.AddWaypoint(BoardGroundWP(puertaWS));
         vg.SetWaypointBehaviour(eAIWaypointBehavior.ONCE);
         if (vip.GetPathFinding()) vip.GetPathFinding().ForceRecalculate(true);
         BZBoardState e = new BZBoardState();
-        e.bot = vip; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = door; e.phase = 1;
+        e.bot = vip; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = puertaWS; e.phase = 1;
         m_CrewBoard.Insert(e);
         m_Crew.Insert(vip);
         m_CrewSeats.Insert(seat);
@@ -2202,8 +2202,8 @@ class BZBusService {
                 if (seat > 5) break;   // Cobra: 5 plazas de pasajero (seat 1-5)
                 eAIBase b = eAIBase.Cast(p.m_Group.GetMember(m));
                 if (!b) continue;
-                vector door; vector ddir;
-                transport.CrewEntryWS(seat, door, ddir);
+                vector puertaWS; vector ddir;
+                transport.CrewEntryWS(seat, puertaWS, ddir);
                 bool hd = false; string ds = "";
                 ExpansionFSMHelper.DoorAnimationSource(m_Bus, seat, hd, ds);
                 // PACIFICAR: los bots estan en COMBATE (te disparan) -> con threat activo NO recorren
@@ -2223,12 +2223,12 @@ class BZBusService {
                     b.SetMovementSpeedLimits(2, 3);
                     bg.ClearWaypoints();
                     bg.SetFormationState(eAIGroupFormationState.IN);
-                    bg.AddWaypoint(BoardGroundWP(door));
+                    bg.AddWaypoint(BoardGroundWP(puertaWS));
                     bg.SetWaypointBehaviour(eAIWaypointBehavior.ONCE);
                     if (b.GetPathFinding()) b.GetPathFinding().ForceRecalculate(true);
                 }
                 BZBoardState e = new BZBoardState();
-                e.bot = b; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = door; e.phase = 1;
+                e.bot = b; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = puertaWS; e.phase = 1;
                 m_CrewBoard.Insert(e);
                 m_Crew.Insert(b);
                 m_CrewSeats.Insert(seat);
@@ -2274,13 +2274,13 @@ class BZBusService {
                 if (m_Crew.Find(b) >= 0) continue;   // ya embarcando/embarcado (idempotente)
                 int seat = m_Crew.Count() + 1;
                 if (seat > maxSeat) break;            // no hay mas asientos de pasajero
-                vector door; vector ddir;
-                transport.CrewEntryWS(seat, door, ddir);
+                vector puertaWS; vector ddir;
+                transport.CrewEntryWS(seat, puertaWS, ddir);
                 bool hd = false; string ds = "";
                 ExpansionFSMHelper.DoorAnimationSource(m_Bus, seat, hd, ds);
                 // phase=0 (esperando turno): el waypoint lo emite StepCrewBoarding al promover (de a uno).
                 BZBoardState e = new BZBoardState();
-                e.bot = b; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = door; e.phase = 0;
+                e.bot = b; e.seat = seat; e.timer = 0; e.hasDoor = hd; e.doorSrc = ds; e.entry = puertaWS; e.phase = 0;
                 m_CrewBoard.Insert(e);
                 m_Crew.Insert(b);
                 m_CrewSeats.Insert(seat);
@@ -15934,11 +15934,11 @@ class BZBusService {
             pos[1] = origin[1] + (i * plateLength * pitchTan);
             pos[2] = origin[2] + forward[2] * (i * plateLength);
 
-            Object plate = GetGame().CreateObjectEx(plateClass, pos, ECE_PLACE_ON_SURFACE | ECE_LOCAL);
-            if (plate) {
-                plate.SetOrientation(Vector(headingDeg, pitchDeg, 0));
-                plate.SetPosition(pos); // re-set despues de orientation para evitar snap
-                m_RampObjects.Insert(plate);
+            Object chapaRampa = GetGame().CreateObjectEx(plateClass, pos, ECE_PLACE_ON_SURFACE | ECE_LOCAL);
+            if (chapaRampa) {
+                chapaRampa.SetOrientation(Vector(headingDeg, pitchDeg, 0));
+                chapaRampa.SetPosition(pos); // re-set despues de orientation para evitar snap
+                m_RampObjects.Insert(chapaRampa);
                 spawned++;
             }
         }

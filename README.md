@@ -86,6 +86,8 @@ Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork
 
 ## Estado
 
+**v1.2.2** — arreglo urgente: la 1.2.1 no compilaba junto al CarPack actualizado para la 1.30 (y otros packs con clases de nombre corto). Solo cambian nombres de variables; la conducción es la misma.
+
 **v1.2.1** — **lista para la DayZ 1.30**: un solo paquete corre en la 1.29 y en la 1.30; **motos** (experimental, solo 1.30); **veredicto estricto** del fin de ruta, decidido con el vehículo quieto; frenada final medida en tu toma; cambios de sentido a centímetros; logs livianos por defecto (`Diagnostics`, `BlackBox`). En la 1.30, arrancá el server con un `-profiles` relativo.
 
 **v1.2** — **cerebro de manejo nuevo**: reproduce tu manejo (*cinta*) y **mide** cada vehículo (*ficha*); nadie se arrastra solo en ralentí (medido en 43 vehículos); gas de arranque medido en la flota; **AutoRecovery** que detecta la traba por el avance y rescata también en reversa; cambios de sentido más rápidos; la conversión genera **cuatro** archivos y trae **Python incluido**. Se mantiene de antes: **reversa y cambios de sentido auto-detectados**, **parada final precisa**, **DSL de eventos**, **integración con Quests** (convoy/emboscada/escolta), **multi-runner**, UI/Reproductor. Detalle en el [CHANGELOG](CHANGELOG.md).

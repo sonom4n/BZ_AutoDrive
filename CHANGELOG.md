@@ -6,6 +6,15 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.2.2
+
+**Arreglo urgente: compatibilidad con otros mods.** La 1.2.1 no compilaba en un server que tuviera ciertos mods: el server no arrancaba (`Can't compile "World" script module`).
+
+- **Corregido: el server no arrancaba con el CarPack actualizado para la 1.30** (y con otros packs que definen clases con nombres cortos, como `door` o `plate`). Esos mods traen vehículos u objetos cuyo nombre interno es una palabra corta (`esc`), y en DayZ cada clase de configuración es también un nombre reservado para los scripts. Tres variables de AutoDrive se llamaban igual y el compilador no lo acepta: `Variable name 'esc' already used as type name`. Ahora tienen nombres propios. **No cambia nada de la conducción ni del comportamiento.**
+- **Mejorado: cómo lo evitamos de acá en más.** Antes de cada versión, los nombres de las variables del framework se revisan contra los nombres de clase de más de 1.400 PBO del Workshop (226 mods), y la prueba es parte de la validación.
+
+---
+
 ## v1.2.1
 
 **DayZ 1.30, las motos, y un framework mucho más exacto.** La 1.2 publicada no compila en la 1.30: la 1.2.1 corre en las dos versiones con un solo PBO. Además trae las motos (experimental) y una tanda grande de precisión: cada ruta se da por completa solo si termina bien de verdad, y el vehículo sigue tu línea también en los cambios de sentido y en las paradas.

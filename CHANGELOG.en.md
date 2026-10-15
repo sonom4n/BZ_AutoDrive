@@ -6,6 +6,15 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.2.2
+
+**Urgent fix: compatibility with other mods.** 1.2.1 did not compile on a server with certain mods loaded: the server would not start (`Can't compile "World" script module`).
+
+- **Fixed: the server would not start with the CarPack updated for 1.30** (and with other packs that define classes with short names, like `door` or `plate`). Those mods ship vehicles or objects whose internal name is a short word (`esc`), and in DayZ every config class is also a reserved name for scripts. Three AutoDrive variables had the same names and the compiler rejects that: `Variable name 'esc' already used as type name`. They now have names of their own. **Nothing changes in driving or behavior.**
+- **Improved: how we prevent it from now on.** Before every release, the framework's variable names are checked against the class names of more than 1,400 Workshop PBOs (226 mods), and that check is part of validation.
+
+---
+
 ## v1.2.1
 
 **DayZ 1.30, motorbikes, and a much more precise framework.** The published 1.2 doesn't compile on 1.30: 1.2.1 runs on both versions with a single PBO. It also brings motorbikes (experimental) and a big round of precision work: a route only counts as complete if it really ends well, and the vehicle follows your line at direction changes and stops too.

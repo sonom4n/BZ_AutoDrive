@@ -86,6 +86,8 @@ To use it: subscribe on the Workshop (it ships signed). To build your fork: pack
 
 ## Status
 
+**v1.2.2** — urgent fix: 1.2.1 did not compile together with the CarPack updated for 1.30 (and other packs with short-named classes). Only variable names change; driving is the same.
+
 **v1.2.1** — **ready for DayZ 1.30**: a single package runs on 1.29 and 1.30; **motorbikes** (experimental, 1.30 only); a **strict verdict** for the end of a route, decided with the vehicle at rest; final braking measured from your take; direction changes within centimeters; light logs by default (`Diagnostics`, `BlackBox`). On 1.30, start the server with a relative `-profiles`.
 
 **v1.2** — **new driving brain**: it replays your driving (the *tape*) and **measures** each vehicle (its *profile*); no vehicle creeps on its own at idle (measured on 43 vehicles); launch throttle measured across the fleet; an **AutoRecovery** that detects a jam by lack of progress and also recovers in reverse; faster direction changes; conversion produces **four** files and ships with **Python included**. Kept from before: **auto-detected reverse and direction changes**, **precise final stop**, **event DSL**, **Quests integration** (convoy/ambush/escort), **multi-runner**, UI/player panel. Details in the [CHANGELOG](CHANGELOG.en.md).
