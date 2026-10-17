@@ -86,6 +86,8 @@ To use it: subscribe on the Workshop (it ships signed). To build your fork: pack
 
 ## Status
 
+**v1.2.3** — AutoDrive vehicles are no longer saved in the world when the server shuts down; ESC can no longer become the panel key; much more accurate motorbikes (they follow the path's shape, measure how they respond, stop exactly where other mods ask and pull away in 1st).
+
 **v1.2.2** — urgent fix: 1.2.1 did not compile together with the CarPack updated for 1.30 (and other packs with short-named classes). Only variable names change; driving is the same.
 
 **v1.2.1** — **ready for DayZ 1.30**: a single package runs on 1.29 and 1.30; **motorbikes** (experimental, 1.30 only); a **strict verdict** for the end of a route, decided with the vehicle at rest; final braking measured from your take; direction changes within centimeters; light logs by default (`Diagnostics`, `BlackBox`). On 1.30, start the server with a relative `-profiles`.

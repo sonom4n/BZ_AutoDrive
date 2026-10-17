@@ -4004,6 +4004,8 @@ class BZBusService {
             m_AtStop = false;
             m_NextStopIndex = -1;
             if (m_Ctrl12) m_Ctrl12.Resume();
+            // la moto detenida en una meseta grabada: se suelta la meseta y arranca en el acto (en la 1ra grabada)
+            if (m_Moto12 && m_Carga12 && m_Carga12.Cinta() && m_Carga12.Cinta().EnMeseta()) m_Carga12.Cinta().SoltarMeseta();
             BZBusLog.Info("[API][C12] ResumeFromHold -> Resume() al controller");
             return;
         }
@@ -4025,6 +4027,20 @@ class BZBusService {
     // Sin meseta a la vista (un taxi a mitad de tramo) engancha ya, como siempre. Idempotente.
     void HoldRunner() {
         if (m_HoldActive || m_HoldPendiente) return;
+        // la MOTO (su conductor no tiene el cerebro del auto): lo mismo con su cinta. Si hay una meseta grabada a la vista, la
+        // moto llega hasta ahi por su cuenta y el hold engancha con la moto detenida EN la parada grabada. Medido: el freno
+        // en el acto la dejaba 4 m antes de la parada y hacia dos paradas (la del hold y la de la meseta)
+        if (m_Usar12 && m_C12Listo && m_Moto12 && m_Carga12 && m_Carga12.Cinta() && m_Bus) {
+            BZCintaRunner cinM = m_Carga12.Cinta();
+            float entraM = cinM.InicioMesetaAdelante();
+            if (entraM >= 0) {
+                m_HoldPendiente = true;
+                m_HoldPedidoPos = m_Bus.GetPosition();
+                m_HoldMesetaS = entraM;
+                BZBusLog.Info("[API][MOTO] HOLD pedido con una meseta grabada a la vista (entra en s " + entraM.ToString() + "): engancha ahi, con la moto detenida");
+                return;
+            }
+        }
         if (m_Usar12 && m_C12Listo && m_Ctrl12 && m_Bus) {
             float mesetaM = m_Ctrl12.MesetaAdelanteM();
             if (mesetaM >= 0) {
@@ -4141,6 +4157,7 @@ class BZBusService {
         if (!m_Moto12) {
             m_Moto12 = new BZConductorMoto();
             m_Moto12.Configurar(v, trM.GetType(), AjenasEnvelopeMoto(trM.GetType()));
+            m_Moto12.FijarRuta(NombreCortoDeRuta(m_RouteName));   // sin prefijo ni .json: va al nombre del archivo de la autoridad guardada
             // una ruta de moto convertida antes de la guarda del reloj del conversor no trae RelojCociente en el hdr
             string hdrTxtM = BZJsonPresencia.LeerHeader(m_ConfigTextoPath);
             if (hdrTxtM.IndexOf("\"MarchaCinta\"") >= 0 && hdrTxtM.IndexOf("\"RelojCociente\"") < 0) {
@@ -4221,6 +4238,27 @@ class BZBusService {
         if (m_Paused || m_RouteStopped || m_HoldActive || m_Frozen) return false;
         if (m_CurrentInput == BZBusInput.SPAWN) return false;
         if (!m_Carga12 || !m_Carga12.Termino()) return false;
+        // el hold pedido con una meseta a la vista engancha aca, a 40 Hz: cuando el cursor llega a la entrada de la meseta,
+        // o la moto ya esta quieta, o la meseta quedo atras (mas que su alcance desde el pedido)
+        if (m_HoldPendiente) {
+            BZCintaRunner cinH = m_Carga12.Cinta();
+            bool listoH = false;
+            if (cinH && m_HoldMesetaS >= 0 && cinH.SEst() >= m_HoldMesetaS) listoH = true;
+            if (v.KmhAbs() < 0.3) listoH = true;
+            vector pH = v.T().GetPosition();
+            float hdxM = pH[0] - m_HoldPedidoPos[0];
+            float hdzM = pH[2] - m_HoldPedidoPos[2];
+            float alcH = BZCintaRunner.SALTO_CONSULTA_M;
+            if (hdxM * hdxM + hdzM * hdzM > alcH * alcH) listoH = true;
+            if (listoH) {
+                m_HoldPendiente = false;
+                m_HoldActive = true;
+                SetCachedInput(0, 0, 1.0);
+                SetCachedHandbrake(1.0);
+                BZBusLog.Info("[API][MOTO] HOLD en la meseta grabada · v " + v.KmhAbs().ToString() + " km/h · arco " + m_Moto12.Arco().ToString() + " m");
+                return false;
+            }
+        }
         return m_Moto12.Paso(v, m_Carga12.Cinta(), dt);
     }
 
@@ -4913,12 +4951,13 @@ class BZBusService {
             RechazarContinuar(player, wpIndex, "Spawn point occupied by " + ocupC.GetType() + " (" + dOcR.ToString() + " m away): no empty vehicle created");
             return;
         }
-        EntityAI veh = EntityAI.Cast(GetGame().CreateObject(vc, spawnPos, false, initAI));
+        EntityAI veh = EntityAI.Cast(GetGame().CreateObjectEx(vc, spawnPos, FlagsVehiculoSinPersistencia(initAI)));
         if (!veh) {
             BZBusLog.Err("[Continuar] no se pudo crear el vehiculo: " + vc);
             RechazarContinuar(player, wpIndex, "Could not create " + vc + ": no empty vehicle created");
             return;
         }
+        BZBusLog.Info("[Continuar] " + vc + TextoSinPersistencia());
         // EL VEHICULO NACE ORIENTADO Y EN SU LUGAR ANTES DE QUE LA FISICA
         // LO TOME. CreateObject crea apuntando al norte (es del motor: con COT pasa igual) y con la fisica activa; hasta hoy se
         // orientaba y equipaba DESPUES, sobre un cuerpo que ya cae (sale a y grabada + 0,10 o piso + 0,5). Ahora: fisica quieta
@@ -5211,11 +5250,12 @@ class BZBusService {
         //   El F350 es el UNICO de 67 vehiculos con wheelHubRadius (0,40) > radius de cubierta (0,295).
         //   El usuario cerro el F350. Si otro vehiculo nuevo nace con < 4/4 (lo avisa el SpawnProbe), reabrir
         //   desde aca: CreateObjectEx(vc, pos, ECE_PLACE_ON_SURFACE) movio el resultado, no lo arreglo.
-        m_Bus = EntityAI.Cast(GetGame().CreateObject(vc, startPos, false, initAI));
+        m_Bus = EntityAI.Cast(GetGame().CreateObjectEx(vc, startPos, FlagsVehiculoSinPersistencia(initAI)));
         if (!m_Bus) {
             BZBusLog.Err("No se pudo crear vehiculo: " + vc);
             return;
         }
+        BZBusLog.Info("[BZ12] " + vc + TextoSinPersistencia());
         // ⚠⚠⚠ QUE LA CLASE EXISTA NO SIGNIFICA QUE SEA UN VEHICULO.
         // `CreateObject` tiene EXITO con cualquier clase del config, asi que apuntar una
         // ruta a algo que no es un auto NO fallaba aca: fallaba mas abajo, de formas raras
@@ -5378,7 +5418,7 @@ class BZBusService {
         }
         float tSp1 = GetGame().GetTickTime();   // cuanto cuesta CREAR al chofer (init_ai completo)
 #ifdef DZ_Expansion_AI_Preload
-        m_Driver = eAIBase.Cast(GetGame().CreateObject(m_Config.DriverClass, driverPos, false, true));
+        m_Driver = eAIBase.Cast(GetGame().CreateObjectEx(m_Config.DriverClass, driverPos, FlagsAISinPersistencia()));
 #else
         m_Driver = CrearChoferVanilla(driverPos);
 #endif
@@ -5855,6 +5895,7 @@ class BZBusService {
     // DriverClass de la ruta sin el prefijo "eAI_" (eAI_SurvivorM_Boris -> SurvivorM_Boris); si no existe o no es un
     // sobreviviente, SurvivorM_Mirek, la medida en el laboratorio de motos (herramienta aparte).
     static const string CHOFER_VANILLA_DEF = "SurvivorM_Mirek";
+
     static const int    CHOFER_VANILLA_ORDENES = 3;
     static const float  CHOFER_VANILLA_REINTENTO_S = 1.5;
     private int   m_ChoferOrdenes;   // ordenes de sentarse dadas al maniqui en este embarque
@@ -5867,7 +5908,7 @@ class BZBusService {
         if (m_Config) cls = m_Config.DriverClass;
         if (cls.IndexOf("eAI_") == 0) cls = cls.Substring(4, cls.Length() - 4);
         if (cls == "" || !GetGame().IsKindOf(cls, "SurvivorBase")) cls = CHOFER_VANILLA_DEF;
-        int flags = ECE_SETUP | ECE_CREATEPHYSICS | ECE_KEEPHEIGHT | ECE_NOLIFETIME;
+        int flags = ECE_SETUP | ECE_CREATEPHYSICS | ECE_KEEPHEIGHT | ECE_NOLIFETIME | ECE_NOPERSISTENCY_WORLD;
         Object o = GetGame().CreateObjectEx(cls, pos, flags);
         PlayerBase pb = PlayerBase.Cast(o);
         if (!pb) {
@@ -11290,13 +11331,35 @@ class BZBusService {
     // -------------------------------------------------------------------------
     // Carteles de parada - se crean una sola vez en Init() y persisten
 
+    // ---- NADA DE LO QUE CREA EL SERVICIO SE GUARDA EN LA PERSISTENCIA DEL MUNDO. Medido: al cerrar el server con la
+    //      moto en la ruta quedaba guardada, y en la sesion siguiente la moto nueva chocaba contra la abandonada (tres
+    //      sesiones, tres choques; en un server con reinicio diario, un vehiculo abandonado por ruta y por reinicio).
+    //      El motor trae la bandera ECE_NOPERSISTENCY_WORLD ("do not save this object in world"); Expansion la usa para
+    //      sus objetos temporales (luces). CreateObject() no tiene parametro de persistencia: todo pasa por CreateObjectEx.
+    //      Vehiculos: setup + fisica + altura pedida + sin vida util del CE (lo mismo que el maniqui vanilla); la pose se
+    //      afirma despues con la fisica quieta, como hasta hoy. AI: las banderas con las que Expansion crea las unidades
+    //      de sus patrullas (el motor no guarda a los AI; Expansion restaura sus patrullas por archivo) + la nuestra.
+    static int FlagsVehiculoSinPersistencia(bool conAI) {
+        int fl = ECE_SETUP | ECE_CREATEPHYSICS | ECE_KEEPHEIGHT | ECE_NOLIFETIME | ECE_NOPERSISTENCY_WORLD;
+        if (conAI) fl = fl | ECE_INITAI;
+        return fl;
+    }
+
+    static int FlagsAISinPersistencia() {
+        return ECE_CREATEPHYSICS | ECE_KEEPHEIGHT | ECE_NOSURFACEALIGN | ECE_NOPERSISTENCY_WORLD;
+    }
+
+    static string TextoSinPersistencia() {
+        return " creado sin persistencia de mundo (ECE_NOPERSISTENCY_WORLD): no queda guardado al cerrar el server";
+    }
+
     private void SpawnStopSigns() {
         if (m_Signs.Count() > 0) return;
 
         foreach (BZWaypoint wp : m_Config.Waypoints) {
             if (!wp.isStop) continue;
 
-            BZBusStopSign sign = BZBusStopSign.Cast(GetGame().CreateObject("BZBusStopSign", wp.GetVector(), false, true));
+            BZBusStopSign sign = BZBusStopSign.Cast(GetGame().CreateObjectEx("BZBusStopSign", wp.GetVector(), FlagsVehiculoSinPersistencia(false)));
             if (sign) {
                 sign.SetStopName(wp.name);
                 m_Signs.Insert(sign);
@@ -11667,7 +11730,7 @@ class BZBusService {
         for (int gi = 0; gi < count; gi++) {
             vector gpos = basePos + side * (2.5 + gi * 1.5);
             gpos[1] = GetGame().SurfaceY(gpos[0], gpos[2]);
-            eAIBase guard = eAIBase.Cast(GetGame().CreateObject(botClass, gpos, false, true));
+            eAIBase guard = eAIBase.Cast(GetGame().CreateObjectEx(botClass, gpos, FlagsAISinPersistencia()));
             if (!guard) {
                 BZBusLog.Warn("[spawn_guard] no se pudo crear '" + botClass + "'");
                 continue;
@@ -11776,7 +11839,7 @@ class BZBusService {
             vector spos = busPos + fwd * offF + rgt * offR;
             spos[1] = GetGame().SurfaceY(spos[0], spos[2]);
             float tCr1 = GetGame().GetTickTime();   // crear vs. vestir, por separado
-            eAIBase cbot = eAIBase.Cast(GetGame().CreateObject(ccls, spos, false, true));
+            eAIBase cbot = eAIBase.Cast(GetGame().CreateObjectEx(ccls, spos, FlagsAISinPersistencia()));
             if (!cbot) { BZBusLog.Warn("[crew] no se pudo crear '" + ccls + "'"); continue; }
             float tCr2 = GetGame().GetTickTime();
             cbot.SetAllowDamage(false);

@@ -788,6 +788,7 @@ class BZCintaRunner
     vector PosDeFrame(int k) { return Vector(m_X.Get(k), m_Y.Get(k), m_Z.Get(k)); }
     float RumboDeFrame(int k) { return m_H.Get(k); }
     float FwDeFrame(int k) { return m_Fw.Get(k); }
+    float KmhDeFrame(int k) { return m_Kmh.Get(k); }
     float CaminaDeFrame(int k)
     {
         if (m_Camina.Count() != m_Count) return 0;

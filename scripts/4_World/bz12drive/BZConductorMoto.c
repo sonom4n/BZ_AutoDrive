@@ -30,18 +30,105 @@
 //  La cinta de una moto la escribe frame_to_route.py con la marcha corrida en uno (N = 1, 1ra = 2: la convencion del auto,
 //  asi ninguna fila se lee como reversa) y dos columnas mas: 12 steering y 13 corte (tramos no reproducibles).
 // ============================================================================
+// la autoridad propia de una moto en una ruta, guardada entre corridas (ver AUTP_*): BZ12_AUT_<ruta>_<clase>.json
+class BZAutPropiaGuardada {
+    int version;          // AUTP_VERSION del estimador que la midio: otra version no se hereda
+    string estimador;
+    string ruta;
+    string vehiculo;
+    ref array<float> aut;
+    ref array<float> cuadros;
+
+    void BZAutPropiaGuardada() {
+        version = 0;
+        estimador = "";
+        aut = new array<float>();
+        cuadros = new array<float>();
+    }
+}
+
 class BZConductorMoto {
 
     // ---- ley lateral (variante 6 del laboratorio de motos, herramienta aparte)
     static const float AUT_DEF = 0.6;         // rad/s por unidad de steering sin envelope (Moped 0,54-0,79; Enduro 0,80)
     static const float AUT_R_MIN = 0.7;       // correlacion minima para usar la autoridad medida de una franja
     static const int   AUT_MIN_N = 40;
-    static const float TAU = 0.5;             // s (ganancia del lazo 1/TAU = 2, la que funciono en la Moped)
+    // ---- AUTORIDAD POR FRANJA FINA (10 km/h, AUTF_N franjas) para la ley directa. El envelope la trae por franja gruesa
+    //      (35-60, 60+) y a 60+ queda lejos de la real (medido en las cajas: 0,48 contra 1,15 a 60-70 y 0,45 a 80-90 en una
+    //      ruta; 1,04 en todas las franjas contra 1,3-1,6 a 20-70 y 0,1-0,25 a 80-130 en otra). Dos fuentes:
+    //      - la CINTA, al cargar: los toques grabados con el slew del conductor contra la guinada geometrica de la toma,
+    //        por franja y con el retraso de mejor correlacion (0..AUTF_LAG_MAX cuadros); vale con r >= AUT_R_MIN y
+    //        AUT_MIN_N cuadros. Mide la autoridad de la tecla del HUMANO: 1,0-1,5x por debajo de la del NPC (la caja);
+    //      - la PROPIA de la moto, medida andando: el volante pasado por un filtro de AUTP_FILTRO_S contra la tasa de giro
+    //        del cuerpo (regresion centrada por franja, con olvido desde AUTP_OLVIDO_N cuadros); vale con AUTP_N_MIN cuadros
+    //        y r >= AUTP_R_MIN, acotada a AUTP_REL_MIN..AUTP_REL_MAX veces la de la cinta. El filtro (y no el volante de
+    //        hace 2 cuadros) mide la ganancia DE REGIMEN, la que rinde la moto en curva sostenida y la que necesita el
+    //        feedforward kappa v / AUT: 20-35 % mas que la "rapida" en todas las franjas (medido en 32 vueltas) y vale
+    //        tambien a 80-90 km/h, donde la guinada tarda 0,3 s y el volante de hace 2 cuadros no la explicaba (r 0,5). Solo a AUTP_KMH_MIN o mas, con
+    //        las dos ruedas en el suelo, sin contacto en AUTP_CONTACTO_S y con la correccion entera (ni caminando ni a
+    //        paso de hombre).
+    //      AutDe(kmh) = propia > cinta > envelope, interpolada entre centros de franja. La CASCADA sigue con el envelope
+    //      (AutEnvelopeDe): sus ganancias se afinaron con ese valor; cambiarselo es otro banco
+    static const float AUTF_BANDA_KMH = 10.0;
+    static const int   AUTF_N = 13;             // 0-10 .. 120-130
+    static const int   AUTF_LAGS = 7;           // retrasos 0,1,2,3,4,6,8 cuadros
+    static const float AUTF_KMH_MIN = 5.0;      // cuadros mas lentos no miden nada (y el dt sale del arco / velocidad)
+    static const float AUT_ABS_MIN = 0.05;
+    static const float AUT_ABS_MAX = 6.0;
+    static const float AUTP_FILTRO_S = 0.2;     // s: el filtro del volante (regresor) de la autoridad propia
+    static const int   AUTP_VERSION = 2;        // la version del estimador en el archivo guardado (2 = volante filtrado)
+    static const float AUTP_KMH_MIN = 15.0;
+    static const int   AUTP_N_MIN = 160;        // 4 s en la franja
+    static const float AUTP_R_MIN = 0.6;        // miles de cuadros por franja: 0,6 ya es una pendiente firme (60-70 da 0,62-0,67
+                                                // con el golpe del terreno en la curva; con 0,7 caia a la de la cinta, 3x chica)
+    static const float AUTP_OLVIDO_N = 4000.0;  // desde aca los acumuladores se parten a la mitad (100 s)
+    static const float AUTP_CADA_S = 1.0;       // cada cuanto se re-evaluan las franjas
+    //      La PLANTA ES CONCAVA: por unidad de volante rinde mas a volante chico (el feedforward del camino, 0,1-0,3)
+    //      que con los toques enteros del humano (la cinta): medido en 12 vueltas, la propia sin tope da 3,9-4,3 a 30-60
+    //      y 2,3 a 60-70 contra 1,15-1,28 y 0,75 de la cinta (2,6-3,4x; en otra moto 1,2-1,6x). Con el tope en 2x el
+    //      feedforward quedaba 1,5-1,8x fuerte y la moto corria 0,8-1,3 m por ADENTRO en toda curva: el tope es 5x
+    static const float AUTP_REL_MIN = 0.5;
+    static const float AUTP_REL_MAX = 5.0;
+    static const float AUTP_CONTACTO_S = 1.0;
+    //      Y SE GUARDA por ruta y vehiculo (cache del proceso + archivo en el perfil) para que el runner siguiente la
+    //      herede: con un runner por vuelta, los primeros 4 s de cada franja corrian con la de la cinta en todas las
+    //      vueltas (y la primera vez en una ruta nueva sigue siendo asi)
+    static const float AUTP_GUARDAR_CADA_S = 10.0;
+    static const float AUTP_CAMBIO_MIN = 0.02;     // fraccion: un cambio menor no se guarda
+    static const float AUTP_DIFIERE_AVISO = 0.2;   // fraccion: la medida nueva se avisa si difiere tanto de la heredada
+    // ---- EL FEEDFORWARD DESDE EL CAMINO. Los toques grabados (-1/0/+1) reproducidos como feedforward hacian girar de mas
+    //      en cada toque (medido en las cajas: +2..+7 grados de rumbo hacia la tecla en 0,3 s en cada flanco, porque la
+    //      unidad de direccion del NPC rinde 1,3-1,9x la guinada de la tecla del humano y la soltada se sostiene un cuadro
+    //      mas): 1,5-2,4 m por ADENTRO en curvas a 63-72 km/h. Desde FF_CAMINO_KMH_1 el feedforward es la direccion que
+    //      sostiene la curvatura grabada CASC_LA_S s mas adelante (ventana CASC_W_M) por la velocidad, dividida por la
+    //      autoridad: kappa v / AUT. Banco cinematico con la planta ajustada a las cajas: 2,37 -> 0,59 m en esa curva.
+    //      Hasta FF_CAMINO_KMH_0 sigue el volante grabado (a paso de hombre la correccion no vale y la curvatura por la
+    //      velocidad no dice nada); entre los dos, rampa
+    static const float FF_CAMINO_KMH_0 = 8.0;
+    static const float FF_CAMINO_KMH_1 = 15.0;
+    // ---- FRENADA BRUSCA (sin freno propio): se anota con el ultimo contacto y la posicion, como "rueda en el AIRE"
+    static const float DECEL_BRUSCA_KMH = 10.0;
+    static const float DECEL_BRUSCA_S = 0.3;
+    static const float DECEL_AVISO_CADA_S = 2.0;
+    static const float DECEL_BRK_MAX = 0.5;     // con mas pedal propio que esto no es un misterio
+    static const float CONTACTO_AVISO_S = 2.0;  // la ventana del ultimo contacto en esos avisos
+    static const int   KMH_HIST_N = 16;
+    // TAU: la ganancia del lazo 1/TAU en rad/s de guinada por rad de error. Era 0,5 (2,0), pero con el AUT del envelope
+    // por franja gruesa (1,3-2,4x por debajo de la autoridad real) las rutas probadas corrian en realidad a 2,6-4,8; con
+    // la autoridad medida, 0,3 (3,3) deja la ganancia donde anduvo (el banco: insensible entre 0,25 y 0,5 con el
+    // feedforward del camino)
+    static const float TAU = 0.3;
     static const float TD = 0.10;             // s: amortiguamiento sobre la tasa de e_psi (variante 10 del laboratorio de motos, herramienta aparte)
     static const float CURV_MITAD_M = 0.5;    // m: la curvatura grabada se mide en s +- esto
     static const float KV = 1.0;
     static const float RATE = 4.0;            // unidades de steering por segundo
     static const float CORR_MAX = 0.6;
+    // A PASO DE HOMBRE la correccion no vale: con el chofer en la animacion de caminar (0-2 km/h) el manubrio responde al
+    // reves (medido tras un hold a mitad de tramo: corr -0,6 sostenida 7 s y e_psi de -3 a +113 grados, la moto de costado
+    // y re-ubicada), y a 0-3 km/h no hay autoridad para corregir un lateral. La correccion entra en rampa de LENTO_KMH_0 a
+    // LENTO_KMH_1; con la animacion de caminar, cero. El volante grabado (ff) sigue entero
+    static const float LENTO_KMH_0 = 3.0;
+    static const float LENTO_KMH_1 = 8.0;
     static const float GUARDA = 0.7;          // fraccion del maxLeanAngle desde la que la correccion se apaga
     static const int   SAT_AVISO = 40;
     // ---- LA CASCADA POR INCLINACION (a velocidad). La moto convierte la direccion en inclinacion con 0,4-0,7 s de
@@ -62,7 +149,18 @@ class BZConductorMoto {
     //      km/h, e_psi +-20) y queda apenas sobre 0,6 a 59-85: ahi el roll es un mal sustituto de la guinada (retardo
     //      0,68 s medido) y el banco no reproduce esas corridas. Cada ley donde esta probada: directa entera hasta
     //      CASC_DE_KMH, cascada entera desde CASC_A_KMH
-    static const float CASC_DE_KMH = 65.0;
+    //      Medido despues en las cajas (Badlands y Chernarus): por debajo de ~78 km/h la moto gira PLANA (el roll es 0,1-0,3
+    //      de la inclinacion de equilibrio atan(v r / g); a 80-90, 0,8): el roll objetivo de la cascada (20-27 grados) no
+    //      llega nunca y su lazo P empuja hacia adentro (con la mezcla 50->70, a 72 km/h y mezcla 1,0: 1,3-1,7 m contra
+    //      0,9-1,3 con 65->85). La cascada vale donde la moto se inclina. Lo que se iba por adentro a 63-72 km/h con la
+    //      directa era el feedforward de los toques (ver FF_CAMINO_KMH_1).
+    //      Y con 65->85 todavia entraba a 68-74 km/h con el 12-43 %: ahi su feedforward rDes/aut usa la autoridad del
+    //      envelope (gruesa, 0,48) donde la propia da 2,0-2,9, pide 3-4 veces el volante que hace falta, la moto se
+    //      inclina el doble que la toma (-15..-19 contra -6..-10 grados) y corre 1,3-1,6 m por adentro con la directa
+    //      pidiendo cero. Desde 75: entera a 85 (la curva a 78-88 km/h con inclinacion de 15-20 grados sigue siendo
+    //      suya). No mas arriba: a 80-90 la autoridad propia no valida (la guinada ahi es lenta) y la ley directa queda
+    //      con la de la cinta, 6x chica: el banco con la planta lenta le da 1,8 m sola en esa curva
+    static const float CASC_DE_KMH = 75.0;
     static const float CASC_A_KMH = 85.0;
     //      El lazo externo (TAU_R, KV): con 1,3 s y 1,5 corregia un error de rumbo 2,6 veces mas despacio que la ley
     //      directa y con poco amortiguamiento (zeta 0,36): en los tramos de curvatura baja una desviacion de medio metro
@@ -228,6 +326,32 @@ class BZConductorMoto {
     private ref BZCintaMuestra m_M;
     private ref array<float> m_Aut;
     private ref array<float> m_AutR;
+    // la autoridad por franja fina: la de la cinta (al cargar) y la propia (andando), -1 = sin medida; ver AUTF_* / AUTP_*
+    private ref array<float> m_AutCinta;
+    private ref array<float> m_AutCintaR;
+    private ref array<int>   m_AutCintaN;
+    private bool  m_AutCintaHecha;
+    private ref array<float> m_AutProp;
+    private ref array<int>   m_AutPropAviso;
+    private ref array<float> m_AcN;
+    private ref array<float> m_AcSx;
+    private ref array<float> m_AcSy;
+    private ref array<float> m_AcSxx;
+    private ref array<float> m_AcSxy;
+    private ref array<float> m_AcSyy;
+    private float m_AutPropT;        // cuando se re-evaluan las franjas (m_T)
+    private static ref map<string, ref array<float>> s_AutPropCache;   // ruta|clase -> la tabla (ver AUTP_GUARDAR_CADA_S)
+    private string m_Ruta;
+    private ref array<float> m_AutPropHeredada;   // lo que vino del cache o del archivo (-1 = nada)
+    private float m_AutPropGuardadoT;
+    private bool  m_AutPropSucio;
+    private float m_DeltaFilt;       // el volante filtrado (AUTP_FILTRO_S): el regresor de la autoridad propia
+    private float m_FFTecla;         // el volante grabado del cuadro (la caja; el feedforward usado va en m_FF)
+    private ref array<float> m_KmhHistT;   // anillo (t, kmh) de los ultimos cuadros: la frenada brusca
+    private ref array<float> m_KmhHistV;
+    private int   m_KmhHistIx;
+    private float m_DecelAvisoT;
+    private int   m_DecelN;
     private ref array<float> m_Lean;
     private ref array<float> m_SteerTab;
     private ref array<float> m_K;
@@ -289,6 +413,7 @@ class BZConductorMoto {
     private float m_RollPrev;        // el roll del cuadro anterior (-999: sin lectura)
     private float m_RollTasa;        // la tasa de roll filtrada (grados/s)
     private float m_CamW;            // la tasa de giro impuesta caminando (rad/s)
+    private float m_Lento;           // 0..1: lo que vale la correccion a esta velocidad (0 a paso de hombre o caminando)
     private float m_CamVol;          // el manubrio caminando (el angulo de rueda grabado, en unidades de direccion)
     private float m_RMoto;           // tasa de giro de la moto (rad/s, + a la derecha)
     private float m_RToma;           // tasa de giro de la referencia: m_Curv x velocidad de la moto
@@ -363,6 +488,51 @@ class BZConductorMoto {
         m_M = new BZCintaMuestra();
         m_Aut = new array<float>();
         m_AutR = new array<float>();
+        m_AutCinta = new array<float>();
+        m_AutCintaR = new array<float>();
+        m_AutCintaN = new array<int>();
+        m_AutProp = new array<float>();
+        m_AutPropAviso = new array<int>();
+        m_AcN = new array<float>();
+        m_AcSx = new array<float>();
+        m_AcSy = new array<float>();
+        m_AcSxx = new array<float>();
+        m_AcSxy = new array<float>();
+        m_AcSyy = new array<float>();
+        int bIni;
+        for (bIni = 0; bIni < AUTF_N; bIni++) {
+            m_AutCinta.Insert(-1);
+            m_AutCintaR.Insert(-2);
+            m_AutCintaN.Insert(0);
+            m_AutProp.Insert(-1);
+            m_AutPropAviso.Insert(0);
+            m_AcN.Insert(0);
+            m_AcSx.Insert(0);
+            m_AcSy.Insert(0);
+            m_AcSxx.Insert(0);
+            m_AcSxy.Insert(0);
+            m_AcSyy.Insert(0);
+        }
+        m_AutCintaHecha = false;
+        m_AutPropT = 0;
+        m_AutPropHeredada = new array<float>();
+        int hAut;
+        for (hAut = 0; hAut < AUTF_N; hAut++) m_AutPropHeredada.Insert(-1);
+        m_Ruta = "";
+        m_AutPropGuardadoT = 0;
+        m_AutPropSucio = false;
+        m_DeltaFilt = 0;
+        m_FFTecla = 0;
+        m_KmhHistT = new array<float>();
+        m_KmhHistV = new array<float>();
+        int hIni;
+        for (hIni = 0; hIni < KMH_HIST_N; hIni++) {
+            m_KmhHistT.Insert(-99);
+            m_KmhHistV.Insert(0);
+        }
+        m_KmhHistIx = 0;
+        m_DecelAvisoT = 0;
+        m_DecelN = 0;
         m_Lean = new array<float>();
         m_SteerTab = new array<float>();
         m_K = new array<float>();
@@ -572,9 +742,331 @@ class BZConductorMoto {
         return r.ToString();
     }
 
-    float AutDe(float kmh) {
+    // la autoridad del envelope por franja gruesa (la usa la cascada; ver AUTF_*)
+    float AutEnvelopeDe(float kmh) {
         if (m_Aut.Count() < 6) return AUT_DEF;
         return m_Aut.Get(FranjaDe(kmh));
+    }
+
+    static int FranjaFinaDe(float kmh) {
+        int bFi = Math.Floor(kmh / AUTF_BANDA_KMH);
+        if (bFi < 0) bFi = 0;
+        if (bFi > AUTF_N - 1) bFi = AUTF_N - 1;
+        return bFi;
+    }
+
+    static string NombreFranjaFina(int b) {
+        int kmA = b * 10;
+        int kmB = kmA + 10;
+        return kmA.ToString() + "-" + kmB.ToString();
+    }
+
+    // la autoridad de una franja fina: propia > cinta > envelope (en el centro de la franja)
+    float AutFranjaFina(int b) {
+        if (m_AutProp.Get(b) > 0) return m_AutProp.Get(b);
+        if (m_AutCinta.Get(b) > 0) return m_AutCinta.Get(b);
+        return AutEnvelopeDe(b * AUTF_BANDA_KMH + AUTF_BANDA_KMH * 0.5);
+    }
+
+    // la autoridad de la ley directa: interpolada entre los centros de las franjas finas
+    float AutDe(float kmh) {
+        float pos = (kmh - AUTF_BANDA_KMH * 0.5) / AUTF_BANDA_KMH;
+        if (pos <= 0) return AutFranjaFina(0);
+        if (pos >= AUTF_N - 1) return AutFranjaFina(AUTF_N - 1);
+        int bA = Math.Floor(pos);
+        float fr = pos - bA;
+        float aA = AutFranjaFina(bA);
+        float aB = AutFranjaFina(bA + 1);
+        return aA + (aB - aA) * fr;
+    }
+
+    float AutCintaEn(float kmh) { return m_AutCinta.Get(FranjaFinaDe(kmh)); }
+    float AutPropiaEn(float kmh) { return m_AutProp.Get(FranjaFinaDe(kmh)); }
+
+    static int RetrasoCuadros(int li) {
+        if (li <= 4) return li;
+        if (li == 5) return 6;
+        return 8;
+    }
+
+    // LA AUTORIDAD DE LA CINTA, al cargar: los toques grabados con el slew del conductor contra la guinada geometrica de
+    // la toma (rumbo por cuadro; el dt sale del arco y la velocidad grabadas), por franja fina y retraso (ver AUTF_*)
+    void MedirAutoridadCinta(BZCintaRunner c) {
+        int nF = c.Frames();
+        if (nF < 50 || !c.TieneSteering()) {
+            BZBusLog.Info("[MOTO] autoridad por franja fina: la cinta no trae el steering grabado; la ley directa usa el envelope");
+            return;
+        }
+        array<float> teclaSlew = new array<float>();
+        array<float> dtCuadro = new array<float>();
+        array<float> guinada = new array<float>();
+        float slewPrev = 0;
+        int k;
+        for (k = 0; k < nF; k++) {
+            float dtk = -1;
+            float kmhK = c.KmhDeFrame(k);
+            if (k < nF - 1 && kmhK >= AUTF_KMH_MIN) {
+                float dsK = c.SDeFrame(k + 1) - c.SDeFrame(k);
+                if (dsK > 0.001) dtk = dsK / (kmhK / 3.6);
+            }
+            if (dtk > 0.2) dtk = -1;   // un salto de la cinta no es un cuadro
+            dtCuadro.Insert(dtk);
+            float pasoSl = 1.0;
+            if (dtk > 0) pasoSl = RATE * dtk;
+            float dSl = c.SteerDeFrame(k) - slewPrev;
+            if (dSl > pasoSl) dSl = pasoSl;
+            if (dSl < -pasoSl) dSl = -pasoSl;
+            slewPrev = slewPrev + dSl;
+            teclaSlew.Insert(slewPrev);
+        }
+        for (k = 0; k < nF; k++) {
+            float rG = -99;
+            if (k > 0 && k < nF - 1 && dtCuadro.Get(k - 1) > 0 && dtCuadro.Get(k) > 0) {
+                float dH = Envolver((c.RumboDeFrame(k + 1) - c.RumboDeFrame(k - 1)) * Math.DEG2RAD);
+                rG = dH / (dtCuadro.Get(k - 1) + dtCuadro.Get(k));
+            }
+            guinada.Insert(rG);
+        }
+        int nSlots = AUTF_N * AUTF_LAGS;
+        array<float> acN = new array<float>();
+        array<float> acSx = new array<float>();
+        array<float> acSy = new array<float>();
+        array<float> acSxx = new array<float>();
+        array<float> acSxy = new array<float>();
+        array<float> acSyy = new array<float>();
+        int iz;
+        for (iz = 0; iz < nSlots; iz++) {
+            acN.Insert(0);
+            acSx.Insert(0);
+            acSy.Insert(0);
+            acSxx.Insert(0);
+            acSxy.Insert(0);
+            acSyy.Insert(0);
+        }
+        for (k = 0; k < nF; k++) {
+            if (dtCuadro.Get(k) <= 0) continue;
+            int bK = FranjaFinaDe(c.KmhDeFrame(k));
+            float xK = teclaSlew.Get(k);
+            int li;
+            for (li = 0; li < AUTF_LAGS; li++) {
+                int jK = k + RetrasoCuadros(li);
+                if (jK >= nF) continue;
+                float yK = guinada.Get(jK);
+                if (yK < -90) continue;
+                int ixK = bK * AUTF_LAGS + li;
+                acN.Set(ixK, acN.Get(ixK) + 1);
+                acSx.Set(ixK, acSx.Get(ixK) + xK);
+                acSy.Set(ixK, acSy.Get(ixK) + yK);
+                acSxx.Set(ixK, acSxx.Get(ixK) + xK * xK);
+                acSxy.Set(ixK, acSxy.Get(ixK) + xK * yK);
+                acSyy.Set(ixK, acSyy.Get(ixK) + yK * yK);
+            }
+        }
+        string lCon = "";
+        string lSin = "";
+        int bF;
+        for (bF = 0; bF < AUTF_N; bF++) {
+            float mejorR = -2;
+            float mejorA = -1;
+            int mejorN = 0;
+            int lg;
+            for (lg = 0; lg < AUTF_LAGS; lg++) {
+                int ixF = bF * AUTF_LAGS + lg;
+                float nn = acN.Get(ixF);
+                if (nn < AUT_MIN_N) continue;
+                float vx = acSxx.Get(ixF) - acSx.Get(ixF) * acSx.Get(ixF) / nn;
+                float vy = acSyy.Get(ixF) - acSy.Get(ixF) * acSy.Get(ixF) / nn;
+                float cov = acSxy.Get(ixF) - acSx.Get(ixF) * acSy.Get(ixF) / nn;
+                if (vx <= 0.000001 || vy <= 0.000001) continue;
+                float rr = cov / Math.Sqrt(vx * vy);
+                if (rr > mejorR) {
+                    mejorR = rr;
+                    mejorA = cov / vx;
+                    mejorN = nn;
+                }
+            }
+            if (mejorR >= AUT_R_MIN && mejorA >= AUT_ABS_MIN && mejorA <= AUT_ABS_MAX) {
+                m_AutCinta.Set(bF, mejorA);
+                m_AutCintaR.Set(bF, mejorR);
+                m_AutCintaN.Set(bF, mejorN);
+                lCon = lCon + " " + NombreFranjaFina(bF) + " " + Red(mejorA) + " (r " + Red(mejorR) + ", n " + mejorN + ")";
+            } else {
+                lSin = lSin + " " + NombreFranjaFina(bF);
+            }
+        }
+        string lA = "[MOTO] autoridad de la CINTA por franja fina (rad/s por unidad; toques con slew " + Red(RATE) + "/s contra la guinada grabada):" + lCon;
+        if (lSin != "") lA = lA + " · sin medida (va el envelope):" + lSin;
+        BZBusLog.Info(lA);
+    }
+
+    // LA AUTORIDAD PROPIA, andando: el volante filtrado (AUTP_FILTRO_S) contra la tasa de giro del cuerpo, por
+    // franja fina (regresion centrada con olvido); las franjas se re-evaluan cada AUTP_CADA_S (ver AUTP_*)
+    void MuestrearAutoridadPropia(BZVehiculo v, float kmh, float dt) {
+        if (dt > 0.0001) m_DeltaFilt = m_DeltaFilt + (m_Delta - m_DeltaFilt) * dt / (AUTP_FILTRO_S + dt);
+        float deltaFiltrado = m_DeltaFilt;
+        bool vale = kmh >= AUTP_KMH_MIN && m_Lento >= 0.999 && !m_EnAire;
+        if (vale && (!v.RuedaContacto(0) || !v.RuedaContacto(1))) vale = false;
+        if (vale) {
+            float tCo = v.ContactoObjetoT();
+            if (tCo >= 0 && GetGame().GetTickTime() - tCo < AUTP_CONTACTO_S) vale = false;
+        }
+        if (vale) {
+            int bM = FranjaFinaDe(kmh);
+            float xM = deltaFiltrado;
+            float yM = m_RMoto;
+            m_AcN.Set(bM, m_AcN.Get(bM) + 1);
+            m_AcSx.Set(bM, m_AcSx.Get(bM) + xM);
+            m_AcSy.Set(bM, m_AcSy.Get(bM) + yM);
+            m_AcSxx.Set(bM, m_AcSxx.Get(bM) + xM * xM);
+            m_AcSxy.Set(bM, m_AcSxy.Get(bM) + xM * yM);
+            m_AcSyy.Set(bM, m_AcSyy.Get(bM) + yM * yM);
+            if (m_AcN.Get(bM) > AUTP_OLVIDO_N) {
+                m_AcN.Set(bM, m_AcN.Get(bM) * 0.5);
+                m_AcSx.Set(bM, m_AcSx.Get(bM) * 0.5);
+                m_AcSy.Set(bM, m_AcSy.Get(bM) * 0.5);
+                m_AcSxx.Set(bM, m_AcSxx.Get(bM) * 0.5);
+                m_AcSxy.Set(bM, m_AcSxy.Get(bM) * 0.5);
+                m_AcSyy.Set(bM, m_AcSyy.Get(bM) * 0.5);
+            }
+        }
+        if (m_T < m_AutPropT) return;
+        m_AutPropT = m_T + AUTP_CADA_S;
+        int bE;
+        for (bE = 0; bE < AUTF_N; bE++) {
+            float nE = m_AcN.Get(bE);
+            if (nE < AUTP_N_MIN) continue;
+            float vxE = m_AcSxx.Get(bE) - m_AcSx.Get(bE) * m_AcSx.Get(bE) / nE;
+            float vyE = m_AcSyy.Get(bE) - m_AcSy.Get(bE) * m_AcSy.Get(bE) / nE;
+            float covE = m_AcSxy.Get(bE) - m_AcSx.Get(bE) * m_AcSy.Get(bE) / nE;
+            if (vxE <= 0.000001 || vyE <= 0.000001) continue;
+            float rE = covE / Math.Sqrt(vxE * vyE);
+            if (rE < AUTP_R_MIN) continue;
+            float aE = covE / vxE;
+            if (aE < AUT_ABS_MIN) aE = AUT_ABS_MIN;
+            if (aE > AUT_ABS_MAX) aE = AUT_ABS_MAX;
+            float aC = m_AutCinta.Get(bE);
+            if (aC > 0) {
+                if (aE < aC * AUTP_REL_MIN) aE = aC * AUTP_REL_MIN;
+                if (aE > aC * AUTP_REL_MAX) aE = aC * AUTP_REL_MAX;
+            }
+            float aPrev = m_AutProp.Get(bE);
+            if (aPrev <= 0 || Math.AbsFloat(aE - aPrev) > AUTP_CAMBIO_MIN * aPrev) m_AutPropSucio = true;
+            m_AutProp.Set(bE, aE);
+            if (m_AutPropAviso.Get(bE) == 0) {
+                m_AutPropAviso.Set(bE, 1);
+                string lP = "[MOTO] autoridad PROPIA " + NombreFranjaFina(bE) + " km/h: " + Red(aE) + " rad/s por unidad (r " + Red(rE) + ", n " + Red(nE) + ")";
+                lP = lP + " · cinta " + Red(aC) + " · envelope " + Red(AutEnvelopeDe(bE * AUTF_BANDA_KMH + AUTF_BANDA_KMH * 0.5));
+                BZBusLog.Info(lP);
+            } else if (m_AutPropAviso.Get(bE) == 1 && m_AutPropHeredada.Get(bE) > 0) {
+                float aHer = m_AutPropHeredada.Get(bE);
+                if (Math.AbsFloat(aE - aHer) > AUTP_DIFIERE_AVISO * aHer) {
+                    m_AutPropAviso.Set(bE, 2);
+                    BZBusLog.Info("[MOTO] autoridad PROPIA " + NombreFranjaFina(bE) + " km/h medida ahora " + Red(aE) + " difiere de la heredada " + Red(aHer) + " (r " + Red(rE) + ", n " + Red(nE) + ")");
+                }
+            }
+        }
+        if (m_AutPropSucio && m_T >= m_AutPropGuardadoT) {
+            m_AutPropGuardadoT = m_T + AUTP_GUARDAR_CADA_S;
+            m_AutPropSucio = false;
+            GuardarAutPropia();
+        }
+    }
+
+    string ClaveAutPropia() { return m_Ruta + "|" + m_Clase; }
+
+    string ArchivoAutPropia() { return BZCarpetas.Profile() + "BZ12_AUT_" + m_Ruta + "_" + m_Clase + ".json"; }
+
+    // la ruta de esta corrida: hereda la autoridad propia guardada (cache del proceso, o el archivo del perfil)
+    void FijarRuta(string ruta) {
+        m_Ruta = ruta;
+        if (ruta == "" || m_Clase == "") return;
+        if (!s_AutPropCache) s_AutPropCache = new map<string, ref array<float>>();
+        string origen = "";
+        array<float> tabla = s_AutPropCache.Get(ClaveAutPropia());
+        if (tabla && tabla.Count() == AUTF_N) {
+            origen = "cache";
+        } else {
+            string pathA = ArchivoAutPropia();
+            if (FileExist(pathA)) {
+                BZAutPropiaGuardada g = new BZAutPropiaGuardada();
+                JsonFileLoader<BZAutPropiaGuardada>.JsonLoadFile(pathA, g);
+                if (g && g.aut && g.aut.Count() == AUTF_N && g.ruta == m_Ruta && g.vehiculo == m_Clase && g.version == AUTP_VERSION) {
+                    tabla = g.aut;
+                    origen = "archivo";
+                } else if (g && g.version != AUTP_VERSION) {
+                    BZBusLog.Warn("[MOTO] autoridad propia guardada: " + pathA + " es de otro estimador (version " + g.version + ", esta build " + AUTP_VERSION + "): se ignora y se mide de nuevo");
+                } else {
+                    BZBusLog.Warn("[MOTO] autoridad propia guardada: " + pathA + " no corresponde a esta ruta y vehiculo o esta incompleto; se ignora");
+                }
+            }
+        }
+        if (origen == "") return;
+        string lH = "";
+        int bH;
+        for (bH = 0; bH < AUTF_N; bH++) {
+            float aH = tabla.Get(bH);
+            if (aH <= 0) continue;
+            m_AutProp.Set(bH, aH);
+            m_AutPropHeredada.Set(bH, aH);
+            m_AutPropAviso.Set(bH, 1);
+            lH = lH + " " + NombreFranjaFina(bH) + " " + Red(aH);
+        }
+        if (lH == "") return;
+        BZBusLog.Info("[MOTO] autoridad PROPIA heredada (" + origen + ") para " + m_Ruta + " · " + m_Clase + ":" + lH);
+    }
+
+    // la tabla al cache y al archivo (a lo sumo cada AUTP_GUARDAR_CADA_S, cuando cambio)
+    void GuardarAutPropia() {
+        if (m_Ruta == "" || m_Clase == "") return;
+        if (!s_AutPropCache) s_AutPropCache = new map<string, ref array<float>>();
+        BZAutPropiaGuardada g = new BZAutPropiaGuardada();
+        g.version = AUTP_VERSION;
+        g.estimador = "volante filtrado " + Red(AUTP_FILTRO_S) + " s contra la tasa de giro";
+        g.ruta = m_Ruta;
+        g.vehiculo = m_Clase;
+        array<float> copia = new array<float>();
+        int bG;
+        for (bG = 0; bG < AUTF_N; bG++) {
+            g.aut.Insert(m_AutProp.Get(bG));
+            g.cuadros.Insert(m_AcN.Get(bG));
+            copia.Insert(m_AutProp.Get(bG));
+        }
+        s_AutPropCache.Set(ClaveAutPropia(), copia);
+        JsonFileLoader<BZAutPropiaGuardada>.JsonSaveFile(ArchivoAutPropia(), g);
+    }
+
+    string TextoContacto(BZVehiculo v) {
+        string cu = v.ContactoUltimo(CONTACTO_AVISO_S);
+        if (cu == "") return " · sin contacto registrado en los ultimos " + Red(CONTACTO_AVISO_S) + " s";
+        return " · ultimo contacto: " + cu;
+    }
+
+    string TextoPos(BZVehiculo v) {
+        Transport trP = v.T();
+        if (!trP) return "";
+        vector pP = trP.GetPosition();
+        return ", pos " + Red(pP[0]) + " " + Red(pP[2]);
+    }
+
+    // FRENADA BRUSCA sin freno propio: mas de DECEL_BRUSCA_KMH perdidos en DECEL_BRUSCA_S (ver DECEL_*)
+    void VigilarFrenadaBrusca(BZVehiculo v, float kmh, float s) {
+        m_KmhHistT.Set(m_KmhHistIx, m_T);
+        m_KmhHistV.Set(m_KmhHistIx, kmh);
+        m_KmhHistIx = m_KmhHistIx + 1;
+        if (m_KmhHistIx >= KMH_HIST_N) m_KmhHistIx = 0;
+        float kmhMax = kmh;
+        int iH;
+        for (iH = 0; iH < KMH_HIST_N; iH++) {
+            if (m_T - m_KmhHistT.Get(iH) > DECEL_BRUSCA_S) continue;
+            if (m_KmhHistV.Get(iH) > kmhMax) kmhMax = m_KmhHistV.Get(iH);
+        }
+        if (kmhMax - kmh < DECEL_BRUSCA_KMH || m_Brk >= DECEL_BRK_MAX || m_T < m_DecelAvisoT) return;
+        m_DecelAvisoT = m_T + DECEL_AVISO_CADA_S;
+        m_DecelN = m_DecelN + 1;
+        if (m_LogEvento == "") m_LogEvento = "frenada_brusca";
+        if (m_DecelN > 20) return;
+        string lD = "[MOTO] FRENADA BRUSCA #" + m_DecelN + ": de " + Red(kmhMax) + " a " + Red(kmh) + " km/h en menos de " + Red(DECEL_BRUSCA_S) + " s (arco " + Red(s) + " m" + TextoPos(v) + ")";
+        BZBusLog.Warn(lD + TextoContacto(v));
     }
 
     // una tabla de pares {velocidad, valor, ...} del config, interpolada
@@ -873,9 +1365,15 @@ class BZConductorMoto {
             return true;
         }
 
+        if (!m_AutCintaHecha) {
+            m_AutCintaHecha = true;
+            MedirAutoridadCinta(c);
+        }
         float ff = m_M.steer;
         if (ff < -5) ff = SteerDeRueda(m_M.fwDeg, kmh);
         float dir = LeyLateral(v, ff, kmh, dt);
+        MuestrearAutoridadPropia(v, kmh, dt);
+        VigilarFrenadaBrusca(v, kmh, s);
         ControlVelocidad(v, c, kmh, s);
         v.Volante(dir);
         v.Gas(m_Thr);
@@ -942,9 +1440,25 @@ class BZConductorMoto {
         m_RToma = m_Curv * (kmh / 3.6);
         m_Amort = TD * (m_RMoto - m_RToma);
         float corr = (epsi + rumboEq + m_Amort) / (AutDe(kmh) * TAU);
-        m_FF = ff;
+        // el feedforward: desde FF_CAMINO_KMH_1 la direccion que sostiene la curvatura grabada que viene (ver FF_CAMINO_*)
+        float ffCamino = m_CurvAnt * vms / AutDe(kmh);
+        if (ffCamino > 1) ffCamino = 1;
+        if (ffCamino < -1) ffCamino = -1;
+        float fCam = (kmh - FF_CAMINO_KMH_0) / (FF_CAMINO_KMH_1 - FF_CAMINO_KMH_0);
+        if (fCam < 0) fCam = 0;
+        if (fCam > 1) fCam = 1;
+        float ffUsado = (1.0 - fCam) * ff + fCam * ffCamino;
+        m_FFTecla = ff;
+        m_FF = ffUsado;
         m_Epsi = epsi;
         m_CorrCrudo = corr;
+        // a paso de hombre (ver LENTO_KMH_0): sin correccion
+        float fLento = (kmh - LENTO_KMH_0) / (LENTO_KMH_1 - LENTO_KMH_0);
+        if (fLento < 0) fLento = 0;
+        if (fLento > 1) fLento = 1;
+        if (TagCaminando(tr) == "1") fLento = 0;
+        m_Lento = fLento;
+        corr = corr * fLento;
         if (Math.AbsFloat(corr) >= CORR_MAX) m_SatCuadros = m_SatCuadros + 1;
         else {
             m_SatCuadros = 0;
@@ -984,7 +1498,7 @@ class BZConductorMoto {
             }
         }
         m_Corr = corr;
-        float objetivo = ff - corr;
+        float objetivo = ffUsado - corr;
         if (objetivo > 1) objetivo = 1;
         if (objetivo < -1) objetivo = -1;
         // la cascada por inclinacion (ver las constantes CASC_*)
@@ -1002,7 +1516,7 @@ class BZConductorMoto {
                 if (rollDes < -topeC) rollDes = -topeC;
             }
             m_RollDes = rollDes;
-            float aut = AutDe(kmh);
+            float aut = AutEnvelopeDe(kmh);   // la cascada se afino con el envelope (ver AUTF_*)
             if (aut < 0.1) aut = 0.1;
             float rDes = CASC_G * Math.Tan(rollDes * Math.DEG2RAD) / vms;
             float sloc = vms * aut / CASC_G * Math.RAD2DEG;
@@ -1045,7 +1559,7 @@ class BZConductorMoto {
             if (!m_EnAire) {
                 m_EnAire = true;
                 m_AireVeces = m_AireVeces + 1;
-                if (m_AireVeces <= 20) BZBusLog.Info("[MOTO] rueda en el AIRE a " + Red(kmh) + " km/h (arco " + Red(s) + " m): pedales de la toma");
+                if (m_AireVeces <= 20) BZBusLog.Info("[MOTO] rueda en el AIRE a " + Red(kmh) + " km/h (arco " + Red(s) + " m" + TextoPos(v) + "): pedales de la toma" + TextoContacto(v));
             }
             m_VRef = vObj;
             m_Thr = thrFF;
@@ -1114,6 +1628,16 @@ class BZConductorMoto {
             m_UltMarchaToma = gToma;
             m_Offset = 0;
             m_LugDesde = -1;
+        }
+        // ARRANCADA desde cero con la toma en una marcha alta (la salida de un hold a mitad de tramo): 1ra YA, en vez de
+        // bajar una marcha cada VEL_CAMBIO_S desde el piso de rpm (medido: 3,5 s entre 0 y 2 km/h en 4ta, 3ra y 2da, a
+        // paso de hombre, donde la direccion no vale). El offset se levanta solo al alcanzar la referencia, como siempre
+        if (kmh < ARRANQUE_KMH && vRef >= ARRANQUE_VREF_KMH && gToma > 1 && m_Offset < gToma - 1) {
+            m_Offset = gToma - 1;
+            m_LugDesde = -1;
+            m_UltCambio = m_T;
+            m_Bajadas = m_Bajadas + 1;
+            if (m_Bajadas <= 20) BZBusLog.Info("[MOTO] arrancada desde cero con la toma en " + gToma + " (arco " + Red(s) + " m): 1ra directo");
         }
         int g = gToma - m_Offset;
         if (g < 1) g = 1;
@@ -1735,6 +2259,8 @@ class BZConductorMoto {
         cab = cab + ",r_moto,r_toma,amort";   // el amortiguamiento de la ley (rad/s, rad/s, rad)
         cab = cab + ",tag_caminando";          // el grafo del chofer en el estado de caminar (1/0; -1 sin chofer)
         cab = cab + ",roll_des,mezcla,w_cmd,vol_cam";   // la cascada (roll objetivo, mezcla) y la caminata (giro impuesto rad/s, manubrio)
+        cab = cab + ",lento";                            // 0..1: lo que vale la correccion lateral a esta velocidad
+        cab = cab + ",aut_ley,aut_cinta,aut_propia,ff_tecla";   // la autoridad de la ley directa y sus dos medidas en esta franja (-1 sin medida); el volante grabado
         FPrintln(m_LogFh, cab);
         m_LogOn = true;
         m_LogCola = false;
@@ -1776,10 +2302,13 @@ class BZConductorMoto {
         string f1 = Red3(m_T) + "," + Red(pV[0]) + "," + Red(pV[2]) + "," + Red(s) + "," + Red(c.SFin()) + "," + Red(m_M.latM) + "," + Red(m_Epsi * Math.RAD2DEG);
         string f2 = "," + Red(kmh) + "," + Red(m_M.kmhRec) + "," + Red(m_VRef) + "," + Red(m_VRefSinGuarda) + "," + Red(m_Thr) + "," + Red(m_Brk);
         string f3 = "," + m_GearCmd + "," + v.Marcha() + "," + Red(v.Rpm()) + "," + Red(m_FF) + "," + Red(m_CorrCrudo) + "," + Red(m_Corr);
-        string f4 = "," + Red(m_Delta) + "," + Red(v.Roll()) + "," + Red(m_RollToma) + "," + Red(m_RollUmbral) + "," + Red(m_RollFrac) + "," + Red(m_GuardaLat);
+        float rollTomaLog = m_M.roll;   // con signo (la guarda usa el absoluto, m_RollToma); -99 si la cinta no lo trae
+        string f4 = "," + Red(m_Delta) + "," + Red(v.Roll()) + "," + Red(rollTomaLog) + "," + Red(m_RollUmbral) + "," + Red(m_RollFrac) + "," + Red(m_GuardaLat);
         string f5 = "," + gvInt + "," + w0 + "," + w1 + "," + m_LogEvento;
         f5 = f5 + "," + Red3(m_RMoto) + "," + Red3(m_RToma) + "," + Red3(m_Amort) + "," + TagCaminando(trV);
         f5 = f5 + "," + Red(m_RollDes) + "," + Red(m_Mezcla) + "," + Red3(m_CamW) + "," + Red(m_CamVol);
+        f5 = f5 + "," + Red(m_Lento);
+        f5 = f5 + "," + Red(AutDe(kmh)) + "," + Red(AutCintaEn(kmh)) + "," + Red(AutPropiaEn(kmh)) + "," + Red(m_FFTecla);
         FPrintln(m_LogFh, f1 + f2 + f3 + f4 + f5);
         m_LogEvento = "";
     }

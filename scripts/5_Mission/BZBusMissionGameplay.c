@@ -17,6 +17,22 @@ modded class MissionGameplay {
     static int s_BZ_TeclaPanel = KeyCode.KC_HOME;
     private int m_BZ_TeclaCruda = -1;
     private int m_BZ_TeclaCrudaMs = -100000;
+    private bool m_BZ_TeclaCrudaConMenu = false;   // la ultima tecla cruda llego con un menu o dialogo abierto (el ESC que cierra un menu ajeno)
+
+    // las teclas que el juego usa para sus menus NUNCA son la tecla del panel. Medido: al cerrar el menu del Market de
+    // Expansion con ESC, la accion UABZAutoDrivePanel disparo 55 ms despues y el panel adopto ESC como su tecla: desde
+    // ahi cada ESC abria o cerraba el Reproductor y la pausa no volvio a abrir en toda la sesion
+    static bool BZ_TeclaReservada(int key) {
+        if (key == KeyCode.KC_ESCAPE) return true;
+        if (key == KeyCode.KC_RETURN) return true;
+        if (key == KeyCode.KC_NUMPADENTER) return true;
+        if (key == KeyCode.KC_BACK) return true;
+        if (key == KeyCode.KC_TAB) return true;
+        if (key == KeyCode.KC_SPACE) return true;
+        if (key == KeyCode.KC_LWIN) return true;
+        if (key == KeyCode.KC_RWIN) return true;
+        return false;
+    }
 
     override void OnKeyRelease(int key) {
         super.OnKeyRelease(key);
@@ -77,7 +93,21 @@ modded class MissionGameplay {
                 // la tecla cruda que acaba de disparar la accion es la que va a cerrar el panel (rebindeable)
                 // (medido: UAInput.Binding/GetBindKey vienen en otra numeracion que KeyCode (205959232 contra 199): no se
                 // comparan directo; por eso la tecla cruda)
-                if (m_BZ_TeclaCruda > 0 && GetGame().GetTime() - m_BZ_TeclaCrudaMs < 300) s_BZ_TeclaPanel = m_BZ_TeclaCruda;
+                // ...pero solo si es plausible: no es una tecla reservada de los menus del juego y llego SIN un menu o dialogo
+                // abierto (el ESC/ENTER que cierra un menu ajeno llega con ese menu abierto y la accion puede disparar justo
+                // despues). Si no, la tecla del panel queda como estaba (INICIO de fabrica)
+                if (m_BZ_TeclaCruda > 0 && GetGame().GetTime() - m_BZ_TeclaCrudaMs < 300) {
+                    if (BZ_TeclaReservada(m_BZ_TeclaCruda) || m_BZ_TeclaCrudaConMenu) {
+                        if (BZDiag.On()) {
+                            string porQueNo = "reservada para los menus del juego";
+                            if (!BZ_TeclaReservada(m_BZ_TeclaCruda)) porQueNo = "llego con un menu o dialogo abierto";
+                            BZBusLog.Info("[Reproductor] tecla cruda " + m_BZ_TeclaCruda.ToString() + " NO se adopta como tecla del panel (" + porQueNo + "); sigue " + s_BZ_TeclaPanel.ToString());
+                        }
+                    } else if (s_BZ_TeclaPanel != m_BZ_TeclaCruda) {
+                        if (BZDiag.On()) BZBusLog.Info("[Reproductor] tecla del panel: " + s_BZ_TeclaPanel.ToString() + " -> " + m_BZ_TeclaCruda.ToString() + " (la tecla cruda que disparo la accion)");
+                        s_BZ_TeclaPanel = m_BZ_TeclaCruda;
+                    }
+                }
                 GetGame().GetUIManager().EnterScriptedMenu(MENU_BZ_REPRODUCTOR, null);
             } else if (BZDiag.On()) {
                 // diagnostico: la accion disparo y el panel no abre; se dice cual de las condiciones lo frena
@@ -151,6 +181,12 @@ modded class MissionGameplay {
     override void OnKeyPress(int key) {
         m_BZ_TeclaCruda = key;   // la ultima tecla cruda, para saber cual abrio el Reproductor (ver s_BZ_TeclaPanel)
         m_BZ_TeclaCrudaMs = GetGame().GetTime();
+        m_BZ_TeclaCrudaConMenu = (GetGame().GetUIManager().GetMenu() != null || GetGame().GetUIManager().IsDialogVisible());
+        // una tecla reservada jamas queda como tecla del panel (si quedo por lo que fuera, vuelve INICIO)
+        if (BZ_TeclaReservada(s_BZ_TeclaPanel)) {
+            if (BZDiag.On()) BZBusLog.Info("[Reproductor] tecla del panel: " + s_BZ_TeclaPanel.ToString() + " -> " + KeyCode.KC_HOME.ToString() + " (era una tecla reservada)");
+            s_BZ_TeclaPanel = KeyCode.KC_HOME;
+        }
         // 2026-06-09: track CTRL state para multi-slot
         if (key == KeyCode.KC_LCONTROL || key == KeyCode.KC_RCONTROL) {
             s_BZ_CtrlHeld = true;
@@ -203,7 +239,7 @@ modded class MissionGameplay {
         // si). La tecla cruda abre con las mismas condiciones que la accion; si la accion tambien dispara en este cuadro,
         // el toggle de OnUpdate y el Update del menu ven el panel abierto hace menos de 250 ms (s_AbiertoMs) y no lo cierran.
         // La tecla es la que abrio la ultima vez por la accion (s_BZ_TeclaPanel; INICIO de fabrica).
-        bool puedeAbrirTc = (!BZReproductorUI.s_Instance && BZBusClientManager.s_IsControlPanelAdmin && key == s_BZ_TeclaPanel);
+        bool puedeAbrirTc = (!BZReproductorUI.s_Instance && BZBusClientManager.s_IsControlPanelAdmin && key == s_BZ_TeclaPanel && !BZ_TeclaReservada(key));
         if (puedeAbrirTc && (GetGame().GetUIManager().GetMenu() || GetGame().GetUIManager().IsDialogVisible())) puedeAbrirTc = false;
         if (puedeAbrirTc && GetGame().GetTime() - BZReproductorUI.s_CerradoMs <= 250) puedeAbrirTc = false;
         if (puedeAbrirTc) {

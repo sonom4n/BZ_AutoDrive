@@ -6,6 +6,21 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.2.3
+
+**Important fixes for any server, and much more accurate motorbikes.** Two bugs that 1.2.1 and 1.2.2 had, plus a set of motorbike improvements measured on Badlands and Chernarus.
+
+- **Fixed: AutoDrive vehicles stayed saved in the world when the server was shut down.** If the server closed cleanly (for example, with the window's X) while a route was running, the vehicle was saved to persistence; on the next start it was still there, driverless, on the route, and the next run crashed into it. Now nothing AutoDrive creates is saved: vehicles, drivers, guards, crew and stop signs. **Vehicles already saved by previous versions can't be told apart from any other vehicle: delete them once by hand** (for example, with COT).
+- **Fixed (admins): ESC could become the panel key.** After closing another mod's menu with ESC (for example, the Expansion Market), every ESC opened or closed the AutoDrive panel and the pause menu never came back: you had to kill the game from Task Manager. Menu keys (ESC, ENTER, BACKSPACE, TAB, SPACE, Windows) can no longer become the panel key.
+- **Motorbikes: stops requested by another mod** (for example, a trader that stops to sell, via `HoldRunner`): the bike stops exactly where the recording stopped (a single stop; before, it stopped 4 m early and again at the mark) and, when released, pulls away at once **in 1st gear** (before, it started in the recorded gear and took seconds).
+- **Motorbikes: no sideways correction at walking pace (0-3 km/h).** At that speed the handlebar responds differently; before, starting from a stop slightly off the line could spin the bike around and end in a relocation.
+- **Motorbikes: steering follows the shape of the recorded path** instead of replaying the recording's keyboard taps. With a keyboard the steering is either full or zero, and the bike, which responds more than the player, gained a little extra turn on every tap: in tight curves at 60-75 km/h it cut 1.5-2.5 m inside. Measured on a Badlands route: from 2.2-2.4 m to under 1 m in one curve and from 2.1 to ~1.3 m in another (with a terrain bump that is in the recording too); on Chernarus the three motorbike routes also improve (Enduro 0.37 → 0.30 m, Moped 0.86 → 0.46 m).
+- **Motorbikes: the bike measures how it responds to the handlebar** in 10 km/h bands while driving, and saves that per route and vehicle (`BZ12_AUT_<route>_<class>.json` in the AutoDrive profile) for the next run and the next server start. The first run of a new route starts from what it measures in the recording.
+- **Motorbikes: the lean-based law works from 75 to 85 km/h** (before, 65 to 85): below 75 the bike turns almost without leaning to equilibrium and that law pushed it inside.
+- **Improved: the log says what was hit.** "Wheel in the air" and every sudden slowdown without own braking (more than 10 km/h lost in 0.3 s) report the last contact (object class or model) and the position.
+
+---
+
 ## v1.2.2
 
 **Urgent fix: compatibility with other mods.** 1.2.1 did not compile on a server with certain mods loaded: the server would not start (`Can't compile "World" script module`).

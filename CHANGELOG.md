@@ -6,6 +6,21 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.2.3
+
+**Arreglos importantes para cualquier server, y motos mucho más precisas.** Dos errores que traían la 1.2.1 y la 1.2.2, y una tanda de mejoras en las motos medida en Badlands y en Chernarus.
+
+- **Corregido: los vehículos de AutoDrive quedaban guardados en el mundo al cerrar el server.** Si el server se cerraba bien (por ejemplo, con la X de la ventana) mientras una ruta andaba, el vehículo quedaba guardado en la persistencia; al arrancar de nuevo seguía ahí, sin chofer, sobre la ruta, y la vuelta siguiente chocaba contra él. Ahora nada de lo que crea AutoDrive se guarda: vehículos, choferes, guardias, tripulación y carteles de parada. **Los vehículos que ya quedaron guardados con versiones anteriores no se pueden distinguir de los demás: borralos una vez a mano** (por ejemplo, con COT).
+- **Corregido (admins): ESC podía quedar como la tecla del panel.** Después de cerrar con ESC el menú de otro mod (por ejemplo, el Market de Expansion), cada ESC abría o cerraba el panel de AutoDrive y el menú de pausa no volvía a aparecer: había que cerrar el juego desde el Administrador de tareas. Ahora las teclas de los menús (ESC, ENTER, BACKSPACE, TAB, ESPACIO, Windows) nunca pueden quedar como tecla del panel.
+- **Motos: paradas pedidas por otro mod** (por ejemplo, un comerciante que se detiene a vender con `HoldRunner`): la moto se detiene justo donde se detuvo la grabación (una sola parada, antes paraba 4 m antes y otra vez en la marca) y al seguir arranca en el acto **en 1ra** (antes salía en la marcha grabada y tardaba segundos).
+- **Motos: a paso de hombre (0-3 km/h) ya no corrige hacia los costados.** A esa velocidad el manubrio responde distinto; antes, al arrancar de una parada un poco corrida de la línea, la moto podía girar sobre sí misma y terminar re-ubicada.
+- **Motos: la dirección sigue la forma del camino grabado** en lugar de repetir los toques de teclado de la grabación. Con teclado el volante va a fondo o a cero, y la moto, que responde más que el jugador, ganaba un poco de giro en cada toque: en curvas cerradas a 60-75 km/h se metía 1,5-2,5 m por adentro. Medido en una ruta de Badlands: de 2,2-2,4 m a menos de 1 m en una curva y de 2,1 a ~1,3 m en otra (con un pozo del terreno que también está en la grabación); en Chernarus las tres rutas de moto también mejoran (Enduro 0,37 → 0,30 m, Moped 0,86 → 0,46 m).
+- **Motos: la moto mide cómo responde al manubrio** por franjas de 10 km/h mientras anda, y guarda esa medida por ruta y vehículo (`BZ12_AUT_<ruta>_<clase>.json` en el perfil de AutoDrive) para la vuelta siguiente y para el próximo arranque del server. La primera vuelta de una ruta nueva arranca con lo que mide de la grabación.
+- **Motos: la ley por inclinación actúa de 75 a 85 km/h** (antes de 65 a 85): por debajo de 75 la moto dobla casi sin inclinarse al equilibrio y esa ley la empujaba hacia adentro.
+- **Mejorado: el registro dice contra qué choca.** "Rueda en el aire" y toda frenada brusca sin freno propio (más de 10 km/h perdidos en 0,3 s) dicen el último contacto (clase o modelo del objeto) y la posición.
+
+---
+
 ## v1.2.2
 
 **Arreglo urgente: compatibilidad con otros mods.** La 1.2.1 no compilaba en un server que tuviera ciertos mods: el server no arrancaba (`Can't compile "World" script module`).

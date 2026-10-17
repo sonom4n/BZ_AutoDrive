@@ -86,6 +86,8 @@ Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork
 
 ## Estado
 
+**v1.2.3** — los vehículos de AutoDrive ya no quedan guardados en el mundo al cerrar el server; ESC ya no puede quedar como tecla del panel; motos mucho más precisas (siguen la forma del camino, miden cómo responden, paradas de otros mods en el lugar exacto y arranque en 1ra).
+
 **v1.2.2** — arreglo urgente: la 1.2.1 no compilaba junto al CarPack actualizado para la 1.30 (y otros packs con clases de nombre corto). Solo cambian nombres de variables; la conducción es la misma.
 
 **v1.2.1** — **lista para la DayZ 1.30**: un solo paquete corre en la 1.29 y en la 1.30; **motos** (experimental, solo 1.30); **veredicto estricto** del fin de ruta, decidido con el vehículo quieto; frenada final medida en tu toma; cambios de sentido a centímetros; logs livianos por defecto (`Diagnostics`, `BlackBox`). En la 1.30, arrancá el server con un `-profiles` relativo.
