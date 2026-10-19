@@ -801,6 +801,7 @@ class BZRouteData
             }
             CloseLeg(m_ArmLo, m_Count - 1);
             MergeDegenerateLegs();
+            AbsorberLegsBlip();
             m_ArmLegL = 0;
             m_ArmI = 0;
             if (m_LegCount > 0) m_ArmI = m_LegLo.Get(0);
@@ -1143,6 +1144,42 @@ class BZRouteData
             m_LegRev.Insert(rv2.Get(L));
         }
         m_LegCount = m_LegLo.Count();
+    }
+
+    // ★ 1.2.4 (la regla de las marcas): UN CUSP ES DESPLAZAMIENTO REAL, NO LA MARCHA PUESTA. Un leg de sentido contrario
+    // mas corto que LEG_BLIP_M entre dos legs del mismo sentido es la R puesta un instante en una parada (o unos
+    // centimetros), no un cusp: la cinta ya absorbe esos bloques (TRAMO_FASE_MIN_M, el mismo valor) y el leg tiene que
+    // hacer lo mismo, o el leg flipea y la cinta no tiene a que sembrar. Los tres se funden en uno, con el sentido de los
+    // de afuera. Vive ACA, como el saneo de retrocesos: protege las rutas YA convertidas sin reconvertir nada.
+    private const float LEG_BLIP_M = 3.0;
+    private void AbsorberLegsBlip()
+    {
+        bool huboB = true;
+        while (huboB && m_LegCount >= 3)
+        {
+            huboB = false;
+            int lB;
+            for (lB = 1; lB < m_LegCount - 1; lB++)
+            {
+                if (m_LegRev.Get(lB) == m_LegRev.Get(lB - 1)) continue;
+                if (m_LegRev.Get(lB + 1) != m_LegRev.Get(lB - 1)) continue;
+                float largoB = LegLengthM(lB);
+                if (largoB >= LEG_BLIP_M) continue;
+                string lineaB = "[Route] saneo: los legs " + (lB - 1).ToString() + "-" + (lB + 1).ToString() + " se funden: el leg " + lB.ToString();
+                lineaB = lineaB + " (" + largoB.ToString() + " m, wp " + m_LegLo.Get(lB).ToString() + "-" + m_LegHi.Get(lB).ToString() + ") es una marcha puesta sin desplazarse, no un cusp";
+                Print(lineaB);
+                m_LegHi.Set(lB - 1, m_LegHi.Get(lB + 1));
+                m_LegLo.RemoveOrdered(lB);
+                m_LegLo.RemoveOrdered(lB);
+                m_LegHi.RemoveOrdered(lB);
+                m_LegHi.RemoveOrdered(lB);
+                m_LegRev.RemoveOrdered(lB);
+                m_LegRev.RemoveOrdered(lB);
+                m_LegCount = m_LegLo.Count();
+                huboB = true;
+                break;
+            }
+        }
     }
 
     // ⚠ EL SENTIDO DEL TRAMO NO SE LEE DEL PRIMER WAYPOINT.

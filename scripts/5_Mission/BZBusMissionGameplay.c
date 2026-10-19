@@ -95,20 +95,26 @@ modded class MissionGameplay {
                 // comparan directo; por eso la tecla cruda)
                 // ...pero solo si es plausible: no es una tecla reservada de los menus del juego y llego SIN un menu o dialogo
                 // abierto (el ESC/ENTER que cierra un menu ajeno llega con ese menu abierto y la accion puede disparar justo
-                // despues). Si no, la tecla del panel queda como estaba (INICIO de fabrica)
-                if (m_BZ_TeclaCruda > 0 && GetGame().GetTime() - m_BZ_TeclaCrudaMs < 300) {
-                    if (BZ_TeclaReservada(m_BZ_TeclaCruda) || m_BZ_TeclaCrudaConMenu) {
-                        if (BZDiag.On()) {
-                            string porQueNo = "reservada para los menus del juego";
-                            if (!BZ_TeclaReservada(m_BZ_TeclaCruda)) porQueNo = "llego con un menu o dialogo abierto";
-                            BZBusLog.Info("[Reproductor] tecla cruda " + m_BZ_TeclaCruda.ToString() + " NO se adopta como tecla del panel (" + porQueNo + "); sigue " + s_BZ_TeclaPanel.ToString());
-                        }
-                    } else if (s_BZ_TeclaPanel != m_BZ_TeclaCruda) {
+                // despues). Si no, la tecla del panel queda como estaba (INICIO de fabrica)...
+                // ★ 1.2.4: ...Y EL PANEL NO SE ABRE. Medido con 3 comerciantes del Market: al cerrar su menu con ESC la accion
+                // dispara ~55 ms despues, ya sin menu, y el panel se abria (solo se evitaba adoptar el ESC). Lo que abre el panel
+                // es INICIO o la tecla adoptada, nunca una tecla reservada ni una que llego con un menu abierto
+                bool crudaReciente = (m_BZ_TeclaCruda > 0 && GetGame().GetTime() - m_BZ_TeclaCrudaMs < 300);
+                bool crudaSospechosa = false;
+                if (crudaReciente) crudaSospechosa = (BZ_TeclaReservada(m_BZ_TeclaCruda) || m_BZ_TeclaCrudaConMenu);
+                if (crudaSospechosa) {
+                    if (BZDiag.On()) {
+                        string porQueNoAbre = "es reservada para los menus del juego";
+                        if (!BZ_TeclaReservada(m_BZ_TeclaCruda)) porQueNoAbre = "llego con un menu o dialogo abierto";
+                        BZBusLog.Info("[Reproductor] la accion disparo justo despues de cerrar un menu ajeno con la tecla " + m_BZ_TeclaCruda.ToString() + " (" + porQueNoAbre + "): no se abre");
+                    }
+                } else {
+                    if (crudaReciente && s_BZ_TeclaPanel != m_BZ_TeclaCruda) {
                         if (BZDiag.On()) BZBusLog.Info("[Reproductor] tecla del panel: " + s_BZ_TeclaPanel.ToString() + " -> " + m_BZ_TeclaCruda.ToString() + " (la tecla cruda que disparo la accion)");
                         s_BZ_TeclaPanel = m_BZ_TeclaCruda;
                     }
+                    GetGame().GetUIManager().EnterScriptedMenu(MENU_BZ_REPRODUCTOR, null);
                 }
-                GetGame().GetUIManager().EnterScriptedMenu(MENU_BZ_REPRODUCTOR, null);
             } else if (BZDiag.On()) {
                 // diagnostico: la accion disparo y el panel no abre; se dice cual de las condiciones lo frena
                 UIScriptedMenu menuNo = GetGame().GetUIManager().GetMenu();

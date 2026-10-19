@@ -86,6 +86,8 @@ Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork
 
 ## Estado
 
+**v1.2.4** — el panel ya no se abre solo al cerrar el menú de un comerciante con ESC; una parada pedida por otro mod sobre una marca con maniobra de reversa ya no desacomoda la ruta; la reversa cerca de una marca vale (marcá siempre en avance).
+
 **v1.2.3** — los vehículos de AutoDrive ya no quedan guardados en el mundo al cerrar el server; ESC ya no puede quedar como tecla del panel; motos mucho más precisas (siguen la forma del camino, miden cómo responden, paradas de otros mods en el lugar exacto y arranque en 1ra).
 
 **v1.2.2** — arreglo urgente: la 1.2.1 no compilaba junto al CarPack actualizado para la 1.30 (y otros packs con clases de nombre corto). Solo cambian nombres de variables; la conducción es la misma.

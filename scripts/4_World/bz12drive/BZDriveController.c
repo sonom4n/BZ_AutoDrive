@@ -523,6 +523,13 @@ class BZDriveController
     private float  m_ReubPendOrigen;
     // 2: inicio de la RACHA continua de "bien pisado" (para retroceder una batalla sin salirse de ella)
     private float  m_ManBienIni;
+    // ★ 1.2.4: el bien pisado tambien como POSICION y rumbo (fin e inicio de la racha). El arco de la cinta puede venir
+    // corrido (medido: 620 m, el cursor sembrado en el cusp siguiente) y la re-ubicacion caia a 620 m del vehiculo.
+    private vector m_ManBienPos;
+    private float  m_ManBienYawDeg;
+    private vector m_ManBienIniPos;
+    private float  m_ManBienIniYawDeg;
+    private float  m_DesfaseT;        // el reloj del aviso de cursor desfasado (cada DESFASE_PERIODO_S)
     private float  m_QuietoT;         // segundos quieto, sin depender de la cinta
     private const float CINTA_RODANDO_KMH = 2.0;
     private int   m_DiagIman;   // rate del diag IMAN
@@ -1326,15 +1333,23 @@ class BZDriveController
         string origenM = "sin punto bien pisado en este leg: desde el s actual " + sActM.ToString();
         if (m_ManBienOk)
         {
-            sBienM = m_ManBienS;
-            origenM = "desde ultimo bien pisado s " + sBienM.ToString();
+            // ★ 1.2.4: el bien pisado se resuelve por su POSICION sobre la cinta de la fase del leg, no por el arco que
+            // llevaba el cursor cuando lo piso (medido: el arco venia 620 m corrido y la re-ubicacion cayo a 620 m)
+            float dBienM = -1;
+            float sPosM = m_Cinta.SDePosicion(m_ManBienPos, m_ManBienYawDeg, m_Leg.isReverse, dBienM);
+            if (sPosM >= 0)
+            {
+                sBienM = sPosM;
+                origenM = "desde ultimo bien pisado " + m_ManBienPos.ToString() + " = s " + sBienM.ToString() + " (cuadro a " + dBienM.ToString() + " m; el arco del cursor decia " + m_ManBienS.ToString() + ")";
+            }
+            else origenM = "el ultimo bien pisado " + m_ManBienPos.ToString() + " no esta sobre la cinta de la fase del leg: desde el s actual " + sActM.ToString();
         }
         if (sOrigen >= 0)
         {
             sBienM = sOrigen;
             origenM = "desde s " + sBienM.ToString();
         }
-        float finLegM = m_Cinta.FinDeFaseEn(sActM);
+        float finLegM = m_Cinta.FinDeFaseEn(sBienM);   // 1.2.4: el fin del leg desde el ORIGEN, no desde un cursor que puede estar corrido
         float sD = sBienM + avanceM;
         // 1: el "no ir atras" era GENERAL y pisaba toda re-ubicacion hacia atras (la batalla atras del
         // escalon 2 salia "+0,05 m" in-game mientras el banco daba 3,5 m). Solo vale para el cierre del leg.
@@ -1363,7 +1378,12 @@ class BZDriveController
         if (!m_Ready || !m_Leg || !m_Leg.valid) return;
         m_F1Activo = false;
         m_ReubPend = false;
-        if (m_Cinta) m_Cinta.AnclarEnS(sDest);
+        if (m_Cinta)
+        {
+            m_Cinta.AnclarEnS(sDest);
+            // ★ 1.2.4: y confirmado desde la POSICION real (la pose salio de la cinta en sDest: coinciden salvo cinta corrida)
+            m_Cinta.AnclarPorPosicion(posNueva, -999.0, m_Leg.isReverse, "re-ubicacion " + tipo);
+        }
         int wpM = WpMasCercanoEnLeg(posNueva);
         SeekTo(wpM);
         m_CintaRodo = false;
@@ -1402,8 +1422,17 @@ class BZDriveController
         if (!m_ManBienOk || !m_Cinta) return -1;
         float retroB = m_F1RevM;
         if (m_Manual && m_Manual.wheelbaseM > retroB) retroB = m_Manual.wheelbaseM;
-        float sB = m_ManBienS - retroB;
-        if (sB < m_ManBienIni) sB = m_ManBienIni;
+        // ★ 1.2.4: por POSICION (ver PlanReubicacion); sin cuadro de la fase cerca, -1 = el plan parte del s actual
+        bool revB = false;
+        if (m_Leg && m_Leg.valid) revB = m_Leg.isReverse;
+        float dFinB = -1;
+        float sFinB = m_Cinta.SDePosicion(m_ManBienPos, m_ManBienYawDeg, revB, dFinB);
+        if (sFinB < 0) return -1;
+        float dIniB = -1;
+        float sIniB = m_Cinta.SDePosicion(m_ManBienIniPos, m_ManBienIniYawDeg, revB, dIniB);
+        if (sIniB < 0 || sIniB > sFinB) sIniB = sFinB;
+        float sB = sFinB - retroB;
+        if (sB < sIniB) sB = sIniB;
         return sB;
     }
 
@@ -1592,6 +1621,55 @@ class BZDriveController
         if (!s_Quiet) Print("[C12] F1 MANIOBRA · " + resultado + SufijoRunner());
     }
 
+    private float DistXZ12(vector aD, vector bD)
+    {
+        float dxD = aD[0] - bD[0];
+        float dzD = aD[2] - bD[2];
+        return Math.Sqrt(dxD * dxD + dzD * dzD);
+    }
+
+    // ★ 1.2.4: LOS DOS CURSORES DESDE LA POSICION REAL (tras un SAFE_STOP del arbitro: 20 s sin avance del cursor es
+    // tambien la firma de un cursor corrido). wp = el mas cercano dentro del leg (SeekTo, la unica via para moverlo);
+    // cinta = el cuadro de la fase del leg mas cercano con el rumbo del vehiculo. Medido: con la cinta sembrada 620 m
+    // adelante, la re-ubicacion del escalon 2 salia del arco corrido y dejaba el vehiculo a 620 m.
+    private void ResincronizarCursores(BZVehicleState st, string motivoR)
+    {
+        if (!m_Leg || !m_Leg.valid || !m_Route) return;
+        int wpR = WpMasCercanoEnLeg(st.pos);
+        float dR = DistXZ12(st.pos, m_Route.Pos(wpR));
+        float dCurR = DistXZ12(st.pos, m_Route.Pos(m_Leg.nearWp));
+        string lr = "[C12] RESINCRONIZACION (" + motivoR + "): cursor wp " + m_Leg.nearWp.ToString() + " (a " + dCurR.ToString() + " m) · vehiculo cerca del wp " + wpR.ToString() + " (a " + dR.ToString() + " m)";
+        if (wpR != m_Leg.nearWp)
+        {
+            SeekTo(wpR);
+            lr = lr + " -> cursor al wp " + wpR.ToString();
+        }
+        else lr = lr + " -> el cursor ya estaba";
+        if (m_Cinta && m_Cinta.Valida())
+        {
+            if (m_Cinta.AnclarPorPosicion(st.pos, st.yaw * Math.RAD2DEG, m_Leg.isReverse, motivoR)) lr = lr + " · cinta re-anclada por posicion";
+            else lr = lr + " · la cinta no tiene un cuadro de la fase cerca: queda donde estaba";
+        }
+        if (!s_Quiet) Print(lr + SufijoRunner());
+    }
+
+    private const float DESFASE_PERIODO_S = 5.0;
+    private const int   DESFASE_WP = 10;
+    private const float DESFASE_M = 25.0;
+    private void AvisarDesfase(BZVehicleState st)
+    {
+        int wpCercaD = WpMasCercanoEnLeg(st.pos);
+        float dCercaD = DistXZ12(st.pos, m_Route.Pos(wpCercaD));
+        float dCursorD = DistXZ12(st.pos, m_Route.Pos(m_Leg.nearWp));
+        int saltoD = wpCercaD - m_Leg.nearWp;
+        if (saltoD < 0) saltoD = -saltoD;
+        if (saltoD <= DESFASE_WP && dCursorD <= DESFASE_M) return;
+        string ld = "[C12] DESFASE cursor wp " + m_Leg.nearWp.ToString() + " · vehiculo cerca del wp " + wpCercaD.ToString() + " (a " + dCercaD.ToString() + " m)";
+        ld = ld + " · el wp del cursor queda a " + dCursorD.ToString() + " m";
+        if (m_Cinta && m_Cinta.Valida()) ld = ld + " · cinta s_est " + m_Cinta.SEst().ToString() + ", su cuadro a " + m_Cinta.DistAlCursor(st.pos).ToString() + " m";
+        Print(ld + SufijoRunner());
+    }
+
     private int WpMasCercanoEnLeg(vector p)
     {
         int mejorW = m_Leg.legLo;
@@ -1710,6 +1788,7 @@ class BZDriveController
             }
             else if (fisEnCursoSS)
             {
+                ResincronizarCursores(st, "SAFE_STOP del arbitro");   // 1.2.4
                 ClasificarFisico(st, "SAFE_STOP del arbitro (" + m_Arbiter.GetFallbackPorQue() + ")");
                 m_Arbiter.Reset();
             }
@@ -1720,6 +1799,7 @@ class BZDriveController
                 // STUCK sin un solo intento. El alcance del framework es que el vehiculo no quede detenido para siempre:
                 // declarar sin intentar es exactamente lo que no puede pasar. Ahora el SAFE_STOP ABRE la escalera (la misma
                 // que abre el CLAVADO; al abrirse avisa BLOQUEADO) y STUCK queda para cuando esta agotada o desactivada.
+                ResincronizarCursores(st, "SAFE_STOP del arbitro");   // 1.2.4
                 ClasificarFisico(st, "SAFE_STOP del arbitro (" + m_Arbiter.GetFallbackPorQue() + "): abre la escalera");
                 m_Arbiter.Reset();
             }
@@ -4354,8 +4434,17 @@ class BZDriveController
                 m_LegFasePrev = m_Leg.isReverse;
                 // la posicion viaja para la salida SIN-BLANCO
                 // (re-anclaje por proximidad, declarado en el log)
-                m_Cinta.SembrarFase(m_Leg.isReverse, st.pos);
+                m_Cinta.SembrarFase(m_Leg.isReverse, st.pos, st.yaw * Math.RAD2DEG);
             }
+        }
+        // ★ 1.2.4: EL AVISO DEL CURSOR DESFASADO. Mientras el cursor de ruta y el vehiculo no coincidan (mas de
+        // DESFASE_WP wp de diferencia con el wp mas cercano del leg, o el wp del cursor a mas de DESFASE_M), una linea
+        // cada DESFASE_PERIODO_S con los dos y la cinta: la firma que faltaba para ver un cursor corrido en el RPT.
+        m_DesfaseT = m_DesfaseT + dt;
+        if (m_DesfaseT >= DESFASE_PERIODO_S)
+        {
+            m_DesfaseT = 0;
+            if (!s_Quiet && m_Leg && m_Leg.valid && m_Route) AvisarDesfase(st);
         }
         // ★★★ POSESION POR ESTADO DEL LEG, NO POR VELOCIDAD (, n=6
         // pesados: TODO el presupuesto de error de la tanda vive en la maniobra
@@ -4395,10 +4484,17 @@ class BZDriveController
             {
                 m_ManBienIni = sBienAhora;
                 m_ManBienS = sBienAhora;
+                // ★ 1.2.4: la racha tambien se recuerda por donde PISA el casco (el arco puede venir corrido)
+                m_ManBienIniPos = st.pos;
+                m_ManBienIniYawDeg = st.yaw * Math.RAD2DEG;
+                m_ManBienPos = st.pos;
+                m_ManBienYawDeg = st.yaw * Math.RAD2DEG;
             }
             else if (sBienAhora > m_ManBienS)
             {
                 m_ManBienS = sBienAhora;
+                m_ManBienPos = st.pos;
+                m_ManBienYawDeg = st.yaw * Math.RAD2DEG;
             }
             m_ManBienOk = true;
         }
@@ -4869,7 +4965,7 @@ class BZDriveController
                             di = di + " · cStr " + m_Out.steering.ToString();
                             di = di + " · kmh " + st.chassisKmh.ToString();
                             di = di + " · R " + m_Leg.isReverse.ToString();
-                            Print(di);
+                            Print(di + SufijoRunner());
                         }
                     }
                     m_CintaStr = m_Out.steering;
@@ -5049,7 +5145,7 @@ class BZDriveController
                 // la confirmacion del mecanismo viejo, horneada — si
                 // el ancla vieja caia en tramo consumido, aca se ve el descarte
                 np = np + " · skipCons " + m_Cinta.SkipConsumidos().ToString();
-                Print(np);
+                Print(np + SufijoRunner());
             }
         }
         else if (m_CintaTick) m_DiagNoPosee = 0;

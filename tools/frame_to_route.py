@@ -11,8 +11,8 @@
 #  Convierte frame_<ts>_<veh>.csv (40Hz: x,y,z,speed_kmh,gear,heading,is_marker)
 #  a los archivos de ruta que el server lee (BZBusRoute_<name>.json + _hdr.json +
 #  _wp.csv). Densidad NATIVA (sin smoothing/downsampling; la forma fina de la linea
-#  ES el volante del humano). Reversa auto-detectada (gear==0 o movimiento hacia
-#  atras vs heading). Eventos desde is_marker (NUMPAD 4 durante la grabacion).
+#  ES el volante del humano). Reversa = marcha 0 con DESPLAZAMIENTO real (>= CUSP_MIN_M; no la
+#  marcha puesta con el vehiculo quieto). Eventos desde is_marker (NUMPAD 4 durante la grabacion).
 #
 #  Uso:
 #    python frame_to_route.py <frame_csv> <route_name> [--profile DIR] [--min-move M]
@@ -71,58 +71,86 @@ STOP_HOLD_S    = 6     # seg detenido en el endpoint: le da TIEMPO al creep fino
                        # no converge -> Boris queda ~2m corto. El creep es lento (~0.32 m/s): con 3s
                        # llego a 1.10m todavia convergiendo -> 6s para cerrar los ~2m. un jugador: "detenido 2 seg".
 
-def cusps_de_la_toma(rows):
+CUSP_MIN_M = 3.0   # = TRAMO_FASE_MIN_M del lector de la cinta (BZCintaRunner): un cambio de marcha es un cusp solo si el
+                   # vehiculo se DESPLAZA al menos esto con el sentido nuevo antes de volver a cambiar. La regla de las
+                   # marcas (1.2.4): la R puesta un instante en una parada, o unos centimetros, no es un cusp; la reversa
+                   # de verdad (metros) si, y la marca que viene despues de ella, en 1a, es una parada en avance.
+
+def _sentido_de_marcha(g):
+    if g == 0:
+        return -1
+    if g >= 2:
+        return 1
+    return None
+
+def sentidos_de_la_toma(rows):
     """{indice: sentido_saliente} del cuadro del REPOSO de cada cambio de sentido EFECTIVO (adelante <-> reversa): el
-    ultimo cuadro antes del cambio de marcha que precede al movimiento en el sentido nuevo. Un cambio que no llega a
-    mover el vehiculo (R -> 1a -> R con el vehiculo quieto, o la marcha puesta al terminar) no cuenta, ni el primero
-    si el vehiculo todavia no se movio (una toma que arranca en reversa con la 1a puesta); el neutral no cambia el sentido.
+    ultimo cuadro antes del cambio de marcha que precede al desplazamiento en el sentido nuevo. Y en cada fila,
+    rows[i]["sent"] = el sentido efectivo vigente (+1 adelante, -1 reversa): de ahi sale el mode de cada waypoint.
+    EFECTIVO = el vehiculo se desplaza >= CUSP_MIN_M con la marcha nueva antes de otro cambio (la suma de los pasos de
+    las filas en movimiento). Un cambio que no llega a eso no cuenta (R -> 1a -> R con el vehiculo quieto, unos
+    centimetros, o la marcha puesta al terminar), ni el primero si el vehiculo todavia no se habia desplazado CUSP_MIN_M
+    con el sentido anterior (una toma que arranca en reversa con la 1a puesta: las filas de antes llevan el sentido del
+    primer desplazamiento, porque un vehiculo parado tiene la marcha que traia, no la que va a usar); el neutral no
+    cambia el sentido.
     Medido: el wp de un cusp se emitia donde la toma bajaba de ~1 km/h, 0,3-0,5 m ANTES de donde el vehiculo quedo
     quieto y cambio la marcha; el lector cierra el leg en esa parada grabada y el cierre media contra un wp corrido
     (remFr -0,4..-0,5 con el vehiculo en su lugar). El reposo de la toma es la referencia: ahi va el wp."""
     cusps = {}
     sent = None
-    movio = False   # se movio con el sentido vigente (sin eso, el cambio solo fija el sentido inicial: no es un cusp)
+    movio_m = 0.0   # lo desplazado con el sentido vigente (sin CUSP_MIN_M, el cambio solo fija el sentido inicial)
     i = 0
     n = len(rows)
     while i < n:
-        g = rows[i]["gear"]
-        nuevo = None
-        if g == 0:
-            nuevo = -1
-        elif g >= 2:
-            nuevo = 1
+        nuevo = _sentido_de_marcha(rows[i]["gear"])
         if nuevo is None or sent is None or nuevo == sent:
             if nuevo is not None and sent is None:
                 sent = nuevo
-            if sent is not None and rows[i]["spd"] >= STOP_KMH_DET:
-                movio = True
+            if sent is not None and i > 0 and rows[i]["spd"] >= STOP_KMH_DET:
+                movio_m += math.hypot(rows[i]["x"] - rows[i - 1]["x"], rows[i]["z"] - rows[i - 1]["z"])
+            rows[i]["sent"] = sent
             i += 1
             continue
-        # candidato: el cambio en i; es efectivo si el vehiculo se mueve con el sentido nuevo antes de otro cambio
+        # candidato: el cambio en i; es efectivo si el vehiculo se desplaza CUSP_MIN_M con el sentido nuevo antes de otro cambio
         j = i
-        efectivo = False
+        acc = 0.0
         while j < n:
-            gj = rows[j]["gear"]
-            sj = None
-            if gj == 0:
-                sj = -1
-            elif gj >= 2:
-                sj = 1
+            sj = _sentido_de_marcha(rows[j]["gear"])
             if sj is not None and sj != nuevo:
                 break
-            if rows[j]["spd"] >= STOP_KMH_DET:
-                efectivo = True
-                break
+            if j > i and rows[j]["spd"] >= STOP_KMH_DET:
+                acc += math.hypot(rows[j]["x"] - rows[j - 1]["x"], rows[j]["z"] - rows[j - 1]["z"])
+                if acc >= CUSP_MIN_M:
+                    break
             j += 1
-        if efectivo:
-            if movio:
+        if acc >= CUSP_MIN_M:
+            if movio_m >= CUSP_MIN_M:
                 cusps[i - 1] = sent
+            else:
+                for k in range(0, i):          # todavia no se habia desplazado: era la marcha que traia, no un tramo
+                    rows[k]["sent"] = nuevo
             sent = nuevo
-            movio = True
+            movio_m = acc
+            for k in range(i, j):
+                rows[k]["sent"] = sent
             i = j
         else:
+            for k in range(i, max(j, i + 1)):   # no efectivo: las filas conservan el sentido vigente
+                rows[k]["sent"] = sent
             i = j if j > i else i + 1
+    primero = 1
+    for r in rows:
+        if r.get("sent"):
+            primero = r["sent"]
+            break
+    for r in rows:
+        if not r.get("sent"):
+            r["sent"] = primero
     return cusps
+
+def cusps_de_la_toma(rows):
+    """los cusps de sentidos_de_la_toma (y deja rows[i]["sent"] puesto)"""
+    return sentidos_de_la_toma(rows)
 
 def resample(rows):
     """Muestrea la linea a arc-length adaptativo por velocidad. Conserva primero, ultimo, los frames con marca y el
@@ -1039,23 +1067,6 @@ def endpoint_brake_decel(rows):
     dec = (v0 * v0) / (2.0 * d0)
     return max(0.5, min(8.0, dec))
 
-def is_reverse(row, prev):
-    """Reversa. PRIMARIO: gear==0 (CarGear.REVERSE, senal real que loguea el recorder).
-    BACKUP: movimiento neto hacia atras vs heading, PERO solo a baja velocidad y con
-    desplazamiento real (a alta vel nunca hay reversa; un glitch de 2 frames casi
-    iguales daba falsos positivos a 105 km/h)."""
-    if row["gear"] == 0:
-        return True
-    if prev is None or row["spd"] > REV_MAXKMH:
-        return False
-    dx, dz = row["x"] - prev["x"], row["z"] - prev["z"]
-    mv = math.hypot(dx, dz)
-    if mv < REV_MINMOVE:
-        return False
-    fx = math.sin(math.radians(row["hdg"]))   # forward unit (x,z) del heading
-    fz = math.cos(math.radians(row["hdg"]))
-    return (dx * fx + dz * fz) / mv < REV_DOT
-
 RETRO_UMBRAL_M = 2.0   # el del motor (BZRouteData.RETRO_UMBRAL_M): >2 m contra el rumbo = glitch
 
 def sanear_retrocesos(keep, WP):
@@ -1330,7 +1341,7 @@ def main():
     WP = []
     for i, w in enumerate(keep):
         prev = keep[i - 1] if i > 0 else None
-        rev  = False if moto else is_reverse(w, prev)   # la moto no tiene reversa (y su N ya no es 0)
+        rev  = False if moto else (w.get("sent", 1) < 0)   # el sentido EFECTIVO (sentidos_de_la_toma); la moto no tiene reversa (y su N ya no es 0)
         if not moto and w.get("cusp") is not None:
             rev = (w["cusp"] < 0)                        # el reposo del intercambio cierra el tramo SALIENTE
         WP.append({

@@ -6,6 +6,17 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.2.4
+
+**Fixes that came from using the framework in a real mod** (BZ_Trader, traders that travel in vehicles with stops): the panel no longer opens on its own when you close a trader's menu, and a stop requested by another mod on a mark followed by a reverse maneuver no longer throws the route off.
+
+- **Fixed (admins): closing a trader's menu with ESC opened the AutoDrive panel.** It happened with the Expansion Market (or any other mod's menu), the first time with each trader. Now the action that arrives right after closing another mod's menu doesn't open the panel; HOME opens and closes it as always.
+- **Fixed: after a stop requested by another mod, the vehicle could lose its recording and end up stopping somewhere else.** If the recording had a reverse maneuver right after the mark (marking while going forward and leaving in reverse), resuming could make the recording jump hundreds of meters ahead: the vehicle followed only the waypoints, without the recording, and the next stop ended up far from its mark. Now the recording is never placed more than 24 m from the vehicle (if something doesn't add up, it re-anchors by the real position and heading), a forward section never consumes the reverse one, and after every recovery the route cursor and the recording cursor are re-synced with the real position.
+- **Improved: reverse near a mark.** The converter counts a change of direction only if the vehicle moves at least 3 m in the new direction: shifting into R for an instant while standing still no longer splits the route. **Routes already converted don't need to be converted again**: when loaded, a reverse section shorter than 3 m between two forward ones is merged automatically. **Recording tip:** always make marks (NUMPAD 4) while in forward; if you come from reverse, shift into first, brake, and then mark.
+- **Improved: the log.** Every recording line (`[Cinta]`) says which vehicle it belongs to, and a `DESFASE` line warns every 5 s if the route cursor and the vehicle don't match.
+
+---
+
 ## v1.2.3
 
 **Important fixes for any server, and much more accurate motorbikes.** Two bugs that 1.2.1 and 1.2.2 had, plus a set of motorbike improvements measured on Badlands and Chernarus.

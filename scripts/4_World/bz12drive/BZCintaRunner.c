@@ -209,6 +209,14 @@ class BZCintaRunner
     // la fase nueva en SU arco, sin competir desde el arco viejo. Se apila sobre
     // fase + λ + interior-skip (cada capa cerro lo suyo).
     private const float TRAMO_FASE_MIN_M = 3.0;
+    // ★ 1.2.4: LA SIEMBRA NO SE VA LEJOS. El flip del leg ocurre en el cusp y el tramo nuevo de la cinta EMPIEZA en ese
+    // mismo reposo (medido en las 7 cintas de Badlands: 0,00-0,01 m entre el fin del tramo saliente y el inicio del
+    // siguiente). Un blanco de la monotonia a mas de esto del vehiculo es contabilidad rota (medido: 550 m, el cursor se
+    // fue al cusp siguiente de la misma fase y el leg manejo 600 m a ciegas). 2x la ventana del rescate.
+    private const float SIEMBRA_LEJOS_M = 24.0;
+    // el re-anclaje por posicion acepta cuadros cuyo rumbo grabado difiere del real hasta esto: una ruta que vuelve por
+    // la misma calle tiene cuadros de la misma fase a 0 m y a 180 grados
+    private const float REANCLA_RUMBO_DEG = 60.0;
     private ref array<float> m_TramoS;    // arco de inicio de cada tramo de fase
     private ref array<int>   m_TramoIdx;  // frame de inicio del tramo
     private ref array<bool>  m_TramoRev;  // fase del tramo (true = reversa)
@@ -352,9 +360,11 @@ class BZCintaRunner
         if (!m_Valida || m_Count < 2) return false;
         int kg = m_Cursor;
         if (kg < 0) kg = 0;
+        int trG = FrameTramoDe(kg);   // 1.2.4: el reposo tiene que ser de ESTE tramo
         float sLimG = m_SEst + SALTO_CONSULTA_M;
         while (kg < m_Count && m_S.Get(kg) <= sLimG)
         {
+            if (FrameTramoDe(kg) != trG) return false;
             if (m_Kmh.Get(kg) < MESETA_KMH && kg > m_MesetaUltFin) return true;
             if (m_Thr.Get(kg) > 0.01) return false;
             kg = kg + 1;
@@ -383,9 +393,11 @@ class BZCintaRunner
         if (m_MesetaIni >= 0) return false;
         int k = m_Cursor;
         if (k < 0) k = 0;
+        int trEng = FrameTramoDe(k);   // 1.2.4: la meseta a la vista es de ESTE tramo (la del cusp siguiente es del otro leg)
         float sLim = m_SEst + SALTO_CONSULTA_M;
         while (k < m_Count && m_S.Get(k) <= sLim)
         {
+            if (FrameTramoDe(k) != trEng) return false;
             if (m_Kmh.Get(k) < MESETA_KMH && k > m_MesetaUltFin)
             {
                 if (!BZDriveController.s_Quiet)
@@ -746,8 +758,28 @@ class BZCintaRunner
         return Math.Sqrt(dxp * dxp + dzp * dzp);
     }
 
+    // ★ 1.2.4: LA FASE ENTERA. Por construccion los tramos alternan (un bloque corto se absorbe en el que lo rodea), pero
+    // el cierre del leg y el clamp miran hasta el proximo tramo del OTRO sentido, no hasta el proximo tramo: si alguna vez
+    // quedaran dos del mismo sentido seguidos, una parada a mitad de fase (un hold del consumidor sobre una parada
+    // grabada) no cerraria el leg ni frenaria el cursor en el borde.
+    private int UltimoTramoDeFase(int tr)
+    {
+        if (tr < 0 || !m_TramoRev || tr >= m_TramoRev.Count()) return tr;
+        int uT = tr;
+        while (uT + 1 < m_TramoRev.Count() && m_TramoRev.Get(uT + 1) == m_TramoRev.Get(tr)) uT = uT + 1;
+        return uT;
+    }
+
+    private int PrimerTramoDeFase(int tr)
+    {
+        if (tr < 0 || !m_TramoRev || tr >= m_TramoRev.Count()) return tr;
+        int pT = tr;
+        while (pT > 0 && m_TramoRev.Get(pT - 1) == m_TramoRev.Get(tr)) pT = pT - 1;
+        return pT;
+    }
+
     // el bloque de cuadros de la ULTIMA parada grabada (v < MESETA_KMH) de la fase que contiene el cursor: [ini, fin].
-    // false si la fase no tiene parada.
+    // false si la fase no tiene parada. La fase es ENTERA (ver UltimoTramoDeFase).
     private bool UltimaParadaDeFase(bool esperaRev, out int iniP, out int finP)
     {
         iniP = -1;
@@ -757,8 +789,9 @@ class BZCintaRunner
         while (tr > 0 && m_TramoRev.Get(tr) != esperaRev) tr = tr - 1;
         if (tr < 0 || m_TramoRev.Get(tr) != esperaRev) return false;
         int fin = m_Count - 1;
-        if (tr + 1 < m_TramoIdx.Count()) fin = m_TramoIdx.Get(tr + 1) - 1;
-        int ini = m_TramoIdx.Get(tr);
+        int trUlt = UltimoTramoDeFase(tr);
+        if (trUlt + 1 < m_TramoIdx.Count()) fin = m_TramoIdx.Get(trUlt + 1) - 1;
+        int ini = m_TramoIdx.Get(PrimerTramoDeFase(tr));
         int k = fin;
         while (k > ini && m_Kmh.Get(k) >= MESETA_KMH) k = k - 1;
         if (k <= ini) return false;
@@ -815,13 +848,16 @@ class BZCintaRunner
         return m_S.Get(m_Count - 1);
     }
 
-    // arco donde termina la FASE (tramo fwd/rev) que contiene s: inicio del tramo siguiente, o el fin de la cinta
+    // arco donde termina la FASE (entera, ver UltimoTramoDeFase) que contiene s: inicio del proximo tramo del otro
+    // sentido, o el fin de la cinta
     float FinDeFaseEn(float s)
     {
         float finF = SFin();
         if (!m_TramoS || m_TramoS.Count() == 0) return finF;
         int trF = TramoDe(s);
-        if (trF >= 0 && trF < m_TramoS.Count() - 1) finF = m_TramoS.Get(trF + 1);
+        if (trF < 0) return finF;
+        int trFU = UltimoTramoDeFase(trF);
+        if (trFU < m_TramoS.Count() - 1) finF = m_TramoS.Get(trFU + 1);
         return finF;
     }
 
@@ -852,6 +888,159 @@ class BZCintaRunner
         return true;
     }
 
+    private float DistAlCuadro(vector pos, int k)
+    {
+        float dxk = pos[0] - m_X.Get(k);
+        float dzk = pos[2] - m_Z.Get(k);
+        return Math.Sqrt(dxk * dxk + dzk * dzk);
+    }
+
+    // distancia del vehiculo al cuadro del cursor (el aviso de desfase del controlador); -1 sin cinta
+    float DistAlCursor(vector pos)
+    {
+        if (!m_Valida || m_Cursor < 0 || m_Cursor >= m_Count) return -1;
+        return DistAlCuadro(pos, m_Cursor);
+    }
+
+    // rumboDeg < -900 = sin rumbo (no se filtra). El rumbo grabado es el yaw real del chasis, tambien en reversa.
+    private bool RumboCompatible(int k, float rumboDeg)
+    {
+        if (rumboDeg < -900.0) return true;
+        float dhr = m_H.Get(k) - rumboDeg;
+        while (dhr > 180.0) dhr = dhr - 360.0;
+        while (dhr < -180.0) dhr = dhr + 360.0;
+        return Math.AbsFloat(dhr) <= REANCLA_RUMBO_DEG;
+    }
+
+    // la fase de un cuadro es la de su TRAMO (los bloques cortos absorbidos cuentan con la fase que los rodea); con el
+    // mapa de tramos sin armar, la marcha grabada
+    private bool CuadroEsDeFase(int k, bool esperaRev)
+    {
+        if (m_FrameTramo && m_FrameTramo.Count() == m_Count && m_TramoRev && m_TramoRev.Count() > 0)
+        {
+            int trK = m_FrameTramo.Get(k);
+            if (trK >= 0 && trK < m_TramoRev.Count()) return (m_TramoRev.Get(trK) == esperaRev);
+        }
+        return ((m_Gear.Get(k) == 0) == esperaRev);
+    }
+
+    // ★ 1.2.4: el INICIO de tramo de la fase pedida mas cercano a pos (rumbo compatible); -1 si no hay
+    private int InicioDeTramoMasCercano(vector pos, float rumboDeg, bool esperaRev, out float distM)
+    {
+        distM = -1;
+        if (!m_TramoS || m_TramoS.Count() == 0) return -1;
+        int mejorT = -1;
+        float dMejorT = 0;
+        int ktT;
+        for (ktT = 0; ktT < m_TramoS.Count(); ktT++)
+        {
+            if (m_TramoRev.Get(ktT) != esperaRev) continue;
+            int kIniT = m_TramoIdx.Get(ktT);
+            if (!RumboCompatible(kIniT, rumboDeg)) continue;
+            float dT = DistAlCuadro(pos, kIniT);
+            if (mejorT < 0 || dT < dMejorT)
+            {
+                mejorT = ktT;
+                dMejorT = dT;
+            }
+        }
+        if (mejorT >= 0) distM = dMejorT;
+        return mejorT;
+    }
+
+    // ★ 1.2.4: el cuadro de la fase pedida mas cercano a pos (rumbo compatible). Entre los que quedan a menos de 1 m del
+    // mejor gana el de arco mas cercano al s_est actual (una ruta que pasa dos veces por el mismo lugar en el mismo
+    // sentido). -1 si la fase no tiene cuadros compatibles.
+    private int CuadroDeFaseMasCercano(vector pos, float rumboDeg, bool esperaRev, out float distM)
+    {
+        distM = -1;
+        int jMejor = -1;
+        float d2Mejor = 0;
+        int jf;
+        float ddx;
+        float ddz;
+        float dd2;
+        for (jf = 0; jf < m_Count - 1; jf++)
+        {
+            if (!CuadroEsDeFase(jf, esperaRev)) continue;
+            if (!RumboCompatible(jf, rumboDeg)) continue;
+            ddx = pos[0] - m_X.Get(jf);
+            ddz = pos[2] - m_Z.Get(jf);
+            dd2 = ddx * ddx + ddz * ddz;
+            if (jMejor < 0 || dd2 < d2Mejor)
+            {
+                jMejor = jf;
+                d2Mejor = dd2;
+            }
+        }
+        if (jMejor < 0) return -1;
+        float topeEmp = Math.Sqrt(d2Mejor) + 1.0;
+        float tope2Emp = topeEmp * topeEmp;
+        float dsMejor = Math.AbsFloat(m_S.Get(jMejor) - m_SEst);
+        for (jf = 0; jf < m_Count - 1; jf++)
+        {
+            if (!CuadroEsDeFase(jf, esperaRev)) continue;
+            if (!RumboCompatible(jf, rumboDeg)) continue;
+            ddx = pos[0] - m_X.Get(jf);
+            ddz = pos[2] - m_Z.Get(jf);
+            dd2 = ddx * ddx + ddz * ddz;
+            if (dd2 > tope2Emp) continue;
+            float dsJ = Math.AbsFloat(m_S.Get(jf) - m_SEst);
+            if (dsJ < dsMejor)
+            {
+                jMejor = jf;
+                dsMejor = dsJ;
+            }
+        }
+        distM = DistAlCuadro(pos, jMejor);
+        return jMejor;
+    }
+
+    // ★ 1.2.4: ancla el cursor desde la POSICION real (re-ubicacion, SAFE_STOP): el cuadro de la fase mas cercano con el
+    // rumbo del vehiculo; a mas de RESCATE_ARCO_MAX no se ancla (se avisa y el cursor queda). Mismo enganche sembrado
+    // que AnclarEnS (el primer Muestra no suma odometria y rescata fino alrededor).
+    bool AnclarPorPosicion(vector pos, float rumboDeg, bool esperaRev, string motivo)
+    {
+        if (!m_Valida || m_Count < 2) return false;
+        float dA = -1;
+        int kA = CuadroDeFaseMasCercano(pos, rumboDeg, esperaRev, dA);
+        float sAntesA = m_SEst;
+        float topeA = RESCATE_ARCO_MAX;
+        if (kA < 0 || dA > topeA)
+        {
+            if (!BZDriveController.s_Quiet) Print("[Cinta] ANCLA (" + motivo + ") por posicion: sin cuadro de la fase a menos de " + topeA.ToString() + " m con el rumbo del vehiculo (el mas cercano a " + dA.ToString() + " m): el cursor queda en s " + m_SEst.ToString() + Suf());
+            return false;
+        }
+        m_SEst = m_S.Get(kA);
+        m_Cursor = kA;
+        m_TicksLejos = 0;
+        m_RescFallidos = 0;
+        m_BordeTicks = 0;
+        m_PrevQOk = false;
+        m_MesetaIni = -1;      // un re-anclaje externo borra la meseta en curso
+        m_MesetaFin = -1;
+        m_MesetaUltFin = -1;
+        if (m_FrameTramo && kA < m_FrameTramo.Count()) m_UltTramoOk = m_FrameTramo.Get(kA);
+        if (!BZDriveController.s_Quiet)
+        {
+            string la = "[Cinta] ANCLA (" + motivo + ") por posicion · s_est " + sAntesA.ToString() + " -> " + m_SEst.ToString();
+            la = la + " · cuadro " + kA.ToString() + " a " + dA.ToString() + " m · tramo " + m_UltTramoOk.ToString();
+            Print(la + Suf());
+        }
+        return true;
+    }
+
+    // ★ 1.2.4: el arco de la cinta que corresponde a una POSICION (el bien pisado del controlador), sin mover el cursor:
+    // el cuadro de la fase mas cercano con ese rumbo, si esta a menos de RESCATE_ARCO_M. -1 si no hay.
+    float SDePosicion(vector pos, float rumboDeg, bool esperaRev, out float distM)
+    {
+        distM = -1;
+        if (!m_Valida || m_Count < 2) return -1;
+        int kS = CuadroDeFaseMasCercano(pos, rumboDeg, esperaRev, distM);
+        if (kS < 0 || distM > RESCATE_ARCO_M) return -1;
+        return m_S.Get(kS);
+    }
+
     // G3: ancla el cursor en s tras una re-ubicacion. Igual que la siembra: el primer Muestra no suma
     // odometria (m_PrevQOk=false) y hace el rescate fino alrededor del punto anclado; la monotonia re-arranca
     // desde el tramo del ancla.
@@ -869,7 +1058,7 @@ class BZCintaRunner
         m_MesetaFin = -1;
         m_MesetaUltFin = -1;
         if (m_FrameTramo && kA < m_FrameTramo.Count()) m_UltTramoOk = m_FrameTramo.Get(kA);
-        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] ANCLA (AR manual) · s_est -> " + m_SEst.ToString() + " · frame " + kA.ToString() + " · tramo " + m_UltTramoOk.ToString());
+        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] ANCLA (AR manual) · s_est -> " + m_SEst.ToString() + " · frame " + kA.ToString() + " · tramo " + m_UltTramoOk.ToString() + Suf());
     }
 
     // FRENO GRABADO SOBRE UNA BAJADA, ADELANTE. Desde el cursor hasta sDesde + alcanceM busca el primer
@@ -1130,38 +1319,41 @@ class BZCintaRunner
     // depende de que la cinta haya sido llamada (la dependencia circular que
     // cego al detector interno). Blanco: el proximo tramo de la fase nueva
     // despues del tramo EN CONSUMO; declara consumo (monotonia, ).
-    void SembrarFase(bool esperaRev, vector pos)
+    void SembrarFase(bool esperaRev, vector pos, float rumboDeg)
     {
         if (!m_Valida || !m_TramoS) return;
-        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] CAMBIO-FASE(leg) a " + esperaRev.ToString() + " · s_est " + m_SEst.ToString() + " · ultConsumido " + m_UltTramoOk.ToString());
+        if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] CAMBIO-FASE(leg) a " + esperaRev.ToString() + " · s_est " + m_SEst.ToString() + " · ultConsumido " + m_UltTramoOk.ToString() + Suf());
         int kt;
+        int ktMono = -1;
         for (kt = m_UltTramoOk + 1; kt < m_TramoS.Count(); kt++)
         {
             if (m_TramoRev.Get(kt) == esperaRev)
             {
-                if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] SIEMBRA tramo " + kt.ToString() + " · s_est -> " + m_TramoS.Get(kt).ToString());
-                m_SEst = m_TramoS.Get(kt);
-                m_Cursor = m_TramoIdx.Get(kt);
-                m_TicksLejos = 0;
-                m_RescFallidos = 0;
-                m_UltTramoOk = kt;
-                m_BordeTicks = 0;   // el flip resuelve la contradiccion del borde
-                m_MesetaIni = -1;   // la siembra borra la meseta en curso
-                m_MesetaFin = -1;
-                m_MesetaUltFin = -1;
-                // ★ ENGANCHE SEMBRADO (, diseño del backlog de
-                // ): sin esto, el primer Muestra tras la siembra
-                // sumaba a s_est el desplazamiento acumulado durante TODO el
-                // gap de posesion del borde (m_PrevQ rancio) y arrancaba el
-                // leg leyendo entradas de un arco corrido — el transitorio de
-                // ~25 wp a 0.8-1.1 m tras cada flip. Con m_PrevQOk=false el
-                // primer Muestra no suma delta y dispara el RESCATE de paso
-                // fino (0.10 m) alrededor del punto sembrado = proyeccion del
-                // casco sobre el tramo nuevo, con toda la maquinaria de
-                // anclas (fase + clamp + costo-de-arco) ya puesta.
-                m_PrevQOk = false;
+                ktMono = kt;
+                break;
+            }
+        }
+        // ★ 1.2.4: EL BLANCO DE LA MONOTONIA SOLO VALE CERCA. El flip del leg ocurre en el cusp y el tramo nuevo
+        // empieza en ese reposo: un blanco a mas de SIEMBRA_LEJOS_M es la contabilidad rota (medido: 550 m) y la
+        // monotonia cede ante la POSICION del vehiculo: el inicio de tramo de la fase nueva mas cercano, y si tampoco
+        // hay uno cerca, el cuadro de la fase mas cercano (la salida SIN-BLANCO de siempre).
+        float topeS = SIEMBRA_LEJOS_M;
+        if (ktMono >= 0)
+        {
+            float dMono = DistAlCuadro(pos, m_TramoIdx.Get(ktMono));
+            if (dMono <= topeS)
+            {
+                SembrarEnTramo(ktMono, "SIEMBRA tramo " + ktMono.ToString(), dMono, true);
                 return;
             }
+            if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA LEJOS: el tramo " + ktMono.ToString() + " (el que seguia por monotonia, s " + m_TramoS.Get(ktMono).ToString() + ") empieza a " + dMono.ToString() + " m del vehiculo (tope " + topeS.ToString() + "): la contabilidad de tramos quedo mal, se re-ancla por posicion" + Suf());
+        }
+        float dIni = -1;
+        int ktIni = InicioDeTramoMasCercano(pos, rumboDeg, esperaRev, dIni);
+        if (ktIni >= 0 && dIni <= topeS)
+        {
+            SembrarEnTramo(ktIni, "SIEMBRA-REANCLA tramo " + ktIni.ToString() + " (el inicio de tramo de la fase nueva mas cercano)", dIni, false);
+            return;
         }
         // ★★★ SALIDA DECLARADA DEL SIN-BLANCO: sin esto el
         // cursor quedaba congelado PARA SIEMPRE y el vehiculo manejaba a
@@ -1169,29 +1361,13 @@ class BZCintaRunner
         // ultCons clavado en 6 el resto de la ruta). SIN BLANCO con tramos de
         // la fase EXISTENTES = la contabilidad quedo probadamente mal — la
         // premisa de la monotonia (cursor sano) se rompio, asi que la guarda
-        // cede ante un RE-ANCLAJE POR PROXIMIDAD (el frame de la fase nueva
-        // mas cercano a la posicion real), declarado en el log, y la
-        // monotonia RE-ARRANCA desde el tramo re-anclado (puede rebobinar:
-        // eso es el punto). Si la fase nueva no existe en la cinta, el aviso
-        // viejo queda (ausencia real, no bloqueo).
-        int jMin = -1;
-        float dMin = 1000000000.0;
-        int jf;
-        float ddx;
-        float ddz;
-        float dd2;
-        for (jf = 0; jf < m_Count - 1; jf++)
-        {
-            if ((m_Gear.Get(jf) == 0) != esperaRev) continue;
-            ddx = pos[0] - m_X.Get(jf);
-            ddz = pos[2] - m_Z.Get(jf);
-            dd2 = ddx * ddx + ddz * ddz;
-            if (dd2 < dMin)
-            {
-                dMin = dd2;
-                jMin = jf;
-            }
-        }
+        // cede ante un RE-ANCLAJE POR PROXIMIDAD (el cuadro de la fase nueva
+        // mas cercano a la posicion real, con el rumbo del vehiculo), declarado
+        // en el log, y la monotonia RE-ARRANCA desde el tramo re-anclado (puede
+        // rebobinar: eso es el punto). Si la fase nueva no existe en la cinta,
+        // el aviso viejo queda (ausencia real, no bloqueo).
+        float dCua = -1;
+        int jMin = CuadroDeFaseMasCercano(pos, rumboDeg, esperaRev, dCua);
         if (jMin >= 0)
         {
             int ktR = m_FrameTramo.Get(jMin);
@@ -1200,14 +1376,37 @@ class BZCintaRunner
             m_TicksLejos = 0;
             m_RescFallidos = 0;
             m_UltTramoOk = ktR;
+            m_BordeTicks = 0;
             m_MesetaIni = -1;    // la siembra borra la meseta en curso
             m_MesetaFin = -1;
             m_MesetaUltFin = -1;
             m_PrevQOk = false;   // mismo enganche sembrado que la pass-1
-            if (!BZDriveController.s_Quiet && BZDiag.On()) Print("[Cinta] SIEMBRA-REANCLA tramo " + ktR.ToString() + " · s_est -> " + m_SEst.ToString() + " · dist " + Math.Sqrt(dMin).ToString() + " m (monotonia re-armada)");
+            if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA-REANCLA tramo " + ktR.ToString() + " (cuadro " + jMin.ToString() + ") · s_est -> " + m_SEst.ToString() + " · dist " + dCua.ToString() + " m (monotonia re-armada)" + Suf());
             return;
         }
-        if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA SIN BLANCO (no hay tramo de la fase nueva despues de " + m_UltTramoOk.ToString() + ")");
+        if (!BZDriveController.s_Quiet) Print("[Cinta] SIEMBRA SIN BLANCO (no hay tramo de la fase nueva despues de " + m_UltTramoOk.ToString() + " ni cuadros de esa fase con el rumbo del vehiculo)" + Suf());
+    }
+
+    // la siembra en el inicio de un tramo: cursor y s_est ahi, contadores a cero, meseta borrada y ENGANCHE SEMBRADO
+    // (m_PrevQOk=false: el primer Muestra no suma la odometria acumulada durante el gap de posesion y rescata fino
+    // alrededor del punto sembrado, con toda la maquinaria de anclas ya puesta; sin esto el leg arrancaba leyendo
+    // entradas de un arco corrido, ~25 wp a 0.8-1.1 m tras cada flip). soloConDiag: la siembra normal solo habla con
+    // Diagnostics; la re-anclada habla siempre.
+    private void SembrarEnTramo(int kt, string etiqueta, float distM, bool soloConDiag)
+    {
+        m_SEst = m_TramoS.Get(kt);
+        m_Cursor = m_TramoIdx.Get(kt);
+        m_TicksLejos = 0;
+        m_RescFallidos = 0;
+        m_UltTramoOk = kt;
+        m_BordeTicks = 0;   // el flip resuelve la contradiccion del borde
+        m_MesetaIni = -1;   // la siembra borra la meseta en curso
+        m_MesetaFin = -1;
+        m_MesetaUltFin = -1;
+        m_PrevQOk = false;
+        bool hablaS = !BZDriveController.s_Quiet;
+        if (soloConDiag && !BZDiag.On()) hablaS = false;
+        if (hablaS) Print("[Cinta] " + etiqueta + " · s_est -> " + m_SEst.ToString() + " · el inicio del tramo a " + distM.ToString() + " m del vehiculo" + Suf());
     }
 
     // ¿Que tramo de fase contiene este arco? (-1 si no hay tramos)
@@ -1370,9 +1569,10 @@ class BZCintaRunner
         {
             trClamp = TramoDe(m_SEst);
             while (trClamp > 0 && m_TramoRev.Get(trClamp) != esperaRev) trClamp = trClamp - 1;
-            if (m_TramoRev.Get(trClamp) == esperaRev && trClamp < m_TramoS.Count() - 1)
+            int trClampU = UltimoTramoDeFase(trClamp);   // 1.2.4: hasta el fin de la fase ENTERA
+            if (m_TramoRev.Get(trClamp) == esperaRev && trClampU < m_TramoS.Count() - 1)
             {
-                float finFase = m_TramoS.Get(trClamp + 1) - 0.05;
+                float finFase = m_TramoS.Get(trClampU + 1) - 0.05;
                 if (m_SEst > finFase)
                 {
                     m_SEst = finFase;
@@ -1629,7 +1829,7 @@ class BZCintaRunner
                     dl = dl + " · anclaOk " + anclaOk.ToString();
                 }
                 else dl = dl + " · SIN CANDIDATO";
-                Print(dl);
+                Print(dl + Suf());
             }
         }
         else if (res.distM <= RESCATE_M) m_DiagLejos = 0;
@@ -1649,9 +1849,14 @@ class BZCintaRunner
         // espejo lo cazo: seed a fwd#2 desde rev#1, 1014 perdidas). Cursor sano
         // (distM <= RESCATE_M) = tape consumido; el maximo monotono protege de
         // estados atascados (que ya quedaron en su tramo viejo).
+        // ★ 1.2.4: UN LEG NUNCA CONSUME UN TRAMO DE LA OTRA FASE. Medido (APC, marca 1 con la R puesta en la parada):
+        // al soltar el hold el cursor quedo en la ultima fila del tramo de avance, la meseta a la vista engancho los cuadros
+        // de la R (ya del tramo de reversa), este consumo marco ese tramo y la siembra del leg de reversa salto al tramo
+        // de reversa SIGUIENTE, a 550 m. La fase que se maneja (esperaRev) es la unica que puede quedar consumida.
         if (res.distM <= RESCATE_M)
         {
             int trOk = TramoDe(m_SEst);
+            if (trOk >= 0 && m_TramoRev.Get(trOk) != esperaRev) trOk = -1;
             if (trOk > m_UltTramoOk) m_UltTramoOk = trOk;
         }
         // interpolacion POR ARCO entre el frame del cursor y el siguiente
@@ -1729,7 +1934,7 @@ class BZCintaRunner
                 if (!BZDriveController.s_Quiet && !m_BordeDiag)
                 {
                     m_BordeDiag = true;
-                    Print("[Cinta] BORDE-AGOTADO tramo " + trClamp.ToString() + " · s_est " + m_SEst.ToString() + " · d " + res.distM.ToString() + " (dRef " + m_BordeDRef.ToString() + ") · cede al dueño del fin-de-leg");
+                    Print("[Cinta] BORDE-AGOTADO tramo " + trClamp.ToString() + " · s_est " + m_SEst.ToString() + " · d " + res.distM.ToString() + " (dRef " + m_BordeDRef.ToString() + ") · cede al dueño del fin-de-leg" + Suf());
                 }
                 return false;
             }

@@ -6,6 +6,17 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.2.4
+
+**Arreglos que salieron de usar el framework en un mod real** (BZ_Trader, comerciantes que viajan en vehículos con paradas): el panel ya no se abre solo al cerrar el menú de un comerciante, y una parada pedida por otro mod sobre una marca con maniobra de reversa ya no desacomoda la ruta.
+
+- **Corregido (admins): cerrar con ESC el menú de un comerciante abría el panel de AutoDrive.** Pasaba con el Market de Expansion (o cualquier menú de otro mod), la primera vez con cada comerciante. Ahora la acción que llega justo después de cerrar un menú ajeno no abre el panel; INICIO lo abre y lo cierra igual que siempre.
+- **Corregido: después de una parada pedida por otro mod, el vehículo podía perder su grabación y terminar parando en otro lugar.** Si la toma tenía una maniobra de reversa justo después de la marca (marcar en avance y salir en reversa), al reanudar la grabación podía saltar cientos de metros adelante: el vehículo seguía solo los waypoints, sin la grabación, y la parada siguiente quedaba lejos de su marca. Ahora la grabación nunca se ubica a más de 24 m del vehículo (si algo no cierra, se re-ubica por la posición y el rumbo reales), un tramo de avance no consume el de reversa, y después de cada recuperación el cursor de la ruta y el de la grabación se re-sincronizan con la posición real.
+- **Mejorado: la reversa cerca de una marca.** El conversor cuenta un cambio de sentido solo si el vehículo se desplaza al menos 3 m en el sentido nuevo: poner R un instante con el vehículo quieto ya no corta la ruta. **Las rutas ya convertidas no hace falta reconvertirlas**: al cargarlas, un tramo de reversa de menos de 3 m entre dos de avance se funde solo. **Consejo para grabar:** las marcas (NUMPAD 4) se hacen siempre en avance; si venís en reversa, poné primera, frenado, y marcá.
+- **Mejorado: el registro.** Cada línea de la grabación (`[Cinta]`) dice de qué vehículo es, y una línea `DESFASE` avisa cada 5 s si el cursor de la ruta y el vehículo no coinciden.
+
+---
+
 ## v1.2.3
 
 **Arreglos importantes para cualquier server, y motos mucho más precisas.** Dos errores que traían la 1.2.1 y la 1.2.2, y una tanda de mejoras en las motos medida en Badlands y en Chernarus.
