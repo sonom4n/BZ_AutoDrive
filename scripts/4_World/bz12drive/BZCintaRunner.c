@@ -513,6 +513,20 @@ class BZCintaRunner
         }
         return -1;
     }
+    // ★ 1.2.5: la ENTRADA de la primera meseta grabada no consumida con arco en (sDesde, sHasta], barriendo desde el
+    // cursor; -1 si no hay. La parada SINTETICA pedida por el consumidor se mueve a ella: es una parada real.
+    float ProximaMesetaEntre(float sDesde, float sHasta)
+    {
+        if (!m_Valida || m_Count < 2) return -1;
+        int kp = m_Cursor;
+        if (kp < 0) kp = 0;
+        while (kp < m_Count && m_S.Get(kp) <= sHasta)
+        {
+            if (m_Kmh.Get(kp) < MESETA_KMH && kp > m_MesetaUltFin && m_S.Get(kp) > sDesde) return m_S.Get(kp);
+            kp = kp + 1;
+        }
+        return -1;
+    }
     float FinMesetaAdelante()
     {
         if (!m_Valida || m_Count < 2) return -1;

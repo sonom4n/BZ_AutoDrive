@@ -86,6 +86,8 @@ Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork
 
 ## Estado
 
+**v1.2.5** — una parada suave en cualquier punto de la ruta para los mods que usan el framework (`HoldRunnerSuave`: sigue su línea y frena hasta el punto); el panel muestra la versión exacta. Probada sobre DayZ 1.30 y su Update 2.
+
 **v1.2.4** — el panel ya no se abre solo al cerrar el menú de un comerciante con ESC; una parada pedida por otro mod sobre una marca con maniobra de reversa ya no desacomoda la ruta; la reversa cerca de una marca vale (marcá siempre en avance).
 
 **v1.2.3** — los vehículos de AutoDrive ya no quedan guardados en el mundo al cerrar el server; ESC ya no puede quedar como tecla del panel; motos mucho más precisas (siguen la forma del camino, miden cómo responden, paradas de otros mods en el lugar exacto y arranque en 1ra).

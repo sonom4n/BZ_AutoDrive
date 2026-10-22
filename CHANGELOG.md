@@ -6,6 +6,17 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.2.5
+
+**Una parada suave en cualquier punto de la ruta, para los mods que usan el framework**, y el panel con la versión exacta. Probada sobre DayZ 1.30 y su Update 2.
+
+- **Nuevo (API): `HoldRunnerSuave(distM, aMs2)`.** Un mod que necesita detener el vehículo donde la grabación no tiene una parada (un comerciante al que saludan, un taxi que levanta a alguien, un control) ahora puede pedirle que pare a `distM` metros: el vehículo sigue su línea, frena con una curva suave hasta el punto y queda detenido (`IsHeld()`). Hasta ahora, `HoldRunner()` lejos de una parada grabada frenaba en el acto con la dirección derecha, y a 45 km/h en una curva el vehículo se iba de su línea. Devuelve `false` si no puede (por ejemplo, en moto): entonces se usa `HoldRunner()` como siempre. Reglas: una parada grabada antes del punto manda; una reversa o el fin de la ruta antes del punto lo recortan; un `HoldRunner()` durante la frenada la convierte en frenada inmediata; una recuperación la cancela, con aviso. También nuevos: `IsHoldPendiente()`, `RunnerFrenadaMs2()` y `RunnerCintaS()`. Detalle en el manual (B.7).
+- **Mejorado: el pie del panel muestra la versión exacta del mod** (antes decía "1.2" fijo).
+- **Mejorado: el registro de 40 Hz** (`BZ12_LOG_*.csv`) suma al final la columna `vPed` (la velocidad tope de una parada pedida) y sigue escribiendo mientras el vehículo está detenido por un HOLD, para medir la frenada hasta quieto.
+- **Sin cambios para quien no usa la llamada nueva:** la regresión de 16 tomas (autos, motos y Expansion con chofer eAI) da lo mismo que con la 1.2.4.
+
+---
+
 ## v1.2.4
 
 **Arreglos que salieron de usar el framework en un mod real** (BZ_Trader, comerciantes que viajan en vehículos con paradas): el panel ya no se abre solo al cerrar el menú de un comerciante, y una parada pedida por otro mod sobre una marca con maniobra de reversa ya no desacomoda la ruta.

@@ -2574,6 +2574,8 @@ Lo que tenés que saber:
 | `RunnerPos()` / `RunnerSpeedKmh()` | posición y velocidad del vehículo |
 | `RunnerAtStop()` | `bool`: está cumpliendo una parada |
 | `IsHeld()` | `bool`: detenido en una parada o por `HoldRunner()`, esperando que lo sueltes. El paso de `false` a `true` es "llegó a una parada" |
+| `IsHoldPendiente()` | `bool` *(desde la 1.2.5)*: el vehículo está frenando hacia una parada pedida (`HoldRunnerSuave`) o hacia la parada grabada de un `HoldRunner()`. Cuando se detiene pasa a `IsHeld()`; si vuelve a `false` sin `IsHeld()`, la parada se canceló (el log dice por qué) |
+| `RunnerFrenadaMs2()` / `RunnerCintaS()` | *(desde la 1.2.5)* la deceleración que usa `HoldRunnerSuave` si no le pasás una (la frenada medida de la grabación o, si no la trae, la del vehículo) / por qué metro de la grabación va. `-1` sin el cerebro 1.2 |
 | `RunnerIsPaused()` | `bool`: la pausa blanda (`SetPaused`). **No es lo mismo que el hold** |
 | `RunnerRouteEnded()` | `bool`: el cerebro cerró la ruta; desde ahí nadie maneja el vehículo |
 | `RunnerRouteCompleted()` | `bool`: y la cerró completa, con el veredicto estricto (en reposo a ≤ 0,25 m, sin choque contra un objeto, sin intervención física del AutoRecovery: §17). *(En la 1.2 era `true` también entre 0,25 m y 1 m: ya no)* |
@@ -2594,13 +2596,22 @@ Con el cerebro 1.1 (`RunnerFellBackTo11()`), los de bloqueo, recuperación y cho
 |---|---|
 | `SetHoldAtStops(bool)` | modo "espera en cada parada": ponelo antes de cargar (`PlayRouteByName` lo hace por vos) |
 | `HoldRunner()` | detiene y mantiene quieto el vehículo. Si hay una parada grabada a menos de 8 m, lo deja llegar hasta ella y lo detiene ahí |
-| `ResumeFromHold()` | lo suelta y sigue la ruta |
+| `HoldRunnerSuave(float distM, float aMs2)` | *(desde la 1.2.5)* lo detiene **en cualquier punto**, a `distM` metros de recorrido: sigue su línea y frena con una curva suave (`aMs2` en m/s²; `0` = `RunnerFrenadaMs2()`) hasta quedar detenido (`IsHeld()`). Devuelve `false` si no puede (sin el cerebro 1.2, arrancando o recuperándose, en moto, o el punto ya quedó atrás): ahí usá `HoldRunner()` |
+| `ResumeFromHold()` | lo suelta y sigue la ruta (también cancela una parada suave pendiente) |
 | `SetPaused(bool)` | la pausa blanda: congela el manejo (pensada para teletransportar o preparar). No pasa por las paradas |
 | `SetVehiclePartsLocked(bool)` / `VehiclePartsLocked()` | vehículo inviolable o no (lo mismo que `set_vehicle_parts`). Aplica en el acto. Si tu mod entrega el vehículo a un jugador, desbloquealo |
 | `HornBeep()` | un bocinazo corto |
 | `StopRunner()` | termina: borra vehículo y chofer. Para un runner propio usá `UnregisterRunner(r)`, que además lo saca del registro |
 
 ⚠ **Un `HoldRunner()` hasta 8 m antes de una parada grabada la da por cumplida**: al soltarlo, el vehículo no vuelve a frenar ahí. Si querés que después de tu detención se cumpla esa parada, detenelo **en** la parada.
+
+**La parada suave (`HoldRunnerSuave`, desde la 1.2.5)** es para detener el vehículo donde la grabación no tiene una parada, sin que se vaya de su línea: `HoldRunner()` lejos de una parada grabada frena en el acto con la dirección derecha, y en una curva rápida el vehículo se sale. Reglas:
+- **Una parada grabada antes del punto manda:** para ahí.
+- **Una reversa o el fin de la ruta antes del punto** lo recortan a 1 m antes.
+- **Un `HoldRunner()` durante la frenada** la convierte en frenada inmediata (emergencia). Otro `HoldRunnerSuave()` reemplaza el punto.
+- **Una recuperación durante la frenada** (AutoRecovery, re-ubicación, atasco) la cancela: `IsHoldPendiente()` vuelve a `false` sin `IsHeld()` y el log dice por qué. Volvé a pedirla o usá `HoldRunner()`.
+- **La moto no la soporta** (devuelve `false`).
+- Para saber cuándo empezar a frenar podés usar `RunnerFrenadaMs2()`: con esa deceleración, desde `v` km/h hacen falta unos `(v/3,6)² / (2·a)` metros.
 
 #### B.7.4 — Identidad y registro
 

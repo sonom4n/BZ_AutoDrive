@@ -784,7 +784,8 @@ class BZReproductorUI extends UIScriptedMenu {
         if (m_Footer) {
             int fps = (int)BZBusClientManager.s_ServerFps;
             float msR = Math.Round(BZBusClientManager.s_FrameworkMs * 10.0) / 10.0;
-            m_Footer.SetText("BZ_AutoDrive 1.2  ·  server " + fps + " fps  ·  BZ " + msR + " ms/frame");
+            // 1.2.5: la version exacta, de una sola fuente (CfgMods BZ_AutoDrive version = config.cpp)
+            m_Footer.SetText("BZ_AutoDrive " + BZAutoDriveVersion.Texto() + "  ·  server " + fps + " fps  ·  BZ " + msR + " ms/frame");
         }
     }
 

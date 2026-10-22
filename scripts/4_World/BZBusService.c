@@ -251,6 +251,7 @@ class BZBusService {
     private bool                 m_HoldActive = false;  // API TAXI: detenido (en un stop o por HoldRunner) esperando ResumeFromHold() del eAI
     private bool                 m_HoldPendiente = false; // hold pedido con 1.2 y meseta a la vista: engancha EN la meseta (SampleDrive12)
     private vector               m_HoldPedidoPos;         // donde se pidio: si la meseta queda mas atras que su alcance, engancha ya
+    private bool                 m_HoldSuave = false;     // 1.2.5: el hold pendiente es una parada SINTETICA (HoldRunnerSuave)
     private float                m_HoldMesetaS = -1;      // arco de ENTRADA de la meseta a la vista al pedir: el enganche es cuando el cursor llega
     private bool                 m_HoldAtStops = false; // API TAXI: si true, en cada isStop hace HOLD en vez de auto-continuar
     private bool                 m_Reverse;
@@ -3997,6 +3998,8 @@ class BZBusService {
     // Reanuda desde un HOLD. Si estaba EN una parada -> avanza al proximo wp. Si fue un HoldRunner()
     // a mitad de tramo -> solo suelta el freno y sigue hacia el wp actual (no saltea).
     void ResumeFromHold() {
+        if (m_HoldPendiente && m_HoldSuave && m_Ctrl12) m_Ctrl12.CancelarParadaPedida("ResumeFromHold");   // 1.2.5
+        m_HoldSuave = false;
         m_HoldPendiente = false;   // un resume mientras el hold espera la meseta lo cancela
         if (!m_HoldActive) return;
         m_HoldActive = false;
@@ -4026,7 +4029,18 @@ class BZBusService {
     // contacto en cada parada, y al soltar, la cinta seguia en la fila de 8 km/h con el vehiculo quieto (AR "NO-FISICO").
     // Sin meseta a la vista (un taxi a mitad de tramo) engancha ya, como siempre. Idempotente.
     void HoldRunner() {
-        if (m_HoldActive || m_HoldPendiente) return;
+        if (m_HoldActive) return;
+        if (m_HoldPendiente) {
+            // 1.2.5: un HOLD duro con una parada SUAVE pendiente ESCALA a la frenada inmediata (el consumidor puede
+            // necesitar parar ya); con una meseta grabada pendiente sigue siendo idempotente
+            if (!m_HoldSuave) return;
+            if (m_Ctrl12) m_Ctrl12.CancelarParadaPedida("HoldRunner duro: escala a la frenada inmediata");
+            m_HoldPendiente = false;
+            m_HoldSuave = false;
+            BZBusLog.Info("[API][C12] HOLD duro con una parada suave pendiente: escala a la frenada inmediata");
+            m_HoldActive = true;
+            return;
+        }
         // la MOTO (su conductor no tiene el cerebro del auto): lo mismo con su cinta. Si hay una meseta grabada a la vista, la
         // moto llega hasta ahi por su cuenta y el hold engancha con la moto detenida EN la parada grabada. Medido: el freno
         // en el acto la dejaba 4 m antes de la parada y hacia dos paradas (la del hold y la de la meseta)
@@ -4052,6 +4066,62 @@ class BZBusService {
             }
         }
         m_HoldActive = true;
+    }
+
+    // ★ 1.2.5: HOLD SUAVE EN CUALQUIER PUNTO DE LA RUTA (una meseta SINTETICA). El consumidor pide detenerse a distM
+    // metros de arco por delante con una curva de frenado de aMs2 m/s2 (<= 0 = la frenada propia del runner,
+    // RunnerFrenadaMs2()). Mientras esta pendiente el controlador SIGUE DIRIGIENDO por la cinta, sin freno de mano: solo
+    // topa la velocidad de referencia con v = 3,6*sqrt(2*a*(sStop - s)) y pone un piso de freno fisico para seguir esa
+    // curva (BZDriveController.PedirParadaEn). Engancha el HOLD (freno + freno de mano, IsHeld) por debajo de 3 km/h o
+    // al llegar al punto. Devuelve false si no puede (sin el cerebro 1.2, la cinta no posee, la moto, sin conductor, el
+    // punto queda atras o pegado): el consumidor decide (el HoldRunner() de siempre, u otra cosa). Reglas:
+    //  - una meseta grabada antes del punto: el punto se mueve a su entrada (es una parada real);
+    //  - un cusp o el fin de la ruta antes del punto: el punto se recorta a 1 m antes;
+    //  - un segundo pedido con uno pendiente lo REEMPLAZA; un HoldRunner() duro con uno pendiente ESCALA;
+    //  - la escalera del AR (maniobra, re-ubicacion), el ahogo o un SAFE_STOP del arbitro lo CANCELAN (linea en el log,
+    //    IsHoldPendiente() vuelve a false y el consumidor decide de nuevo);
+    //  - ResumeFromHold() lo borra, pendiente o enganchado; la cinta sigue armada (el vehiculo no se fue de la linea).
+    bool HoldRunnerSuave(float distM, float aMs2) {
+        if (m_HoldActive) return false;
+        if (!m_Usar12 || !m_C12Listo || !m_Ctrl12 || !m_Bus || !m_St12) return false;
+        if (m_Moto12) {
+            BZBusLog.Info("[API][MOTO] HoldRunnerSuave: la moto no lo soporta (su conductor no tiene tope de velocidad): HoldRunner() de siempre");
+            return false;
+        }
+        if (!m_Driver || !m_Driver.IsAlive()) return false;
+        if (m_HoldPendiente && !m_HoldSuave) {
+            BZBusLog.Info("[API][C12] HoldRunnerSuave: ya hay un HOLD pendiente en una meseta grabada: se sirve esa parada");
+            return true;
+        }
+        float sStopS = -1;
+        float aUsadaS = -1;
+        string motivoS = "";
+        if (!m_Ctrl12.PedirParadaEn(distM, aMs2, sStopS, aUsadaS, motivoS)) {
+            BZBusLog.Info("[API][C12] HoldRunnerSuave(" + distM.ToString() + ", " + aMs2.ToString() + ") rechazado: " + motivoS);
+            return false;
+        }
+        bool reemplazaS = (m_HoldPendiente && m_HoldSuave);
+        m_HoldPendiente = true;
+        m_HoldSuave = true;
+        m_HoldPedidoPos = m_Bus.GetPosition();
+        m_HoldMesetaS = sStopS;
+        string ls = "[API][C12] HOLD SUAVE pedido a " + distM.ToString() + " m (" + motivoS + ") · a " + aUsadaS.ToString() + " m/s2";
+        ls = ls + " · v " + m_St12.chassisKmh.ToString() + " km/h";
+        if (reemplazaS) ls = ls + " · reemplaza al pedido anterior";
+        BZBusLog.Info(ls);
+        return true;
+    }
+    // frenando o esperando el punto (contra IsHeld() = ya detenido)
+    bool IsHoldPendiente() { return m_HoldPendiente; }
+    // la deceleracion que usa una parada suave sin una dada (la frenada medida de la grabacion, o la del manual); -1 sin el 1.2
+    float RunnerFrenadaMs2() {
+        if (!m_Usar12 || !m_C12Listo || !m_Ctrl12) return -1;
+        return m_Ctrl12.FrenadaMs2();
+    }
+    // el arco de la cinta bajo el cursor; -1 sin el 1.2 o sin cinta
+    float RunnerCintaS() {
+        if (!m_Usar12 || !m_C12Listo || !m_Ctrl12) return -1;
+        return m_Ctrl12.CintaS();
     }
 
     // Pausa/reanuda blando (freeze de manejo). Espejo explicito de TogglePause (idempotente).
@@ -14098,12 +14168,42 @@ class BZBusService {
             }
             return false;
         }
+        if (m_HoldActive && !m_Paused && !m_RouteStopped && !m_Frozen && m_Ctrl12)
+        {
+            // 1.2.5: el CSV sigue escribiendo en el HOLD (hasta el reposo + 1 s, tope 10 s): la frenada se mide con el
+            Llenar12(bus);
+            m_Ctrl12.VolcarLogEnHold(m_St12, dt);
+        }
         if (m_Paused || m_RouteStopped || m_HoldActive || m_Frozen) return false;
         if (m_CurrentInput == BZBusInput.SPAWN) return false;
         Llenar12(bus);
         // el hold pedido engancha aca, a 40 Hz, cuando la cinta entra en la meseta grabada (o el vehiculo ya
         // esta quieto, o la meseta quedo atras). Freno + freno de mano en el acto: no espera al Tick de 500 ms.
-        if (m_HoldPendiente && m_Ctrl12.HoldEnMesetaListo(m_St12, m_HoldPedidoPos, m_HoldMesetaS))
+        if (m_HoldPendiente && m_HoldSuave)
+        {
+            // 1.2.5: la parada SINTETICA: el controlador la pudo cancelar (AR, ahogo, SAFE_STOP), o ya esta lista
+            if (!m_Ctrl12.ParadaPedida())
+            {
+                m_HoldPendiente = false;
+                m_HoldSuave = false;
+                BZBusLog.Info("[API][C12] HOLD suave CANCELADO por el controlador (" + m_Ctrl12.ParadaCancelMotivo() + "): IsHoldPendiente vuelve a false, el consumidor decide");
+            }
+            else if (m_Ctrl12.ParadaSuaveLista(m_St12))
+            {
+                float sParadaH = m_Ctrl12.ParadaS();
+                m_Ctrl12.ParadaEnganchada();
+                m_HoldPendiente = false;
+                m_HoldSuave = false;
+                m_HoldActive = true;
+                SetCachedInput(0, 0, 1.0);
+                SetCachedHandbrake(1.0);
+                string lh = "[API][C12] HOLD suave en s " + m_Ctrl12.CintaS().ToString() + " (pedido s " + sParadaH.ToString() + ")";
+                lh = lh + " · v " + m_St12.chassisKmh.ToString() + " km/h · lat " + m_Ctrl12.GetCrossTrackM().ToString() + " m";
+                BZBusLog.Info(lh);
+                return false;
+            }
+        }
+        else if (m_HoldPendiente && m_Ctrl12.HoldEnMesetaListo(m_St12, m_HoldPedidoPos, m_HoldMesetaS))
         {
             m_HoldPendiente = false;
             m_HoldActive = true;

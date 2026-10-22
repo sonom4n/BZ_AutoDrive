@@ -2573,6 +2573,8 @@ What you need to know:
 | `RunnerPos()` / `RunnerSpeedKmh()` | the vehicle's position and speed |
 | `RunnerAtStop()` | `bool`: it is serving a stop |
 | `IsHeld()` | `bool`: stopped at a stop or by `HoldRunner()`, waiting for you to release it. The change from `false` to `true` means "it reached a stop" |
+| `IsHoldPendiente()` | `bool` *(since 1.2.5)*: the vehicle is braking toward a requested stop (`HoldRunnerSuave`) or toward the recorded stop of a `HoldRunner()`. When it stops it becomes `IsHeld()`; if it goes back to `false` without `IsHeld()`, the stop was cancelled (the log says why) |
+| `RunnerFrenadaMs2()` / `RunnerCintaS()` | *(since 1.2.5)* the deceleration `HoldRunnerSuave` uses if you don't pass one (the braking measured in the recording or, if it has none, the vehicle's) / which meter of the recording it is at. `-1` without the 1.2 brain |
 | `RunnerIsPaused()` | `bool`: the soft pause (`SetPaused`). **It is not the same as the hold** |
 | `RunnerRouteEnded()` | `bool`: the brain closed the route; from then on nobody drives the vehicle |
 | `RunnerRouteCompleted()` | `bool`: and it closed it complete, with the strict verdict (at rest ≤ 0.25 m, no crash against an object, no physical AutoRecovery intervention: §17). *(In 1.2 it was also `true` between 0.25 m and 1 m: not anymore)* |
@@ -2593,13 +2595,22 @@ With brain 1.1 (`RunnerFellBackTo11()`), the block, recovery and crash methods r
 |---|---|
 | `SetHoldAtStops(bool)` | "wait at each stop" mode: set it before loading (`PlayRouteByName` does it for you) |
 | `HoldRunner()` | stops the vehicle and keeps it still. If there is a recorded stop less than 8 m ahead, it lets the vehicle reach it and stops it there |
-| `ResumeFromHold()` | releases it, and it continues along the route |
+| `HoldRunnerSuave(float distM, float aMs2)` | *(since 1.2.5)* stops it **anywhere**, `distM` meters ahead along the route: it keeps following its line and brakes along a smooth curve (`aMs2` in m/s²; `0` = `RunnerFrenadaMs2()`) until it stops (`IsHeld()`). It returns `false` if it can't (without the 1.2 brain, while starting or recovering, on a motorbike, or the point is already behind): then use `HoldRunner()` |
+| `ResumeFromHold()` | releases it, and it continues along the route (it also cancels a pending smooth stop) |
 | `SetPaused(bool)` | the soft pause: freezes the driving (meant for teleporting or setting things up). It is not tied to the stops |
 | `SetVehiclePartsLocked(bool)` / `VehiclePartsLocked()` | tamper-proof vehicle or not (the same as `set_vehicle_parts`). Applies right away. If your mod hands the vehicle over to a player, unlock it |
 | `HornBeep()` | a short honk |
 | `StopRunner()` | ends it: deletes vehicle and driver. For a runner of your own, use `UnregisterRunner(r)`, which also removes it from the registry |
 
 ⚠ **A `HoldRunner()` up to 8 m before a recorded stop counts that stop as served**: when you release it, the vehicle does not brake there again. If you want that stop to be served after your halt, halt the vehicle **at** the stop.
+
+**The smooth stop (`HoldRunnerSuave`, since 1.2.5)** is for stopping the vehicle where the recording has no stop, without it leaving its line: `HoldRunner()` away from a recorded stop brakes at once with the steering straight, and in a fast curve the vehicle runs wide. Rules:
+- **A recorded stop before the point wins:** it stops there.
+- **A reverse maneuver or the end of the route before the point** clips it to 1 m before.
+- **A `HoldRunner()` during the braking** turns it into an immediate stop (emergency). Another `HoldRunnerSuave()` replaces the point.
+- **A recovery during the braking** (AutoRecovery, relocation, stall) cancels it: `IsHoldPendiente()` goes back to `false` without `IsHeld()` and the log says why. Ask again or use `HoldRunner()`.
+- **Motorbikes don't support it** (it returns `false`).
+- To know when to start braking you can use `RunnerFrenadaMs2()`: with that deceleration, from `v` km/h it takes about `(v/3.6)² / (2·a)` meters.
 
 #### B.7.4 — Identity and registry
 

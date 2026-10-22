@@ -6,6 +6,17 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.2.5
+
+**A smooth stop anywhere on the route, for mods that use the framework**, and the panel with the exact version. Tested on DayZ 1.30 and its Update 2.
+
+- **New (API): `HoldRunnerSuave(distM, aMs2)`.** A mod that needs to stop the vehicle where the recording has no stop (a trader somebody waves at, a taxi picking someone up, a checkpoint) can now ask it to stop `distM` meters ahead: the vehicle keeps following its line, brakes along a smooth curve down to the point and stays stopped (`IsHeld()`). Until now, `HoldRunner()` away from a recorded stop braked at once with the steering straight, and at 45 km/h in a curve the vehicle left its line. It returns `false` if it can't (for example, on a motorbike): then use `HoldRunner()` as always. Rules: a recorded stop before the point wins; a reverse maneuver or the end of the route before the point clips it; a `HoldRunner()` during the braking turns it into an immediate stop; a recovery cancels it, with a log line. Also new: `IsHoldPendiente()`, `RunnerFrenadaMs2()` and `RunnerCintaS()`. Details in the manual (B.7).
+- **Improved: the panel footer shows the exact mod version** (it used to say a fixed "1.2").
+- **Improved: the 40 Hz log** (`BZ12_LOG_*.csv`) adds a `vPed` column at the end (the speed cap of a requested stop) and keeps writing while the vehicle is held, so the braking down to a standstill can be measured.
+- **No change if you don't use the new call:** the 16-run regression (cars, motorbikes, and Expansion with an eAI driver) gives the same results as 1.2.4.
+
+---
+
 ## v1.2.4
 
 **Fixes that came from using the framework in a real mod** (BZ_Trader, traders that travel in vehicles with stops): the panel no longer opens on its own when you close a trader's menu, and a stop requested by another mod on a mark followed by a reverse maneuver no longer throws the route off.

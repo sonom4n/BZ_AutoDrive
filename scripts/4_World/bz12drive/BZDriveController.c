@@ -851,6 +851,8 @@ class BZDriveController
         m_SalirDelHold = true;
         m_StopServidoPend = true;   // el stop del que sale queda SERVIDO (ver ActualizarStopServido)
         m_HoldSalidaT = 0;   // arranca el reloj del primer gas
+        m_HoldLogT = 0;      // 1.2.5: el CSV del proximo hold arranca de cero
+        m_HoldLogQuietoT = 0;
     }
 
     // EL PRIMER GAS TRAS EL HOLD, a resolucion de tick. El heartbeat late cada 5,15 s: contra el, una
@@ -973,6 +975,140 @@ class BZDriveController
         return (hdx * hdx + hdz * hdz) > alc * alc;
     }
 
+    // ★ 1.2.5: pide la parada sintetica. false con el motivo: sin leg, sin cinta, la cinta no posee (arrancando, maniobra,
+    // AR, fallback), escalera/ahogo en curso, ya en el endpoint, sin frenada conocida, o el punto queda atras/pegado.
+    // Reglas: una meseta grabada antes del punto mueve el punto a su entrada (es una parada real); un cusp o el fin de la
+    // ruta antes del punto lo recorta a 1 m antes; un pedido nuevo reemplaza al anterior.
+    bool PedirParadaEn(float distM, float aMs2, out float sStopR, out float aUsadaR, out string motivoR)
+    {
+        sStopR = -1;
+        aUsadaR = -1;
+        motivoR = "";
+        if (!m_Ready || !m_Leg || !m_Leg.valid) { motivoR = "sin leg valido"; return false; }
+        if (!m_Cinta || !m_Cinta.Valida()) { motivoR = "la ruta corre sin cinta"; return false; }
+        if (!m_CintaRodo) { motivoR = "la cinta no posee (arrancando, maniobra, AR o fallback): no hay curva que topar"; return false; }
+        if (m_F1Activo || m_BogActivo || m_ReubPend) { motivoR = "escalera del AR o ahogo en curso"; return false; }
+        if (m_Mode == BZDriveMode.BZDM_ENDPOINT) { motivoR = "ya en el endpoint"; return false; }
+        float aPed = aMs2;
+        if (aPed <= 0) aPed = FrenadaMs2();
+        if (aPed <= 0) { motivoR = "sin frenada conocida (ni medida ni del manual)"; return false; }
+        float distPed = distM;
+        if (distPed < 0) distPed = 0;
+        float sActPed = m_Cinta.SEst();
+        float sStopPed = sActPed + distPed;
+        string notaPed = "";
+        // una meseta grabada antes del punto (tambien la del cusp que cierra el tramo: su entrada esta en este tramo,
+        // en el mismo arco que el borde): el punto se mueve a su entrada, es una parada real
+        float sMesPed = m_Cinta.ProximaMesetaEntre(sActPed, sStopPed);
+        if (sMesPed >= 0)
+        {
+            sStopPed = sMesPed;
+            notaPed = " · movido a la entrada de una meseta grabada (una parada real)";
+        }
+        else
+        {
+            float finFasePed = m_Cinta.FinDeFaseEn(sActPed);
+            if (sStopPed > finFasePed - 1.0)
+            {
+                sStopPed = finFasePed - 1.0;
+                notaPed = " · recortado a 1 m del fin del tramo (s " + finFasePed.ToString() + ")";
+            }
+        }
+        if (sStopPed <= sActPed + 0.5)
+        {
+            motivoR = "el punto queda atras o pegado (s_est " + sActPed.ToString() + ", punto " + sStopPed.ToString() + ")";
+            return false;
+        }
+        m_ParadaPedida = true;
+        m_ParadaS = sStopPed;
+        m_ParadaA = aPed;
+        m_ParadaPedidaS = sActPed;
+        m_ParadaMordio = false;
+        m_ParadaCancelada = "";
+        sStopR = sStopPed;
+        aUsadaR = aPed;
+        motivoR = "parada sintetica en s " + sStopPed.ToString() + " (s_est " + sActPed.ToString() + ")" + notaPed;
+        return true;
+    }
+    bool ParadaPedida() { return m_ParadaPedida; }
+    float ParadaS() { return m_ParadaS; }
+    float ParadaTopeKmh() { return m_ParadaTopeKmh; }
+    string ParadaCancelMotivo() { return m_ParadaCancelada; }
+    // lista para enganchar: casi quieto, o el cursor llego al punto
+    bool ParadaSuaveLista(BZVehicleState st)
+    {
+        if (!m_ParadaPedida) return false;
+        if (Math.AbsFloat(st.chassisKmh) < PARADA_ENGANCHE_KMH) return true;
+        if (m_Cinta && m_Cinta.SEst() >= m_ParadaS) return true;
+        return false;
+    }
+    // el runner engancho el HOLD: la parada queda servida
+    void ParadaEnganchada()
+    {
+        m_ParadaPedida = false;
+        m_ParadaTopeKmh = -1;
+    }
+    // la cancelan la maniobra F1, una re-ubicacion, la resincronizacion por SAFE_STOP, el ahogo y ResumeFromHold: el
+    // vehiculo ya no esta donde la curva suponia. Linea en el log; el runner lee el motivo y avisa al consumidor.
+    void CancelarParadaPedida(string motivoC)
+    {
+        if (!m_ParadaPedida) return;
+        m_ParadaPedida = false;
+        m_ParadaTopeKmh = -1;
+        m_ParadaCancelada = motivoC;
+        string lc = "[C12] PARADA PEDIDA cancelada (" + motivoC + ") · pedida en s " + m_ParadaS.ToString();
+        if (m_Cinta) lc = lc + " · s_est " + m_Cinta.SEst().ToString();
+        if (!s_Quiet) Print(lc + SufijoRunner());
+    }
+    // la deceleracion que usa una parada pedida sin una dada: la frenada MEDIDA de la grabacion (EndpointBrakeDecel del
+    // header) y, si la ruta no la trae, la fisica del manual; -1 sin ninguna
+    float FrenadaMs2()
+    {
+        if (m_FrenoMedidoMs2 > 0) return m_FrenoMedidoMs2;
+        if (m_Manual) return m_Manual.MaxBrakeDecel(m_SurfKind);
+        return -1;
+    }
+    float CintaS()
+    {
+        if (!m_Cinta || !m_Cinta.Valida()) return -1;
+        return m_Cinta.SEst();
+    }
+    // el PISO de freno de la parada pedida: la deceleracion uniforme que detiene el casco justo en el punto, en pedal
+    // (sobre el freno fisico del manual); a menos de PARADA_PISO_REM_M del punto, freno a fondo. Gas 0.
+    private void AplicarPisoParada(BZVehicleState st)
+    {
+        if (!m_Cinta) return;
+        float remPiso = m_ParadaS - m_Cinta.SEst();
+        float vPiso = Math.AbsFloat(st.chassisKmh) / 3.6;
+        float bPiso = 1.0;
+        if (remPiso > PARADA_PISO_REM_M)
+        {
+            float aFisPiso = 0;
+            if (m_Manual) aFisPiso = m_Manual.MaxBrakeDecel(m_SurfKind);
+            if (aFisPiso < 0.5) aFisPiso = 0.5;
+            // la deceleracion que hace falta sobre el piso, mas lo que empuja la pendiente (trompa abajo = pitch < 0)
+            float aNecPiso = (vPiso * vPiso) / (2.0 * remPiso) + 9.81 * Math.Sin(-st.pitch);
+            if (aNecPiso < 0) aNecPiso = 0;
+            bPiso = Math.Clamp(aNecPiso / aFisPiso, 0.0, 1.0);
+        }
+        m_Out.throttle = 0;
+        if (bPiso > m_Out.brake) m_Out.brake = bPiso;
+    }
+    // el CSV en el HOLD (ver HOLD_LOG_TOPE_S)
+    void VolcarLogEnHold(BZVehicleState st, float dt)
+    {
+        if (!m_LogOn) return;
+        if (m_HoldLogT >= HOLD_LOG_TOPE_S || m_HoldLogQuietoT >= HOLD_LOG_QUIETO_S) return;
+        m_HoldLogT = m_HoldLogT + dt;
+        if (Math.AbsFloat(st.chassisKmh) < LOG_COLA_QUIETO_KMH) m_HoldLogQuietoT = m_HoldLogQuietoT + dt;
+        else m_HoldLogQuietoT = 0;
+        m_EnHoldLog = true;
+        m_Out.throttle = 0;
+        m_Out.brake = 1.0;
+        VolcarLog(st, dt);
+        m_EnHoldLog = false;
+    }
+
     // UNA sola suelta con re-armado por arco: la del deadlock de (via AR) y la salida de un hold.
     // La cinta deja de poseer, C1 relanza desde el reposo, y la cinta se re-arma cuando el vehiculo recorrio lo que
     // faltaba hasta el FIN de la meseta grabada; sin meseta a la vista, se re-arma por velocidad como siempre.
@@ -1058,7 +1194,7 @@ class BZDriveController
         // cursor no es el casco). `remFr` es el mismo remanente medido por
         // FRAME contra la pose final -- la diferencia entre las dos columnas
         // ES el error de muestreo que sortea la entrada. INSTRUMENTO PURO.
-        FPrintln(m_LogFh, "t,wp,s_est,kmh,gear,lat,psiGeo,psiMed,latDot,pide,aplica,cStr,modo,aplica_quien,legIdx,faseRev,ultCons,skipCons,d,px,pz,imanI,rem,remFr,remG,latFr,thr,brk,ruedas,cont_zona,cont_con,cont_imp,cont_hace,frenoFin");
+        FPrintln(m_LogFh, "t,wp,s_est,kmh,gear,lat,psiGeo,psiMed,latDot,pide,aplica,cStr,modo,aplica_quien,legIdx,faseRev,ultCons,skipCons,d,px,pz,imanI,rem,remFr,remG,latFr,thr,brk,ruedas,cont_zona,cont_con,cont_imp,cont_hace,frenoFin,vPed");
         m_LogOn = true;
         m_LogT = 0;
         Print("[BZDrive] LOG CSV abierto: " + lpath);
@@ -1142,7 +1278,8 @@ class BZDriveController
         if (!m_LogOn) return;
         m_LogT = m_LogT + dt;
         string quien = "fallback";
-        if (m_CintaTick)
+        if (m_EnHoldLog) quien = "hold";
+        else if (m_CintaTick)
         {
             quien = "cinta";
             if (m_CintaVol) quien = "cintaV";
@@ -1229,6 +1366,7 @@ class BZDriveController
         }
         fila = fila + "," + st.wheelsOnGround.ToString() + "," + lczB + "," + lccB + "," + lciB + "," + lchB;
         fila = fila + "," + m_FrenoFinB.ToString();
+        fila = fila + "," + m_ParadaTopeKmh.ToString();
         FPrintln(m_LogFh, fila);
     }
 
@@ -1242,6 +1380,30 @@ class BZDriveController
     // formula. 0 = la ruta no lo trae → fallback al manual (hoy).
     private float m_FrenoMedidoMs2;
     void SetFrenoMedido(float aMs2) { m_FrenoMedidoMs2 = aMs2; }
+    // ★ 1.2.5: LA PARADA PEDIDA (una meseta SINTETICA). El consumidor (un saludo de BZ_Trader, un taxi, una quest)
+    // necesita detener el vehiculo en un punto que la toma no grabo. Hasta hoy el runner solo tenia el HOLD duro
+    // (gas 0, DIRECCION 0, freno y freno de mano): medido en un bus a 47 km/h en una curva, 14,2 m derecho a 6,1 m/s2
+    // derrapando, 5,8 m fuera de su fila y un choque al retomar. Aca el controlador SIGUE DIRIGIENDO por la cinta y
+    // solo topa la velocidad de referencia con la curva de frenado hasta el punto (vPed = 3,6*sqrt(2*a*(sStop - s))),
+    // el mismo mecanismo del techo de llegada pero SIN el gate de convergencia (la parada sintetica muerde siempre que
+    // vPed < kmhRec), mas un PISO de freno fisico para seguir la curva sin quedar atras. El runner engancha el HOLD
+    // (freno de mano) por debajo de PARADA_ENGANCHE_KMH o al llegar al punto.
+    private bool   m_ParadaPedida;
+    private float  m_ParadaS;            // arco de la cinta donde tiene que quedar detenido
+    private float  m_ParadaA;            // m/s2 de la curva de frenado
+    private float  m_ParadaPedidaS;      // s_est al pedirla
+    private float  m_ParadaTopeKmh = -1; // el tope de este cuadro (columna vPed del CSV; -1 sin parada pedida)
+    private bool   m_ParadaMordio;       // el tope ya mordio (la linea de log sale una vez por pedido)
+    private string m_ParadaCancelada = "";   // el motivo de la ultima cancelacion interna (lo lee el runner)
+    private const float PARADA_ENGANCHE_KMH = 3.0;
+    private const float PARADA_PISO_REM_M = 0.3;
+    // el CSV sigue escribiendo en el HOLD (hasta 1 s de reposo o HOLD_LOG_TOPE_S): la frenada hasta quieto se mide con
+    // el; sin esto la unica medida era el salto entre la ultima fila andando y la primera quieta
+    private const float HOLD_LOG_TOPE_S = 10.0;
+    private const float HOLD_LOG_QUIETO_S = 1.0;
+    private float m_HoldLogT;
+    private float m_HoldLogQuietoT;
+    private bool  m_EnHoldLog;
     // ✖ RETIRADA TECHO_VENTANA_M: la ventana metrica fija era un
     // intercambio hypercar↔tractor. El gate de CONVERGENCIA la reemplaza:
     // el techo aplica solo donde kmhRec <= vClav + margen — mordida acotada
@@ -1376,6 +1538,7 @@ class BZDriveController
     void OnReubicado(vector posNueva, float sDest, string evid, string accion, string tipo)
     {
         if (!m_Ready || !m_Leg || !m_Leg.valid) return;
+        CancelarParadaPedida("re-ubicacion " + tipo);   // 1.2.5
         m_F1Activo = false;
         m_ReubPend = false;
         if (m_Cinta)
@@ -1577,6 +1740,7 @@ class BZDriveController
 
     private void IniciarManiobraF1(BZVehicleState st)
     {
+        CancelarParadaPedida("maniobra F1 del AR");   // 1.2.5
         m_F1Activo = true;
         m_F1Fase = 0;
         m_F1T = 0;
@@ -1635,6 +1799,7 @@ class BZDriveController
     private void ResincronizarCursores(BZVehicleState st, string motivoR)
     {
         if (!m_Leg || !m_Leg.valid || !m_Route) return;
+        CancelarParadaPedida(motivoR);   // 1.2.5
         int wpR = WpMasCercanoEnLeg(st.pos);
         float dR = DistXZ12(st.pos, m_Route.Pos(wpR));
         float dCurR = DistXZ12(st.pos, m_Route.Pos(m_Leg.nearWp));
@@ -2578,6 +2743,7 @@ class BZDriveController
         }
         m_AR.CerrarPorAhogo();   // el re-arranque pendiente, si lo hay, no saco al vehiculo
         m_SostenTope = 0;
+        CancelarParadaPedida("ahogo");   // 1.2.5
         m_BogActivo = true;
         m_BogIntentos = m_BogIntentos + 1;
         float sAhAcc = -1;
@@ -5045,6 +5211,29 @@ class BZDriveController
                                 frnTope = 1.0;
                             }
                         }
+                        // ★ 1.2.5: LA PARADA PEDIDA topa la velocidad de referencia con su curva de frenado, SIN el
+                        // gate de convergencia (en crucero kmhRec es grande y la parada sintetica tiene que morder igual);
+                        // el freno extra se libera como en el techo. El gas grabado no pelea: el piso (abajo) lo pone a 0.
+                        if (m_ParadaPedida && m_Cinta)
+                        {
+                            float remPed = m_ParadaS - m_Cinta.SEst();
+                            if (remPed < 0) remPed = 0;
+                            float vPedKmh = 3.6 * Math.Sqrt(2.0 * m_ParadaA * remPed);
+                            m_ParadaTopeKmh = vPedKmh;
+                            if (vPedKmh < kmhRecEff)
+                            {
+                                kmhRecEff = vPedKmh;
+                                frnTope = 1.0;
+                                if (!m_ParadaMordio)
+                                {
+                                    m_ParadaMordio = true;
+                                    string lm = "[C12] PARADA PEDIDA: el tope muerde en s " + m_Cinta.SEst().ToString() + " · faltan " + remPed.ToString() + " m";
+                                    lm = lm + " · casco " + st.chassisKmh.ToString() + " km/h · toma " + m_CintaM.kmhRec.ToString() + " · tope " + vPedKmh.ToString();
+                                    if (!s_Quiet) Print(lm + SufijoRunner());
+                                }
+                            }
+                        }
+                        else m_ParadaTopeKmh = -1;
                         // E3b: iman de gas — fidelidad de velocidad (ver consts)
                         float dvCinta = kmhRecEff - st.chassisKmh;
                         m_ImanGas = Math.Clamp(IMAN_GAS_POR_KMH * dvCinta, -1.0, 0.5);
@@ -5060,6 +5249,8 @@ class BZDriveController
                             if (m_ImanFrn > frnTope) m_ImanFrn = frnTope;
                         }
                         m_Out.brake = Math.Clamp(m_CintaM.brk + m_ImanFrn, 0.0, 1.0);
+                        // ★ 1.2.5: el piso de freno de la parada pedida (la curva se sigue, no se persigue)
+                        if (m_ParadaPedida && m_ParadaTopeKmh >= 0 && Math.AbsFloat(st.chassisKmh) > m_ParadaTopeKmh) AplicarPisoParada(st);
                         AplicarFrenoAnticipado(st);   // freno grabado sobre un quiebre de bajada, repartido antes
                         // FRENO GRABADO CONTRA UN VEHICULO YA DETENIDO = EMPATE DE PEDALES.
                         // El freno de la toma existe para SACAR velocidad. Si el vehiculo ya esta quieto y la toma en

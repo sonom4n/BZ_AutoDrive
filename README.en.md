@@ -86,6 +86,8 @@ To use it: subscribe on the Workshop (it ships signed). To build your fork: pack
 
 ## Status
 
+**v1.2.5** — a smooth stop anywhere on the route for mods that use the framework (`HoldRunnerSuave`: it keeps its line and brakes down to the point); the panel shows the exact version. Tested on DayZ 1.30 and its Update 2.
+
 **v1.2.4** — the panel no longer opens on its own when you close a trader's menu with ESC; a stop requested by another mod on a mark followed by a reverse maneuver no longer throws the route off; reverse near a mark is fine (always mark while in forward).
 
 **v1.2.3** — AutoDrive vehicles are no longer saved in the world when the server shuts down; ESC can no longer become the panel key; much more accurate motorbikes (they follow the path's shape, measure how they respond, stop exactly where other mods ask and pull away in 1st).
