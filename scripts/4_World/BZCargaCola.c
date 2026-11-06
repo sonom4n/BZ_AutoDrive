@@ -37,6 +37,20 @@
 //  corrida de mutantes de verdad. Dos candados, los dos independientes de la perilla:
 //    1) a lo sumo MAX_PASOS_CUADRO pasos de trabajo por cuadro
 //    2) un trabajo que no avanza se ABANDONA con un log, no se reintenta eternamente
+//
+//  ★★★ EL REGISTRO: UNA TOMA YA CARGADA NO SE VUELVE A LEER. Medido, 3 h con 15 buses: 101 cargas para 15 cintas. La ruta se comparte
+//  por referencia y cada vehiculo tiene su BZCintaRunner enlazado a los mismos datos. Vale igual para cualquiera que pida: nada de esto sabe quien llama.
+//
+//  Todo pedido mide primero la HUELLA de sus dos archivos, adentro de la cola (FileAttr no da fecha ni tamanio: no hay otra forma de saber si cambiaron):
+//      registrada con la misma version y lista     ENGANCHE: enlaza y termina
+//      registrada con la misma version y cargando  SEGUIDOR: sale de la cola y espera a ese dueno
+//      sin registrar, o con otra version           DUENO: pasa al fondo de la cola, carga y queda registrada
+//  ⛔ Asi se toma una toma reconvertida con el server vivo: la proxima carga ve otra huella y lee de nuevo. Los vehiculos que estan
+//  usando la vieja siguen con la suya, y esa memoria se libera cuando se retira el ultimo. La huella se mide ANTES de leer los datos: si el
+//  archivo cambia a mitad de la carga, la huella registrada es la vieja y la proxima carga lee de nuevo.
+//  ⛔ Un STOP del dueno no tira a sus seguidores: sigue cargando mientras alguien lo espere. Sin nadie que lo espere se cancela, como siempre.
+//  ⛔ Un fallo no se registra. Si falla el dueno, fallan sus seguidores: pidieron la misma version de los mismos archivos.
+//  Sin tope ni perilla: se retiene solo lo que se lanzo y hasta reiniciar. Pesa unos 60 bytes por fila de cinta y 72 por wp; la linea LISTA dice el total.
 // ============================================================================
 
 // Un trabajo de carga: una ruta y (si corresponde) su cinta, leidas en tajadas.
@@ -50,6 +64,9 @@ class BZCargaTrabajo
     static const int F_CINTA_ARMAR = 5;
     static const int F_LISTO       = 6;
     static const int F_FALLO       = 7;
+    static const int F_CINTA_BIN   = 8;
+    static const int F_HUELLA      = 9;
+    static const int F_SIGUE       = 10;
 
     // ⚠ Los lotes salen de los costos MEDIDOS: una fila de wp cuesta 43-94 us (; el "0,30 ms"
     // que decia aca era una estimacion, no una medicion) y una de cinta ~25 us (3230 ms / 124.258 filas,
@@ -95,7 +112,26 @@ class BZCargaTrabajo
     // por tajada en vez de cuatro por fila: el instrumento no pesa sobre lo que mide.
     private ref array<string> m_Buf;
     private float  m_TInicio;
+    // la cinta desde su binario. Se prueba una sola vez por carga: si no cierra se descarta todo y sigue el CSV
+    private ref BZCintaBinario m_Bin;
+    private bool   m_BinProbado;
+    private bool   m_CintaDeBin;
     private string m_Falla;
+    // LA VERSION de lo que se pide: tamanio y huella de los dos archivos, medidos antes de leerlos.
+    private string m_Clave;
+    private ref BZHuellaArchivo m_Lector;
+    private bool m_WpMedido;
+    private int  m_TamWp;
+    private int  m_HuellaWp;
+    private int  m_TamCinta;
+    private int  m_HuellaCinta;
+    private int  m_TkHuella;
+    private bool m_AlFondo;
+    private bool m_Aislado;     // CargarYaMismo: no pasa por el registro
+    private bool m_SinRunner;   // el dueno que sigue cargando solo para sus seguidores
+    // ⚠ m_Duenio sin ref: el dueno ya guarda a sus seguidores con ref, y dos ref cruzadas no se liberarian nunca.
+    private BZCargaTrabajo m_Duenio;
+    private ref array<ref BZCargaTrabajo> m_Seguidores;
     // filas DECLARADAS por el header (0 = no se sabe). Dan el denominador del %.
     private int    m_WpDecl;
     private int    m_CintaDecl;
@@ -109,7 +145,8 @@ class BZCargaTrabajo
         m_WpDecl = wpDecl;
         m_CintaDecl = cintaDecl;
         m_CintaPedida = (cintaPath != "");
-        m_Fase = F_WP_ABRIR;
+        m_Clave = wpPath + "|" + cintaPath;
+        m_Fase = F_HUELLA;
         m_Buf = new array<string>();
         m_TkWpFGets = 0;
         m_TkWpParse = 0;
@@ -123,6 +160,12 @@ class BZCargaTrabajo
     bool CintaPedida()  { return m_CintaPedida; }
     bool CintaFallo()   { return m_CintaFallo; }
     string CintaPath()  { return m_CintaPath; }
+    int    TamCinta()   { return m_TamCinta; }
+    int    HuellaCinta() { return m_HuellaCinta; }
+    string Clave()      { return m_Clave; }
+    bool Midiendo()     { return m_Fase == F_HUELLA; }
+    bool EsSeguidor()   { return m_Fase == F_SIGUE; }
+    BZCargaTrabajo Duenio() { return m_Duenio; }
     string Etiqueta()   { return m_Etiqueta; }
     float UltimoMs()    { return m_UltimoMs; }
     int   WpCargados()  { return m_NWp; }
@@ -136,6 +179,7 @@ class BZCargaTrabajo
     // ⚠ Nunca muestra 100 hasta que TERMINA: despues de la ultima fila todavia falta armar la cinta.
     int Porcentaje()
     {
+        if (m_Duenio) return m_Duenio.Porcentaje();
         if (m_WpDecl <= 0) return -1;
         if (m_CintaPedida && m_CintaDecl <= 0) return -1;
         int totalP = m_WpDecl;
@@ -148,25 +192,91 @@ class BZCargaTrabajo
     }
 
     // Filas leidas hasta ahora (el panel lo muestra cuando no hay %).
-    int FilasLeidas() { return m_NWp + m_NWpDesc + m_NCinta; }
+    int FilasLeidas()
+    {
+        if (m_Duenio) return m_Duenio.FilasLeidas();
+        return m_NWp + m_NWpDesc + m_NCinta;
+    }
+
+    // Lo que pesa en memoria, calculado: 15 arrays de 4 bytes por fila de cinta, y unos 72 bytes por wp entre todos los de la ruta.
+    float MbDeDatos()
+    {
+        return (m_NCinta * 60.0 + m_NWp * 72.0) / 1048576.0;
+    }
 
     // Lo que muestra el panel mientras carga. Sin % porque no hay forma barata de saber el total
     // de filas sin leer el archivo dos veces (Enforce no expone el tamanio de un archivo).
     string Estado()
     {
+        if (m_Duenio) return m_Duenio.Estado();
+        if (m_Fase == F_HUELLA) return "verificando";
         if (m_Fase == F_WP_ABRIR || m_Fase == F_WP_LEER) return "ruta " + m_NWp.ToString();
         if (m_Fase == F_WP_ARMAR) return "armando ruta";
         if (m_Fase == F_CINTA_ABRIR || m_Fase == F_CINTA_LEER) return "cinta " + m_NCinta.ToString();
+        if (m_Fase == F_CINTA_BIN) return "cinta binaria";
         if (m_Fase == F_CINTA_ARMAR) return "armando cinta";
         return "lista";
     }
 
     void Abandonar(string por)
     {
+        if (m_Lector) { m_Lector.Cerrar(); m_Lector = null; }
+        if (m_Bin) { m_Bin.Cancelar(); m_Bin = null; }
         if (m_FhAbierto) { CloseFile(m_Fh); m_FhAbierto = false; }
         m_Falla = por;
         m_Fase = F_FALLO;
         BZBusLog.Err("[CARGA] " + m_Etiqueta + ": ABANDONADA -- " + por);
+        BZCargaCola.Desregistrar(this);
+        if (m_Seguidores)
+        {
+            int iS;
+            for (iS = 0; iS < m_Seguidores.Count(); iS++)
+            {
+                BZCargaTrabajo fS = m_Seguidores.Get(iS);
+                if (fS) fS.FalloElDueno(por);
+            }
+            m_Seguidores = null;
+        }
+    }
+
+    void FalloElDueno(string por)
+    {
+        m_Duenio = null;
+        m_Falla = por;
+        m_Fase = F_FALLO;
+        BZBusLog.Err("[CARGA] " + m_Etiqueta + ": ABANDONADA -- fallo la carga que esperaba: " + por);
+    }
+
+    // true = no se cancela: otros esperan esta carga y sigue para ellos.
+    bool SiguePorSeguidores()
+    {
+        if (Termino() || !m_Seguidores || m_Seguidores.Count() == 0) return false;
+        m_SinRunner = true;
+        BZBusLog.Info("[CARGA] " + m_Etiqueta + ": su runner la solto, sigue cargando para " + m_Seguidores.Count().ToString() + " que la esperan");
+        return true;
+    }
+
+    // Un seguidor se retiro. Si era el ultimo y al dueno ya no lo espera nadie, se cancela.
+    void SoltoSeguidor(BZCargaTrabajo f)
+    {
+        if (!m_Seguidores) return;
+        int iQ;
+        for (iQ = 0; iQ < m_Seguidores.Count(); iQ++)
+        {
+            if (m_Seguidores.Get(iQ) == f)
+            {
+                m_Seguidores.RemoveOrdered(iQ);
+                break;
+            }
+        }
+        if (m_SinRunner && m_Seguidores.Count() == 0) BZCargaCola.Cancelar(this);
+    }
+
+    bool PideIrAlFondo()
+    {
+        bool pide = m_AlFondo;
+        m_AlFondo = false;
+        return pide;
     }
 
     // (bug 3 de ): cancelar un trabajo en vuelo lo sacaba de la COLA pero no cerraba el
@@ -176,10 +286,19 @@ class BZCargaTrabajo
     {
         if (Termino()) return;
         string enQue = Estado();
+        if (m_Lector) { m_Lector.Cerrar(); m_Lector = null; }
+        if (m_Bin) { m_Bin.Cancelar(); m_Bin = null; }
         if (m_FhAbierto) { CloseFile(m_Fh); m_FhAbierto = false; }
         m_Falla = "cancelada: " + por;
         m_Fase = F_FALLO;
         BZBusLog.Info("[CARGA] " + m_Etiqueta + ": CANCELADA en '" + enQue + "' (" + por + ")");
+        BZCargaCola.Desregistrar(this);
+        if (m_Duenio)
+        {
+            BZCargaTrabajo dQ = m_Duenio;
+            m_Duenio = null;
+            dQ.SoltoSeguidor(this);
+        }
     }
 
     // Trabaja hasta gastar msDisp. Devuelve cuantas UNIDADES hizo: 0 sin terminar = no avanza, y
@@ -190,7 +309,7 @@ class BZCargaTrabajo
         m_Tajadas = m_Tajadas + 1;
         int unidades = 0;
         float gastado = 0;
-        while (gastado < msDisp && !Termino() && unidades < MAX_UNIDADES)
+        while (gastado < msDisp && !Termino() && !EsSeguidor() && !m_AlFondo && unidades < MAX_UNIDADES)
         {
             Unidad();
             unidades = unidades + 1;
@@ -208,6 +327,7 @@ class BZCargaTrabajo
     // Produccion encola y deja que la cola drene: por eso esto NO toca s_Cola.
     bool CargarYaMismo()
     {
+        m_Aislado = true;
         int guarda = 0;
         while (!Termino())
         {
@@ -221,6 +341,11 @@ class BZCargaTrabajo
     // UNA unidad de trabajo. Ninguna supera una pasada sobre los datos.
     private void Unidad()
     {
+        if (m_Fase == F_HUELLA)
+        {
+            MedirHuella();
+            return;
+        }
         if (m_Fase == F_WP_ABRIR)
         {
             m_Ruta = new BZRouteData();
@@ -294,6 +419,20 @@ class BZCargaTrabajo
         if (m_Fase == F_CINTA_ABRIR)
         {
             if (!m_CintaPedida) { Terminar(); return; }
+            if (!m_BinProbado)
+            {
+                m_BinProbado = true;
+                string pathBin = BZCintaBinario.RutaDe(m_CintaPath);
+                if (pathBin != "" && FileExist(pathBin))
+                {
+                    m_Cinta = new BZCintaRunner();
+                    m_Cinta.ComenzarCarga();
+                    m_Bin = new BZCintaBinario();
+                    m_Bin.Empezar(pathBin, m_Cinta, m_CintaDecl, m_TamCinta, m_HuellaCinta);
+                    m_Fase = F_CINTA_BIN;
+                    return;
+                }
+            }
             m_Fh = OpenFile(m_CintaPath, FileMode.READ);
             if (m_Fh == 0)
             {
@@ -306,6 +445,27 @@ class BZCargaTrabajo
             m_Cinta = new BZCintaRunner();
             m_Cinta.ComenzarCarga();
             m_Fase = F_CINTA_LEER;
+            return;
+        }
+        if (m_Fase == F_CINTA_BIN)
+        {
+            float tb = GetGame().GetTickTime();
+            bool finB = m_Bin.Unidad();
+            m_MsCintaLeer = m_MsCintaLeer + (GetGame().GetTickTime() - tb) * 1000.0;
+            if (!finB) return;
+            if (m_Bin.Ok())
+            {
+                m_NCinta = m_Bin.Filas();
+                m_CintaDeBin = true;
+                m_Bin = null;
+                m_Fase = F_CINTA_ARMAR;
+                return;
+            }
+            // nada de lo leido sirve: un archivo cortado deja valores basura. Se tira la cinta entera y se lee el CSV
+            BZBusLog.Warn("[CARGA] " + m_Etiqueta + ": binario de la cinta descartado (" + m_Bin.Motivo() + "): se carga el CSV");
+            m_Bin = null;
+            m_Cinta = null;
+            m_Fase = F_CINTA_ABRIR;
             return;
         }
         if (m_Fase == F_CINTA_LEER)
@@ -354,6 +514,108 @@ class BZCargaTrabajo
         }
     }
 
+    private void MedirHuella()
+    {
+        int tkH = TickCount(0);
+        if (!m_Lector)
+        {
+            m_Lector = new BZHuellaArchivo();
+            m_Lector.Empezar(m_WpPath);
+        }
+        bool finH = m_Lector.Unidad();
+        m_TkHuella = m_TkHuella + TickCount(tkH);
+        if (!finH) return;
+        if (!m_WpMedido)
+        {
+            m_WpMedido = true;
+            m_TamWp = m_Lector.Tam();
+            m_HuellaWp = m_Lector.Huella();
+            if (m_CintaPedida)
+            {
+                m_Lector.Empezar(m_CintaPath);
+                return;
+            }
+        }
+        else
+        {
+            m_TamCinta = m_Lector.Tam();
+            m_HuellaCinta = m_Lector.Huella();
+        }
+        m_Lector = null;
+        Decidir();
+    }
+
+    bool MismaVersion(BZCargaTrabajo o)
+    {
+        if (m_TamWp != o.m_TamWp || m_HuellaWp != o.m_HuellaWp) return false;
+        if (m_TamCinta != o.m_TamCinta || m_HuellaCinta != o.m_HuellaCinta) return false;
+        return m_WpDecl == o.m_WpDecl && m_CintaDecl == o.m_CintaDecl;
+    }
+
+    private void Decidir()
+    {
+        if (m_Aislado)
+        {
+            m_Fase = F_WP_ABRIR;
+            return;
+        }
+        BZCargaTrabajo reg = BZCargaCola.Registrado(m_Clave);
+        if (reg && MismaVersion(reg))
+        {
+            if (reg.Termino())
+            {
+                Enganchar(reg);
+                return;
+            }
+            reg.SumarSeguidor(this);
+            m_Duenio = reg;
+            m_Fase = F_SIGUE;
+            return;
+        }
+        BZCargaCola.Registrar(m_Clave, this);
+        m_Fase = F_WP_ABRIR;
+        m_AlFondo = true;
+    }
+
+    void SumarSeguidor(BZCargaTrabajo f)
+    {
+        if (!m_Seguidores) m_Seguidores = new array<ref BZCargaTrabajo>();
+        m_Seguidores.Insert(f);
+    }
+
+    // Toma los datos de una carga terminada. La ruta se comparte tal cual: no tiene nada por vehiculo. La cinta, por EnlazarDatos.
+    void Enganchar(BZCargaTrabajo dueno)
+    {
+        m_Duenio = null;
+        m_Ruta = dueno.Ruta();
+        m_NWp = dueno.WpCargados();
+        BZCintaRunner cintaD = dueno.Cinta();
+        if (m_CintaPedida)
+        {
+            if (cintaD)
+            {
+                m_Cinta = new BZCintaRunner();
+                m_Cinta.EnlazarDatos(cintaD);
+                m_NCinta = cintaD.Count();
+            }
+            else
+            {
+                m_CintaFallo = true;
+            }
+        }
+        m_Buf = null;
+        m_Fase = F_LISTO;
+        BZCargaCola.ContarAhorrada();
+        float totalE = (GetGame().GetTickTime() - m_TInicio) * 1000.0;
+        string ln = "[CARGA] " + m_Etiqueta + " LISTA: " + m_NWp.ToString() + " wps";
+        if (m_NCinta > 0) ln = ln + " + " + m_NCinta.ToString() + " frames de cinta";
+        ln = ln + " en " + m_Tajadas.ToString() + " tajadas / " + totalE.ToString() + " ms de reloj";
+        float msH = m_TkHuella / 10000.0;
+        ln = ln + " · ENGANCHE de " + dueno.Etiqueta() + " · huella " + msH.ToString() + " ms";
+        ln = ln + " · " + BZCargaCola.Resumen();
+        BZBusLog.Info(ln);
+    }
+
     private void Terminar()
     {
         m_Fase = F_LISTO;
@@ -364,20 +626,35 @@ class BZCargaTrabajo
         // la linea dice si fue carga PROPIA (leida del disco) o un ENGANCHE a una ya cargada.
         // Hoy todas son propias: es el control del paso 1 para el falsador del paso 2 (registro en la cola).
         ln = ln + " · carga PROPIA";
+        if (m_CintaDeBin) ln = ln + " · cinta del binario";
+        if (m_CintaFallo) BZCargaCola.Desregistrar(this);   // un fallo no se registra
+        if (!m_Aislado) ln = ln + " · " + BZCargaCola.Resumen();
         BZBusLog.Info(ln);
-        string ln2 = "[CARGA] " + m_Etiqueta + " reparto: leer ruta " + m_MsWpLeer.ToString() + " ms" + Reparto(m_TkWpFGets, m_TkWpParse);
+        float msH = m_TkHuella / 10000.0;
+        string ln2 = "[CARGA] " + m_Etiqueta + " reparto: huella " + msH.ToString() + " ms · leer ruta " + m_MsWpLeer.ToString() + " ms" + Reparto(m_TkWpFGets, m_TkWpParse);
         ln2 = ln2 + " · armar ruta " + m_MsWpArmar.ToString() + " ms";
         if (m_Ruta) ln2 = ln2 + m_Ruta.ArmadoReparto();   // por grupo de fases + la peor UNIDAD (la tajada peor es esto + el presupuesto)
         ln2 = ln2 + " · leer cinta " + m_MsCintaLeer.ToString() + " ms" + Reparto(m_TkCintaFGets, m_TkCintaParse);
         ln2 = ln2 + " · armar cinta " + m_MsCintaArmar.ToString() + " ms";
         ln2 = ln2 + " · PEOR TAJADA " + m_PeorTajadaMs.ToString() + " ms";
         // calibracion del contador fino contra GetTickTime, sobre la fase mas larga (leer cinta)
-        if (m_MsCintaLeer > 0)
+        if (m_MsCintaLeer > 0 && !m_CintaDeBin)
         {
             float tkPorMs = (m_TkCintaFGets + m_TkCintaParse) / m_MsCintaLeer;
             ln2 = ln2 + " · reloj fino " + ((int)tkPorMs).ToString() + " ticks/ms";
         }
         BZBusLog.Info(ln2);
+        m_Buf = null;
+        if (m_Seguidores)
+        {
+            int iS;
+            for (iS = 0; iS < m_Seguidores.Count(); iS++)
+            {
+                BZCargaTrabajo fS = m_Seguidores.Get(iS);
+                if (fS) fS.Enganchar(this);
+            }
+            m_Seguidores = null;
+        }
     }
 
     // " (FGets 38 % · parseo 62 %)" a partir de los ticks acumulados; "" si no se midio nada.
@@ -397,6 +674,9 @@ class BZCargaTrabajo
 class BZCargaCola
 {
     private static ref array<ref BZCargaTrabajo> s_Cola;
+    // La toma de cada clave (ruta|cinta): la ultima version, lista o cargando. Se retiene hasta reiniciar.
+    private static ref map<string, ref BZCargaTrabajo> s_Registro;
+    private static int s_Ahorradas;
     private static float s_PresupuestoMs = 5.0;
     // Tope de pasos por cuadro. NO escala con el presupuesto: es el candado de avance, no una
     // perilla de rendimiento.
@@ -409,19 +689,65 @@ class BZCargaCola
 
     static float Presupuesto() { return s_PresupuestoMs; }
 
+    // Medir la huella va adelante de las cargas, en orden: es corto y un enganche no tiene por que esperar a una carga de otra toma.
+    // Las cargas siguen en orden de llegada: el que tiene que cargar pasa al fondo cuando termina de medir.
     static void Encolar(BZCargaTrabajo t)
     {
         if (!t) return;
         if (!s_Cola) s_Cola = new array<ref BZCargaTrabajo>();
-        s_Cola.Insert(t);
-        if (s_Cola.Count() > 1)
-            BZBusLog.Info("[CARGA] " + t.Etiqueta() + ": EN COLA, posicion " + (s_Cola.Count() - 1).ToString() + " (presupuesto " + s_PresupuestoMs.ToString() + " ms por cuadro, compartido)");
+        int pos = 0;
+        while (pos < s_Cola.Count() && s_Cola.Get(pos) && s_Cola.Get(pos).Midiendo()) pos = pos + 1;
+        s_Cola.InsertAt(t, pos);
+    }
+
+    static BZCargaTrabajo Registrado(string clave)
+    {
+        if (!s_Registro) return null;
+        if (!s_Registro.Contains(clave)) return null;
+        return s_Registro.Get(clave);
+    }
+
+    static void Registrar(string clave, BZCargaTrabajo t)
+    {
+        if (!s_Registro) s_Registro = new map<string, ref BZCargaTrabajo>();
+        s_Registro.Set(clave, t);
+    }
+
+    // Solo si sigue siendo la de esa clave: una version reemplazada no saca a la nueva.
+    static void Desregistrar(BZCargaTrabajo t)
+    {
+        if (!s_Registro) return;
+        string clave = t.Clave();
+        if (s_Registro.Contains(clave) && s_Registro.Get(clave) == t) s_Registro.Remove(clave);
+    }
+
+    static void ContarAhorrada()
+    {
+        s_Ahorradas = s_Ahorradas + 1;
+    }
+
+    static string Resumen()
+    {
+        int n = 0;
+        float mb = 0;
+        if (s_Registro)
+        {
+            n = s_Registro.Count();
+            int iR;
+            for (iR = 0; iR < n; iR++)
+            {
+                BZCargaTrabajo tR = s_Registro.GetElement(iR);
+                if (tR) mb = mb + tR.MbDeDatos();
+            }
+        }
+        return "registro " + n.ToString() + " tomas, " + ((int)mb).ToString() + " MB calculados, " + s_Ahorradas.ToString() + " cargas ahorradas";
     }
 
     // 0 = al frente (cargando ahora) · n>0 = esperando · -1 = no esta en la cola
     static int Posicion(BZCargaTrabajo t)
     {
         if (!t || !s_Cola) return -1;
+        if (t.EsSeguidor()) return Posicion(t.Duenio());   // un seguidor esta donde este su dueno
         int i;
         for (i = 0; i < s_Cola.Count(); i++)
         {
@@ -435,6 +761,9 @@ class BZCargaCola
     static void Cancelar(BZCargaTrabajo t)
     {
         if (!t) return;
+        if (t.SiguePorSeguidores()) return;
+        // ⚠ primero cancelar: puede que la cola sea la ultima que lo sostiene
+        t.Cancelar("su runner la solto");
         if (s_Cola)
         {
             int i;
@@ -443,7 +772,6 @@ class BZCargaCola
                 if (s_Cola.Get(i) == t) { s_Cola.RemoveOrdered(i); break; }
             }
         }
-        t.Cancelar("su runner la solto");
     }
 
     static int Pendientes()
@@ -470,7 +798,15 @@ class BZCargaCola
             BZCargaTrabajo t = s_Cola.Get(0);
             if (!t) { s_Cola.RemoveOrdered(0); continue; }
             int unidades = t.Paso(s_PresupuestoMs - gastado);
-            if (t.Termino()) s_Cola.RemoveOrdered(0);
+            if (t.Termino() || t.EsSeguidor()) s_Cola.RemoveOrdered(0);
+            else if (t.PideIrAlFondo())
+            {
+                // ⚠ primero insertar: puede que la cola sea la ultima que lo sostiene
+                s_Cola.Insert(t);
+                s_Cola.RemoveOrdered(0);
+                if (s_Cola.Count() > 1)
+                    BZBusLog.Info("[CARGA] " + t.Etiqueta() + ": EN COLA, posicion " + (s_Cola.Count() - 1).ToString() + " (presupuesto " + s_PresupuestoMs.ToString() + " ms por cuadro, compartido)");
+            }
             else if (unidades <= 0)
             {
                 // no avanzo: se saca de la cola para que no la bloquee (garantia de avance)

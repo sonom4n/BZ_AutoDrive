@@ -11,6 +11,9 @@
 //  los eAI server-side no tienen identity) -> NO necesita trigger. Server-only.
 //  Formato IDENTICO al frame_ para diff directo:
 //    t_cum,dt,throttle,brake,steering,gear,handbrake,x,y,z,heading,speed_kmh,rpm
+//  t_cum ES EL RELOJ REAL, como en el grabador: EOnPostSimulate puede llegar varias veces por paso de fisica con el
+//  mismo estado; sumar timeSlice adelantaba t_cum y repetia filas. Una fila por cuadro, con el tiempo del juego.
+//  dt sigue siendo el timeSlice (el paso de fisica): el reloj del juego va por cuadros y meteria su propio temblor.
 //  Escribe server_probe.csv (overwrite por sesion de manejo).
 // ============================================================================
 
@@ -25,8 +28,16 @@ class BZServerProbe {
     private float  m_TCum;
     private Car    m_Car;
     private Car    m_CarFallido;   // el auto cuya apertura fallo: no se reintenta por cuadro; al bajarse, se olvida
+    private int    m_T0Ms;         // el reloj del juego al abrir el archivo
+    private int    m_UltMs;        // el reloj del juego en la ultima fila escrita
+    private vector m_UltPos;       // la pose de la ultima fila escrita
+    private vector m_UltDir;
+    private int    m_Llamadas;     // para la linea de STOP: lo que llego, y lo que no escribio y por que
+    private int    m_MismoCuadro;  // llamadas en el mismo cuadro que la anterior
+    private int    m_MismaPose;    // llamadas en otro cuadro con el vehiculo en marcha y la pose exacta de la fila anterior
 
     private const int FLUSH_EVERY = 30;
+    private const float POSE_MIN_KMH = 3.0;   // por debajo, una pose repetida es reposo y la fila se escribe
 
     static BZServerProbe GetInstance() {
         if (!s_Inst) {
@@ -38,6 +49,7 @@ class BZServerProbe {
     // Llamado cada frame de fisica server-side (desde EOnPostSimulate, gateado a IsServer).
     void Frame(Car car, float dt) {
         if (!car) return;
+        if (m_Open && !m_Car) Close();   // el auto que se grababa ya no existe y nadie mas lo iba a cerrar
         PlayerBase drv = PlayerBase.Cast(car.CrewMember(0));
         bool realPlayer = false;
         if (drv && drv.GetIdentity()) realPlayer = true;   // eAI server-side no tiene identity
@@ -47,8 +59,10 @@ class BZServerProbe {
         BZBusService bsrv = BZBusService.GetRunnerForCar(car);
         if (!realPlayer && bsrv && bsrv.WantsBorisNative()) borisCar = true;   // OPT-IN (2026-08-09): solo graba boris_native si el check del reproductor estaba tildado al dar play
         if (!realPlayer && !borisCar) {
-            if (m_Open) Close();
-            m_CarFallido = null;   // nueva sesion de manejo = un intento nuevo (una linea, no una por cuadro)
+            // Solo cierra su propia sesion. Este metodo corre para TODO auto simulado: con otro vehiculo en marcha el archivo
+            // se cerraba y se reabria en cada cuadro, y en el mismo segundo se pisaba.
+            if (m_Open && car == m_Car) Close();
+            if (car == m_CarFallido) m_CarFallido = null;   // nueva sesion de manejo = un intento nuevo (una linea, no una por cuadro)
             return;
         }
         if (!m_Open && car == m_CarFallido) return;   // la apertura fallo en esta sesion: ya se aviso, no se insiste
@@ -70,7 +84,23 @@ class BZServerProbe {
         }
         if (!m_Open) return;   // fallo la apertura: sin buffer que crezca por cuadro ni flush que falle
         if (dt <= 0) return;
-        m_TCum += dt;
+        m_Llamadas++;
+        int ahoraMs = GetGame().GetTime();
+        int deltaMs = ahoraMs - m_UltMs;
+        if (deltaMs <= 0) {
+            m_MismoCuadro++;   // la segunda llamada del mismo cuadro: no hay tiempo nuevo que grabar
+            return;
+        }
+        vector posAhora = car.GetPosition();
+        vector dirAhora = car.GetDirection();
+        if (car.GetSpeedometerAbsolute() > POSE_MIN_KMH && posAhora == m_UltPos && dirAhora == m_UltDir) {
+            m_MismaPose++;   // en marcha y sin moverse un pelo: el mismo estado, llegado en otro cuadro
+            return;
+        }
+        m_UltMs = ahoraMs;
+        m_UltPos = posAhora;
+        m_UltDir = dirAhora;
+        m_TCum = (ahoraMs - m_T0Ms) / 1000.0;
         WriteRow(car, dt);
         m_Frames++;
         if (m_Frames % FLUSH_EVERY == 0) Flush();
@@ -81,6 +111,13 @@ class BZServerProbe {
         m_TCum   = 0;
         m_Frames = 0;
         m_Buf    = "";
+        m_T0Ms   = GetGame().GetTime();
+        m_UltMs  = m_T0Ms;
+        m_UltPos = "0 0 0";
+        m_UltDir = "0 0 0";
+        m_Llamadas = 0;
+        m_MismoCuadro = 0;
+        m_MismaPose = 0;
         m_Path   = BZCarpetas.PathLogger() + fname;   // la carpeta se crea ANTES de abrir (no existe en una instalacion nueva)
         FileHandle f = OpenFile(m_Path, FileMode.WRITE);
         if (!f) {
@@ -135,7 +172,8 @@ class BZServerProbe {
     private void Close() {
         Flush();
         m_Open = false;
-        BZBusLog.Info("[ServerProbe] STOP (" + m_Frames + " frames server-side) -> " + m_Path);
+        string cuentasStop = "llamadas " + m_Llamadas + " · mismo cuadro " + m_MismoCuadro + " · misma pose " + m_MismaPose;
+        BZBusLog.Info("[ServerProbe] STOP (" + m_Frames + " frames server-side · " + cuentasStop + ") -> " + m_Path);
         m_Car = null;
     }
 

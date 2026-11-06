@@ -61,6 +61,53 @@
 // =========================================================================================
 class BZEndpointSlam
 {
+    // ★ DOS CANDIDATOS DEL ENDPOINT, para medirlos por separado (el con_sonda los lee de BZ12_SONDA_ENDPOINT.txt; sin archivo, prendidos):
+    //   A: el pedal se dosifica contra su GANANCIA FISICA (BZVehicleManual.GananciaPedal), no contra el tope. Medido en el banco de 15:
+    //      con `brake = aNeed / aMax` el vehiculo entrega 1,6-2,5x lo pedido (RX8: pedal 0,45 y 0,65 dan los mismos -7,7 m/s2; Oshkosh 0,37
+    //      -> -8,1; Sarka 0,29 -> -4,2) y se detiene a la MITAD del camino planeado; las siete tomas que cierran a 0,11 lo hacen por el CARRY.
+    //      El tope (mu*g y la frenada a fondo de la toma) es lo que el PISO permite, no lo que el pedal hace; para la zona y la planificacion
+    //      sigue mandando el tope. La ganancia se toma de la fisica porque las tomas no traen pedal parcial (el humano frena con la tecla:
+    //      1,0 o nada, en las 11 cintas medidas): no hay de donde medirla.
+    //   B: el CARRY en subida arranca con el gas que pide la cuesta (-aFree / aMax, la regla del HillStart de la maniobra), sostiene el
+    //      freno el primer tick y el retroceso no cuenta para la regla 3 del cierre durante sus primeros CUESTA_TICKS. Medido: la Sarka y el
+    //      APC, en subida (aFree -1,45 y -1,88), arrancaban con 0,13-0,18, rodaban 0,26 m atras y la regla 3 los clavaba al tercer tick.
+    //   B, medido (banco de 15 con A y B): el gas de arranque salia de la aceleracion maxima del manual, optimista en el APC (10 m/s2 en
+    //      subida: arranque 0,18), el freno se sostenia UN tick y el APC rodo 2 m hacia atras dentro de la exencion de la regla 3. Ahora: el
+    //      gas va a fondo (sin aceleracion maxima de por medio); el retroceso lo frena el controlador cuadro a cuadro (EndpointFrameCuesta:
+    //      si el remanente supera en CUESTA_RETRO_M la posicion mas adelantada, freno a fondo hasta el tick siguiente, que vuelve a
+    //      soltar), desde que el vehiculo queda por debajo del creep en la cuesta (CuestaParado), antes o durante el CARRY; y la exencion
+    //      de la regla 3 caduca a CUESTA_RETRO_MAX_M de retroceso.
+    //   (Se probo y se saco un "tope real" f/m x pressureBySpeed(v) para la zona del arbitro: el modelo no coincide con lo medido --el V140
+    //      a 113 km/h freno 7,5 m/s2 con pedal 0,22, no 4,6-- y armaba el endpoint a 144 m del final. La cinta es la toma.)
+    //   D (APAGADO, solo para medir con d=1): el volante del slam a 40 Hz con el lateral y el remanente del cuadro, el fade del termino
+    //      lateral por el MAYOR entre el de distancia y el de velocidad, y su curvatura acotada a LAT_K_MAX_D. Medido en la Z71: con A el
+    //      vehiculo para en 1,5 m a 5-8 km/h, el volante se decide 2-3 veces en ese tramo y el lateral contra la pose final queda en
+    //      0,12-0,19; con esto cierra en 0,11. (El fade SOLO por velocidad le quitaba correccion al que llega frenando fuerte: el Agera,
+    //      a 3 km/h a 1 m del punto, quedaba en -0,14 donde el fade por distancia lo llevaba a -0,02.)
+    //   B, medido otra vez (banco de 15 con el freno por retroceso): el casco ya no rueda, pero la rampa desde el piso (0,13 -> 1,0 en
+    //      cinco ticks) deja que el vehiculo se detenga del todo en la cuesta y de parado, en la sub-mordida de 1ra, ni con gas a fondo
+    //      arranca (Sarka: 1,0-1,3 m en 4 de 10). Con gas a fondo desde el PRIMER tick, mientras todavia queda inercia, subia 9 de 10.
+    //      Asi que en cuesta el gas es CARRY_MAX desde el primer tick; el retroceso lo sigue frenando el controlador.
+    //   D, medido (banco de 15, mundo limpio, a=1 b=1 d=1): las diez tomas con 0,110 m de promedio, mediana 0,106, maximo 0,17, 0 de 79 sobre
+    //      0,25 (Sarka y APC en 0,10). Queda PRENDIDA; d=0 la apaga.
+    //   E: EL AR EN EL CIERRE (vive en BZDriveController.ArCierreDeja): en ENDPOINT la escalera fisica del AR solo se abre con un contacto
+    //      reciente, nunca por un trabado sin contacto (eso es el arranque lento, y lo cierra el slam); con contacto, segunda aproximacion.
+    static bool s_CandA = true;
+    static bool s_CandB = true;
+    //   F: EL ARRASTRE ENTRE VEHICULOS (BZDriveController.DetectarArrastre): contacto sostenido con el mismo vehiculo y la velocidad separada de
+    //      la toma; el que empuja cede el paso. G: EL TOPE DEL AR (VigilarTopeDelAR): escaleras sin avance -> STUCK con FIN.
+    static bool s_CandD = true;
+    static bool s_CandE = true;
+    static bool s_CandF = true;
+    static bool s_CandG = true;
+    private const float CUESTA_MIN_MS2 = 0.2;   // B solo con pendiente real: 9,81*sin(pitch) por encima de esto (~1,2 %); en llano no cambia nada
+    private const int   CUESTA_TICKS = 6;       // ticks de arranque en cuesta en los que el retroceso no clava (3 s a 2 Hz; la regla 4 sigue)
+    private const float CUESTA_RETRO_MAX_M = 0.30;  // B: mas retroceso que esto desde el arranque y la regla 3 vuelve a contar
+    static const float  CUESTA_RETRO_M = 0.005;     // B: lo que el controlador considera "retrocede" de un cuadro al otro (5 mm)
+    private const float LAT_K_MAX_D = 0.30;         // D: tope de la curvatura lateral a 40 Hz (R >= 3,3 m)
+    private const float LAT_V_FADE_FIN = 0.5;       // D: el termino lateral apagado por debajo de esta velocidad (m/s)...
+    private const float LAT_V_FADE_INI = 2.0;       // ...y entero por encima de esta
+
     // Longitud de correccion del alineado final: en wheelbases y en metros.
     private const float ALIGN_L_WB  = 2.0;
     private const float ALIGN_L_MAX = 8.0;
@@ -162,6 +209,19 @@ class BZEndpointSlam
     private float m_LogAFree;
     private bool  m_LogFrenoRuido;
     private int   m_LogRama = -1;
+    // B: el CARRY arranco en cuesta (ver ArranqueEnCuesta); y lo que se loguea de A y B
+    private bool  m_CarryCuesta;
+    private float m_LogGan;
+    private string m_LogGanFuente;
+    private float m_LogThrHold;
+    private bool  m_LogSostiene;
+    private float m_CarryIniDist;     // B: la distancia al arrancar en cuesta (la exencion caduca a CUESTA_RETRO_MAX_M de ahi)
+    private float m_UltDist;          // la distancia 2D del ultimo Actuate
+    private int   m_RetroCuadros;     // B: cuadros en que el controlador freno por retroceso desde el ultimo tick...
+    private float m_RetroM;           // ...y cuanto retrocedio en ellos
+    private int   m_LogRetroCuadros;
+    private float m_LogRetroM;
+    private bool  m_ArEnCurso;        // E: la escalera del AR tiene el vehiculo: las reglas 2, 3 y 4 del cierre no clavan (ver ShouldLatch)
 
     void BZEndpointSlam()
     {
@@ -177,6 +237,47 @@ class BZEndpointSlam
         m_CarryTicks = 0;
         m_GaveUp = false;
         m_GaveUpDistM = 0;
+        m_CarryCuesta = false;
+        m_LogGan = 0;
+        m_LogGanFuente = "";
+        m_LogThrHold = 0;
+        m_LogSostiene = false;
+        m_CarryIniDist = 0;
+        m_UltDist = 0;
+        m_RetroCuadros = 0;
+        m_RetroM = 0;
+        m_LogRetroCuadros = 0;
+        m_LogRetroM = 0;
+        m_ArEnCurso = false;
+    }
+
+    // E: el controlador lo pone cada tick de Plan con lo que sabe del AR (escalera en curso, F1 activa, re-ubicacion pendiente)
+    void SetArEnCurso(bool x) { m_ArEnCurso = x; }
+
+    // B: el vehiculo esta arrancando en cuesta (CARRY con pendiente, primeros CUESTA_TICKS, sin haber retrocedido CUESTA_RETRO_MAX_M):
+    // el retroceso no es "la pose paso", y el controlador lo frena cuadro a cuadro
+    bool ArranqueEnCuesta()
+    {
+        if (!s_CandB) return false;
+        if (!m_CarryCuesta) return false;
+        if (m_UltDist > m_CarryIniDist + CUESTA_RETRO_MAX_M) return false;
+        return m_CarryTicks <= CUESTA_TICKS;
+    }
+
+    // B: en cuesta y por debajo del creep (parado o casi), antes o durante el CARRY: el controlador no deja rodar hacia atras. Sin esto,
+    // entre la parada de la rama de frenada y el primer tick del CARRY pasan hasta 0,5 s con el freno suelto y el casco rueda
+    bool CuestaParado(BZVehicleState st, BZVehicleManual m)
+    {
+        if (!s_CandB || m_Latched || !m) return false;
+        if (9.81 * Math.Sin(st.pitch) <= CUESTA_MIN_MS2) return false;
+        return st.chassisKmh < m.creepKmh * STOPPED_FRAC;
+    }
+
+    // B: el controlador vio retroceder el casco en un cuadro y freno (se loguea en el tick siguiente)
+    void NotarRetroceso(float dM)
+    {
+        m_RetroCuadros = m_RetroCuadros + 1;
+        m_RetroM = m_RetroM + dM;
     }
 
     bool  IsLatched()   { return m_Latched; }
@@ -199,6 +300,13 @@ class BZEndpointSlam
         r = r + " · v " + m_LogV.ToString() + " m/s";
         r = r + " · aNeed " + m_LogAReq.ToString();
         r = r + " · aFree " + m_LogAFree.ToString();
+        if (m_LogRama == 1) r = r + " · ganancia " + m_LogGan.ToString() + " (" + m_LogGanFuente + ")";
+        if (m_LogRama == 2)
+        {
+            r = r + " · gas " + m_LogThrHold.ToString() + " · cuesta " + m_CarryCuesta.ToString();
+            r = r + " · freno sostenido " + m_LogRetroCuadros.ToString() + " cuadro(s) por retroceso de " + (m_LogRetroM * 1000.0).ToString() + " mm";
+            if (m_LogRetroCuadros > 0) r = r + " (se suelta en este tick, con mas gas)";
+        }
         r = r + " · carry " + m_CarryTicks.ToString();
         r = r + " · minDist " + m_MinDist.ToString();
         r = r + " · sinProgreso " + m_NoProgressTicks.ToString();
@@ -233,6 +341,11 @@ class BZEndpointSlam
         float lat = 0;
         if (leg.valid) lat = leg.crossTrackM;
         float dist = Math.Sqrt(signed * signed + lat * lat);
+        m_UltDist = dist;
+        m_LogRetroCuadros = m_RetroCuadros;   // lo que el controlador freno desde el tick anterior, para la linea SLAM de este
+        m_LogRetroM = m_RetroM;
+        m_RetroCuadros = 0;
+        m_RetroM = 0;
         UpdateProgress(st, m, dist);
 
         if (m_Latched)
@@ -333,6 +446,10 @@ class BZEndpointSlam
         // aceptacion del endpoint (no el bar estricto): latchear ACA corta los pasitos
         // ⚠ ...pero SOLO si ya no se esta acercando: ver la cicatriz sobre ShouldLatch.
         if (dist <= BZDriveTol.ACEPTA_ENDPOINT_M && st.chassisKmh < StoppedKmh(m) && !m_Acercando) return true;
+        // E: con la escalera del AR en curso (solo se abre en el cierre con un contacto reciente), el que decide es el AR: un vehiculo
+        // EMPUJADO pasa de largo (regla 2), se aleja de su mejor acercamiento (regla 3) o queda quieto mientras lo re-ubican (regla 4), y
+        // ninguna de las tres es "llego". Medido: el V140 empujado 20 m por el RX8 quedo clavado por la regla 2 un tick despues del choque.
+        if (m_ArEnCurso) return false;
         // paso de largo: clavar en vez de volver a buscarlo (eso es el vaiven)
         if (signed < -(OVERSHOOT_TOL_MULT * BZDriveTol.LLEGADA_M)) return true;
         // ⚠ EL CONTADOR DE SIN-AVANCE NO ALCANZA PARA ESTE CASO, aun con la distancia 2D:
@@ -344,7 +461,7 @@ class BZEndpointSlam
         // senal de que la mejor pose PASO. No hay nada que recuperar crawleando: se clava
         // ahi y se reporta el numero real, que es la misma politica que el comentario de
         // arriba (la tolerancia define lo excelente, no lo unico aceptable).
-        if (dist > m_MinDist + BZDriveTol.LLEGADA_M) return true;
+        if (dist > m_MinDist + BZDriveTol.LLEGADA_M && !ArranqueEnCuesta()) return true;   // B: arrancando en cuesta, el retroceso no clava
         // detenido y sin acercarse: esto es lo mejor que va a conseguir
         if (m_NoProgressTicks > NO_PROGRESS_TICKS) return true;
         return false;
@@ -372,12 +489,19 @@ class BZEndpointSlam
     // quedaba 2.5x mas agresivo.
     private float AlignSteer(BZVehicleState st, BZLegView leg, BZVehicleManual m)
     {
+        return AlignSteerCon(st, leg, m, leg.signedToEndM, leg.crossTrackM);
+    }
+
+    // el mismo volante con el remanente y el lateral que le den: a 2 Hz los del leg (AlignSteer); con D, el controlador lo llama a 40 Hz
+    // con los del cuadro (RemanenteFrameM, LateralFrameM: mismo marco y mismo signo)
+    float AlignSteerCon(BZVehicleState st, BZLegView leg, BZVehicleManual m, float dSigned, float latM)
+    {
         float rec = RecordedHeadingAtEnd(leg);
         if (rec < -900.0) return 0;
         float hErr = BZMath.WrapPi(rec - st.yaw);
         float wb = m.wheelbaseM;
         if (wb < 0.5) wb = 2.5;
-        float d = leg.signedToEndM;
+        float d = dSigned;
         if (d < 0) d = -d;
         float lo = ALIGN_L_WB * wb;
         if (d < lo) d = lo;
@@ -407,14 +531,23 @@ class BZEndpointSlam
         // final (latFr -0,12 a -0,29 en seis corridas, tres INCOMPLETE por 3-6 cm). Banco sobre las seis:
         // -0,12/-0,29 -> -0,04/-0,08, las seis dentro de 0,25. Mutante con el signo invertido: 5 de 6 FALLA
         // (duplica el error) -- es la prueba de que el signo es este y no el otro.
-        float dRawL = leg.signedToEndM;
+        float dRawL = dSigned;
         if (dRawL < 0) dRawL = -dRawL;
         float dL = dRawL;
         float pisoL = LAT_L_WB * wb;
         if (dL < pisoL) dL = pisoL;
-        float kLat = 2.0 * leg.crossTrackM / (dL * dL);
-        kLat = Math.Clamp(kLat, -LAT_K_MAX, LAT_K_MAX);
+        float kLat = 2.0 * latM / (dL * dL);
+        float kMaxL = LAT_K_MAX;
+        if (s_CandD) kMaxL = LAT_K_MAX_D;
+        kLat = Math.Clamp(kLat, -kMaxL, kMaxL);
         float fadeL = (dRawL - LAT_FADE_FIN_M) / (LAT_FADE_INI_M - LAT_FADE_FIN_M);
+        // D: ademas del fade por distancia, el de VELOCIDAD, y manda el mayor: a 1 m del punto a 7 km/h el modelo de bicicleta esta bien
+        // condicionado y el termino lateral sigue; a 1 m a 3 km/h (el que llega frenando fuerte) queda el de distancia, como siempre
+        if (s_CandD)
+        {
+            float fadeV = (st.chassisKmh / 3.6 - LAT_V_FADE_FIN) / (LAT_V_FADE_INI - LAT_V_FADE_FIN);
+            if (fadeV > fadeL) fadeL = fadeV;
+        }
         fadeL = Math.Clamp(fadeL, 0.0, 1.0);
         kPose = kPose + kLat * fadeL;
         float s = m.SteerCommandForCurvature(kPose, st.chassisKmh);
@@ -468,8 +601,11 @@ class BZEndpointSlam
             m_LogAReq = 0;
             return;
         }
-        float aMax = m.MaxBrakeDecelEndpoint(surfKind);   // techado por la frenada medida en la toma
-        if (aMax < 0.5) aMax = 0.5;
+        // A: el pedal se dosifica contra la ganancia del pedal (la fisica del config, acotada por el tope), no contra el tope. Con A apagado,
+        // GananciaPedal devuelve el tope de siempre (MaxBrakeDecelEndpoint, techado por la frenada medida en la toma).
+        float gan = m.GananciaPedal(surfKind);
+        m_LogGan = gan;
+        m_LogGanFuente = m.GananciaPedalFuente(surfKind);
         // ⚠⚠ EL FRENO NO ES LO UNICO QUE FRENA, Y ESTE ERA EL UNICO MODULO QUE LO IGNORABA.
         //
         // Esto pedia freno por `v^2/(2d)` a secas, sin descontar lo que el vehiculo hace SOLO.
@@ -522,7 +658,7 @@ class BZEndpointSlam
         if (aNeed < -0.05 && !frenoDeRuido && !detenidoYCorto)
         {
             o.throttle = 0;
-            o.brake = Math.Clamp((-aNeed) / aMax, 0.0, 1.0);
+            o.brake = Math.Clamp((-aNeed) / gan, 0.0, 1.0);
             m_LogRama = 1;
             return;
         }
@@ -534,14 +670,32 @@ class BZEndpointSlam
         if (v < creepMs * STOPPED_FRAC)
         {
             float thr = m.launchThrottleFloor + m_CarryTicks * CARRY_RAMP_STEP;
+            // B: en subida el gas es A FONDO desde el primer tick, mientras queda inercia (de parado, en la sub-mordida, ni a fondo arranca;
+            // una rampa desde el piso lo dejaba parado). Sin aceleracion maxima de por medio. El freno no se sostiene aca: lo pone el
+            // controlador, cuadro a cuadro, apenas el casco retrocede (EndpointFrameCuesta), y lo suelta este tick. En llano, lo de siempre.
+            bool cuestaAhora = false;
+            if (s_CandB && aFree < 0)
+            {
+                float aSlope = 9.81 * Math.Sin(st.pitch);
+                if (aSlope > CUESTA_MIN_MS2)
+                {
+                    cuestaAhora = true;
+                    thr = CARRY_MAX;
+                    if (m_CarryTicks == 0) m_CarryIniDist = m_UltDist;
+                }
+            }
+            m_CarryCuesta = cuestaAhora;   // se re-evalua cada tick del CARRY: un CARRY en llano no hereda la cuesta de uno anterior
             if (thr > CARRY_MAX) thr = CARRY_MAX;
             m_CarryTicks++;
             o.throttle = thr;
             o.brake = 0;
+            m_LogThrHold = thr;
+            m_LogSostiene = (m_LogRetroCuadros > 0);
             m_LogRama = 2;
             return;
         }
         m_CarryTicks = 0;
+        m_CarryCuesta = false;
         if (aNeed > 0.02)
         {
             // El planeo frena mas de lo que hace falta: sin esto el vehiculo llega a cero ANTES

@@ -5,6 +5,7 @@
 Grabás una ruta manejándola vos. Un NPC (Boris) la maneja para siempre, con la **física real de cada vehículo**. No entrena un modelo por vehículo ni pide waypoints a mano: **lee la configuración que el auto ya declara** en el motor (curva de torque, caja, dirección, geometría), **reproduce tu manejo punto por punto** y **aprende de tus propias tomas** cómo se comporta ese vehículo. **Maneja cualquier vehículo sin configurar nada por-auto.**
 
 > Versión EN: [README.en.md](README.en.md) · Licencia **MIT** · Proyecto **BrigadaZ**
+> El manual completo está al lado de este archivo: `MANUAL_BZ_AutoDrive.md` / `MANUAL_BZ_AutoDrive.pdf` (inglés: `.en.md` / `.en.pdf`).
 
 ---
 
@@ -85,6 +86,8 @@ PathLogger (grabás)  →  Wizard (ruta + cinta + ficha del vehículo)  →  Cer
 Para usarlo: suscribite en el Workshop (ya viene firmado). Para compilar tu fork: empaquetá el PBO como prefieras —DayZ Tools (AddonBuilder) o tu propio pipeline— y firmalo con tu **propia** llave. Cada modder empaqueta a su manera.
 
 ## Estado
+
+**v1.3** — más vehículos a la vez con menos carga en los relanzamientos (una sola puerta para lo pesado, una toma ya leída no se relee, lectura en tajadas, cinta binaria); los vehículos se ven suaves desde cualquier cliente (filtro, se puede apagar); una corrida que falla concluye sola y, si ningún mod la reclama, el framework retira el vehículo a los 60 s; el retiro nunca borra un vehículo con un jugador sentado. Compila con la DayZ 1.30.164.
 
 **v1.2.5** — una parada suave en cualquier punto de la ruta para los mods que usan el framework (`HoldRunnerSuave`: sigue su línea y frena hasta el punto); el panel muestra la versión exacta. Probada sobre DayZ 1.30 y su Update 2.
 

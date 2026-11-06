@@ -965,7 +965,151 @@ class BZCintaRunner
     // ★ 1.2.4: el cuadro de la fase pedida mas cercano a pos (rumbo compatible). Entre los que quedan a menos de 1 m del
     // mejor gana el de arco mas cercano al s_est actual (una ruta que pasa dos veces por el mismo lugar en el mismo
     // sentido). -1 si la fase no tiene cuadros compatibles.
+    // m_ArrancaEnFila: se queda con la fila mas cercana, sin el empate por arco. Ver AnclarArranque.
+    private bool m_ArrancaEnFila;
+
     private int CuadroDeFaseMasCercano(vector pos, float rumboDeg, bool esperaRev, out float distM)
+    {
+        if (m_BqListo) return CuadroDeFasePoda(pos, rumboDeg, esperaRev, distM);
+        return CuadroDeFaseBarrido(pos, rumboDeg, esperaRev, distM);
+    }
+
+    // La misma respuesta que CuadroDeFaseBarrido, fila por fila. Primero se recorre el bloque de cota menor (de ahi sale u2,
+    // una distancia que seguro se alcanza) y despues las dos pasadas del barrido, en su orden, saltando lo que no puede
+    // cambiar el resultado. Un bloque empatado con u2 SE RECORRE: gana la primera fila, y puede estar en ese bloque.
+    private int CuadroDeFasePoda(vector pos, float rumboDeg, bool esperaRev, out float distM)
+    {
+        distM = -1;
+        int bitF = FASE_ADELANTE;
+        if (esperaRev) bitF = FASE_REVERSA;
+        int maskR = SectoresCompatibles(rumboDeg);
+        int nB = m_BqFases.Count();
+        int bP;
+        float dxC;
+        float dzC;
+        for (bP = 0; bP < nB; bP++)
+        {
+            if ((m_BqFases.Get(bP) & bitF) == 0 || (m_BqRumbos.Get(bP) & maskR) == 0)
+            {
+                m_BqCota.Set(bP, -1.0);
+                continue;
+            }
+            dxC = 0;
+            if (pos[0] < m_BqMinX.Get(bP)) dxC = pos[0] - m_BqMinX.Get(bP);
+            else if (pos[0] > m_BqMaxX.Get(bP)) dxC = pos[0] - m_BqMaxX.Get(bP);
+            dzC = 0;
+            if (pos[2] < m_BqMinZ.Get(bP)) dzC = pos[2] - m_BqMinZ.Get(bP);
+            else if (pos[2] > m_BqMaxZ.Get(bP)) dzC = pos[2] - m_BqMaxZ.Get(bP);
+            m_BqCota.Set(bP, dxC * dxC + dzC * dzC);
+        }
+        int jf;
+        int iniB;
+        int finB;
+        float ddx;
+        float ddz;
+        float dd2;
+        float cB;
+        bool hayU = false;
+        float u2 = 0;
+        int semilla = 0;
+        while (!hayU && semilla < BLOQUE_SEMILLAS)
+        {
+            semilla = semilla + 1;
+            int bS = -1;
+            float cS = 0;
+            for (bP = 0; bP < nB; bP++)
+            {
+                cB = m_BqCota.Get(bP);
+                if (cB < 0) continue;
+                if (bS < 0 || cB < cS)
+                {
+                    bS = bP;
+                    cS = cB;
+                }
+            }
+            if (bS < 0) break;
+            iniB = bS * BLOQUE_FILAS;
+            finB = iniB + BLOQUE_FILAS;
+            if (finB > m_Count - 1) finB = m_Count - 1;
+            for (jf = iniB; jf < finB; jf++)
+            {
+                if (!CuadroEsDeFase(jf, esperaRev)) continue;
+                if (!RumboCompatible(jf, rumboDeg)) continue;
+                ddx = pos[0] - m_X.Get(jf);
+                ddz = pos[2] - m_Z.Get(jf);
+                dd2 = ddx * ddx + ddz * ddz;
+                if (!hayU || dd2 < u2)
+                {
+                    hayU = true;
+                    u2 = dd2;
+                }
+            }
+            if (!hayU) m_BqCota.Set(bS, -1.0);
+        }
+        int jMejor = -1;
+        float d2Mejor = 0;
+        for (bP = 0; bP < nB; bP++)
+        {
+            cB = m_BqCota.Get(bP);
+            if (cB < 0) continue;
+            if (hayU && cB > u2) continue;
+            if (jMejor >= 0 && cB >= d2Mejor) continue;
+            iniB = bP * BLOQUE_FILAS;
+            finB = iniB + BLOQUE_FILAS;
+            if (finB > m_Count - 1) finB = m_Count - 1;
+            for (jf = iniB; jf < finB; jf++)
+            {
+                if (!CuadroEsDeFase(jf, esperaRev)) continue;
+                if (!RumboCompatible(jf, rumboDeg)) continue;
+                ddx = pos[0] - m_X.Get(jf);
+                ddz = pos[2] - m_Z.Get(jf);
+                dd2 = ddx * ddx + ddz * ddz;
+                if (jMejor < 0 || dd2 < d2Mejor)
+                {
+                    jMejor = jf;
+                    d2Mejor = dd2;
+                }
+            }
+        }
+        if (jMejor < 0) return -1;
+        if (m_ArrancaEnFila)
+        {
+            distM = DistAlCuadro(pos, jMejor);
+            return jMejor;
+        }
+        float topeEmp = Math.Sqrt(d2Mejor) + 1.0;
+        float tope2Emp = topeEmp * topeEmp;
+        float dsMejor = Math.AbsFloat(m_S.Get(jMejor) - m_SEst);
+        for (bP = 0; bP < nB; bP++)
+        {
+            cB = m_BqCota.Get(bP);
+            if (cB < 0) continue;
+            if (cB > tope2Emp) continue;
+            iniB = bP * BLOQUE_FILAS;
+            finB = iniB + BLOQUE_FILAS;
+            if (finB > m_Count - 1) finB = m_Count - 1;
+            for (jf = iniB; jf < finB; jf++)
+            {
+                if (!CuadroEsDeFase(jf, esperaRev)) continue;
+                if (!RumboCompatible(jf, rumboDeg)) continue;
+                ddx = pos[0] - m_X.Get(jf);
+                ddz = pos[2] - m_Z.Get(jf);
+                dd2 = ddx * ddx + ddz * ddz;
+                if (dd2 > tope2Emp) continue;
+                float dsJ = Math.AbsFloat(m_S.Get(jf) - m_SEst);
+                if (dsJ < dsMejor)
+                {
+                    jMejor = jf;
+                    dsMejor = dsJ;
+                }
+            }
+        }
+        distM = DistAlCuadro(pos, jMejor);
+        return jMejor;
+    }
+
+    // El barrido de siempre: para una cinta sin indice, y es la referencia de lo que tiene que dar la poda.
+    private int CuadroDeFaseBarrido(vector pos, float rumboDeg, bool esperaRev, out float distM)
     {
         distM = -1;
         int jMejor = -1;
@@ -988,6 +1132,11 @@ class BZCintaRunner
             }
         }
         if (jMejor < 0) return -1;
+        if (m_ArrancaEnFila)
+        {
+            distM = DistAlCuadro(pos, jMejor);
+            return jMejor;
+        }
         float topeEmp = Math.Sqrt(d2Mejor) + 1.0;
         float tope2Emp = topeEmp * topeEmp;
         float dsMejor = Math.AbsFloat(m_S.Get(jMejor) - m_SEst);
@@ -1042,6 +1191,16 @@ class BZCintaRunner
             Print(la + Suf());
         }
         return true;
+    }
+
+    // ARRANCAR EN UN WP DE LA RUTA, antes del primer tick. pos es la del wp GRABADO, no la del vehiculo: una fila de la misma toma, a 0 m.
+    // Sin rumbo: a 0 m no hace falta, y el vehiculo todavia no se asento. Sin el empate por arco: con el cursor en 0 elige hasta 1,21 m antes (medido).
+    bool AnclarArranque(vector pos, bool esperaRev)
+    {
+        m_ArrancaEnFila = true;
+        bool ancloA = AnclarPorPosicion(pos, -999.0, esperaRev, "arranque");
+        m_ArrancaEnFila = false;
+        return ancloA;
     }
 
     // ★ 1.2.4: el arco de la cinta que corresponde a una POSICION (el bien pisado del controlador), sin mover el cursor:
@@ -1181,6 +1340,67 @@ class BZCintaRunner
     private int  m_ArmTrCur;
     private int  m_ArmProx;
 
+    // LA PODA DE LA BUSQUEDA POR POSICION. Medido, 15 buses: una busqueda sobre 124.258 filas son 244 ms y un rescate
+    // hace hasta 5 en un mismo tick (1.280 ms de server congelado). Cada bloque guarda la caja XZ de sus filas y que fases
+    // tiene: de la caja sale la distancia minima posible, y un bloque que no puede mejorar a la mejor no se recorre.
+    // La respuesta es la del barrido: las filas se comparan igual y en el mismo orden, solo se saltan las que no pueden
+    // cambiarla. La cota usa las mismas cuentas de float que la fila, y redondear conserva el orden: nunca da de mas.
+    private static const int BLOQUE_FILAS = 256;
+    private static const int BLOQUE_PASOS_FILA = 8;   // cuanto pesa una fila en ARM_LOTE: mas que una del mapa de tramos (estimado, sin medir)
+    private static const int BLOQUE_SEMILLAS = 8;     // bloques a probar para fijar la cota, si los cercanos no tienen rumbo compatible
+    private static const int FASE_ADELANTE = 1;
+    private static const int FASE_REVERSA = 2;
+    private static const int RUMBOS_TODOS = 4095;     // los 12 sectores de 30 grados
+    private ref array<float> m_BqMinX;
+    private ref array<float> m_BqMaxX;
+    private ref array<float> m_BqMinZ;
+    private ref array<float> m_BqMaxZ;
+    private ref array<int>   m_BqFases;
+    private ref array<int>   m_BqRumbos;  // en que sectores de rumbo tiene filas
+    private ref array<float> m_BqCota;   // la de esta consulta; -1 = no tiene ninguna fila compatible
+    private bool m_BqListo;
+
+    // LOS DATOS DE OTRA CINTA YA ARMADA, por referencia: las 14 columnas, los tramos y la poda, para un vehiculo que maneja la misma toma.
+    // Lo demas es de cada vehiculo y queda como lo deja una carga propia al terminar: cursor, odometria, borde, rescate, mesetas, frenada, etiqueta.
+    // ⛔ Despues de armar, de los datos solo se escribe m_BqCota, y se escribe y se lee adentro de una misma consulta: por eso se puede compartir.
+    void EnlazarDatos(BZCintaRunner f)
+    {
+        m_S = f.m_S;
+        m_X = f.m_X;
+        m_Z = f.m_Z;
+        m_Y = f.m_Y;
+        m_H = f.m_H;
+        m_Fw = f.m_Fw;
+        m_Thr = f.m_Thr;
+        m_Brk = f.m_Brk;
+        m_Kmh = f.m_Kmh;
+        m_Gear = f.m_Gear;
+        m_Str = f.m_Str;
+        m_Corte = f.m_Corte;
+        m_Roll = f.m_Roll;
+        m_Camina = f.m_Camina;
+        m_TramoS = f.m_TramoS;
+        m_TramoIdx = f.m_TramoIdx;
+        m_TramoRev = f.m_TramoRev;
+        m_FrameTramo = f.m_FrameTramo;
+        m_BqMinX = f.m_BqMinX;
+        m_BqMaxX = f.m_BqMaxX;
+        m_BqMinZ = f.m_BqMinZ;
+        m_BqMaxZ = f.m_BqMaxZ;
+        m_BqFases = f.m_BqFases;
+        m_BqRumbos = f.m_BqRumbos;
+        m_BqCota = f.m_BqCota;
+        m_BqListo = f.m_BqListo;
+        m_Count = f.m_Count;
+        m_Valida = f.m_Valida;
+        m_Cursor = 0;
+        m_UltTramoOk = -1;
+        m_MesetaIni = -1;
+        m_MesetaFin = -1;
+        m_MesetaUltFin = -1;
+        m_ArmFase = 4;
+    }
+
     void ComenzarCarga()
     {
         m_Valida = false;
@@ -1196,6 +1416,7 @@ class BZCintaRunner
         m_ArmHayEmitida = false;
         m_ArmTrCur = 0;
         m_ArmProx = 1;
+        m_BqListo = false;
     }
 
     // Una fila del CSV. true = entro a la cinta. El header (linea 1) se saltea como siempre:
@@ -1233,6 +1454,34 @@ class BZCintaRunner
         return true;
     }
 
+    // Una columna entera desde el binario (BZCintaBinario), en el orden del archivo. Devuelve cuantas filas quedaron, -1 si fallo la lectura.
+    int LeerColumnaBin(FileSerializer fs, int c)
+    {
+        if (c >= 12)
+        {
+            array<int> colI = m_Corte;
+            if (c == 12) colI = m_Gear;
+            colI.Clear();
+            if (!fs.Read(colI)) return -1;
+            return colI.Count();
+        }
+        array<float> colF = m_Camina;
+        if (c == 0) colF = m_S;
+        else if (c == 1) colF = m_X;
+        else if (c == 2) colF = m_Z;
+        else if (c == 3) colF = m_Y;
+        else if (c == 4) colF = m_H;
+        else if (c == 5) colF = m_Kmh;
+        else if (c == 6) colF = m_Fw;
+        else if (c == 7) colF = m_Thr;
+        else if (c == 8) colF = m_Brk;
+        else if (c == 9) colF = m_Str;
+        else if (c == 10) colF = m_Roll;
+        colF.Clear();
+        if (!fs.Read(colF)) return -1;
+        return colF.Count();
+    }
+
     // El post-proceso, en tajadas. true = termino. Cada llamada hace a lo sumo ARM_LOTE avances de
     // indice CONTANDO los del escaneo interno: un bloque largo de una sola fase no puede comerse
     // el cuadro. ⚠ El escaneo se REANUDA donde quedo (m_ArmBuscando): si rearrancara, los tramos
@@ -1256,7 +1505,7 @@ class BZCintaRunner
                 m_MesetaFin = -1;
                 m_MesetaUltFin = -1;
                 m_ArmIt = 0;
-                if (!m_Valida) { m_ArmFase = 3; return true; }
+                if (!m_Valida) { m_ArmFase = 4; return true; }
                 m_FrameTramo = new array<int>();
                 m_ArmFase = 1;
             }
@@ -1305,6 +1554,14 @@ class BZCintaRunner
                 // mapa frame -> tramo emitido (los micro-bloques absorben al previo)
                 if (m_ArmIt >= m_Count)
                 {
+                    m_ArmIt = 0;
+                    m_BqMinX = new array<float>();
+                    m_BqMaxX = new array<float>();
+                    m_BqMinZ = new array<float>();
+                    m_BqMaxZ = new array<float>();
+                    m_BqFases = new array<int>();
+                    m_BqRumbos = new array<int>();
+                    m_BqCota = new array<float>();
                     m_ArmFase = 3;
                 }
                 else
@@ -1319,12 +1576,88 @@ class BZCintaRunner
                     pasos = pasos + 1;
                 }
             }
+            else if (m_ArmFase == 3)
+            {
+                // los bloques de la poda: necesitan el mapa de tramos entero, porque la fase de un cuadro es la de su tramo
+                if (m_ArmIt >= m_Count)
+                {
+                    m_BqListo = true;
+                    m_ArmFase = 4;
+                }
+                else
+                {
+                    SumarFilaAlBloque(m_ArmIt);
+                    m_ArmIt = m_ArmIt + 1;
+                    pasos = pasos + BLOQUE_PASOS_FILA;
+                }
+            }
             else
             {
                 return true;
             }
         }
         return false;
+    }
+
+    // El sector de 30 grados de un rumbo; -1 si no es un rumbo normal: ese bloque queda con todos los sectores y no se poda por rumbo.
+    private int SectorDeRumbo(float h)
+    {
+        if (!(Math.AbsFloat(h) <= 720.0)) return -1;
+        float hN = h;
+        while (hN < 0) hN = hN + 360.0;
+        while (hN >= 360.0) hN = hN - 360.0;
+        int sS = Math.Floor(hN / 30.0);
+        if (sS > 11) sS = 11;
+        if (sS < 0) sS = 0;
+        return sS;
+    }
+
+    // Los sectores donde puede haber una fila con rumbo compatible: el sector mide 30 grados, asi que su centro queda a 15 de
+    // cualquier fila suya, y 1 grado mas cubre el redondeo. Si rumboDeg no es un numero no da ninguno, igual que RumboCompatible.
+    private int SectoresCompatibles(float rumboDeg)
+    {
+        if (rumboDeg < -900.0) return RUMBOS_TODOS;
+        float topeQ = REANCLA_RUMBO_DEG + 16.0;
+        int maskQ = 0;
+        int sQ;
+        float dQ;
+        for (sQ = 0; sQ < 12; sQ++)
+        {
+            dQ = sQ * 30.0 + 15.0 - rumboDeg;
+            while (dQ > 180.0) dQ = dQ - 360.0;
+            while (dQ < -180.0) dQ = dQ + 360.0;
+            if (Math.AbsFloat(dQ) <= topeQ) maskQ = maskQ | (1 << sQ);
+        }
+        return maskQ;
+    }
+
+    private void SumarFilaAlBloque(int k)
+    {
+        float xB = m_X.Get(k);
+        float zB = m_Z.Get(k);
+        int faseB = FASE_ADELANTE;
+        if (CuadroEsDeFase(k, true)) faseB = FASE_REVERSA;
+        int rumB = RUMBOS_TODOS;
+        int secB = SectorDeRumbo(m_H.Get(k));
+        if (secB >= 0) rumB = 1 << secB;
+        if (k % BLOQUE_FILAS == 0)
+        {
+            m_BqMinX.Insert(xB);
+            m_BqMaxX.Insert(xB);
+            m_BqMinZ.Insert(zB);
+            m_BqMaxZ.Insert(zB);
+            m_BqFases.Insert(faseB);
+            m_BqRumbos.Insert(rumB);
+            m_BqCota.Insert(0.0);
+            return;
+        }
+        int bB = m_BqFases.Count() - 1;
+        if (xB < m_BqMinX.Get(bB)) m_BqMinX.Set(bB, xB);
+        if (xB > m_BqMaxX.Get(bB)) m_BqMaxX.Set(bB, xB);
+        if (zB < m_BqMinZ.Get(bB)) m_BqMinZ.Set(bB, zB);
+        if (zB > m_BqMaxZ.Get(bB)) m_BqMaxZ.Set(bB, zB);
+        m_BqFases.Set(bB, m_BqFases.Get(bB) | faseB);
+        m_BqRumbos.Set(bB, m_BqRumbos.Get(bB) | rumB);
     }
 
     // ★★★ LA SIEMBRA DISPARADA POR EL LEG (, fix de H-fase-stale,

@@ -443,7 +443,9 @@ function Invoke-Convert {
 
     if ($pyOut -and $pyOut.Trim() -ne "") {
         Write-Host ""
-        Write-Host ($pyOut.TrimEnd()) -ForegroundColor $C_INFO
+        # la linea del binario no va en el texto del conversor: se dice abajo, en el idioma del Wizard y con su color
+        $pyTexto = (($pyOut -split "\r?\n") | Where-Object { $_ -notmatch '^binary tape' }) -join "`n"
+        Write-Host ($pyTexto.TrimEnd()) -ForegroundColor $C_INFO
         Show-AvisosDeToma $pyOut
     }
 
@@ -457,19 +459,46 @@ function Invoke-Convert {
     Write-Host ""
     Write-Host ("   " + (T "convert.ok")) -ForegroundColor $C_OK
     Write-Host ("   " + ((T "convert.deployed") -f $routeName)) -ForegroundColor $C_OK
+    # Una falla del binario no corta la conversion: se dice en rojo, y la ruta anda con su CSV.
+    $motivoBin = Get-MotivoBinario $pyOut
+    if ($motivoBin -eq "") { Write-Host ("   " + (T "bin.ok")) -ForegroundColor $C_OK }
+    else { Write-Host ("   " + ((T "bin.fail") -f $motivoBin)) -ForegroundColor $C_ERR }
 
-    # Mirror al server B: copia los CUATRO archivos (.json + _hdr.json + _wp.csv + _cinta.csv). Sin la cinta, en B
-    # la ruta corria sin cinta.
+    # Mirror al server B: copia los archivos de la ruta (.json + _hdr.json + _wp.csv + _cinta.csv + _cinta.bin). Sin la
+    # cinta, en B la ruta corria sin cinta. Una copia que falla se dice en rojo y no corta las demas. El binario se copia
+    # solo si es el de este CSV y el CSV llego; si igual queda uno que no corresponde, el server lo descarta con un aviso
+    # y carga el CSV.
     if ($script:ServerBMirror -and (Test-Path $script:ServerBMirror)) {
         $copied = 0
-        foreach ($suf in @(".json", "_hdr.json", "_wp.csv", "_cinta.csv")) {
+        $cintaFallo = $false
+        foreach ($suf in @(".json", "_hdr.json", "_wp.csv", "_cinta.csv", "_cinta.bin")) {
             $src = Join-Path $script:RoutesDir ($outBase + $suf)
-            if (Test-Path $src) { Copy-Item $src (Join-Path $script:ServerBMirror ($outBase + $suf)) -Force; $copied++ }
+            if (-not (Test-Path $src)) { continue }
+            if ($suf -eq "_cinta.bin" -and ($motivoBin -ne "" -or $cintaFallo)) { continue }
+            try {
+                Copy-Item $src (Join-Path $script:ServerBMirror ($outBase + $suf)) -Force -ErrorAction Stop
+                $copied++
+            } catch {
+                if ($suf -eq "_cinta.csv") { $cintaFallo = $true }
+                Write-Host ("   " + ((T "bin.mirror_fail") -f ($outBase + $suf), $_.Exception.Message)) -ForegroundColor $C_ERR
+            }
         }
         Write-Host ("   " + $(if ($global:BZ_LANG -eq 'en') { "Copied to server B ($copied files): " } else { "Copiado al server B ($copied archivos): " }) + $script:ServerBMirror) -ForegroundColor $C_INFO
     }
+    $script:BinSucio = $true
 
     Pause-Wizard
+}
+
+# "" si el conversor dejo el binario; si no, el motivo. frame_to_route.py imprime "binary tape: escrito", o "binary tape:
+# rechazada: <motivo>", o "binary tape NOT written: <motivo>". Se reconocen por su texto: si se cambia en el .py, cambiarlo aca.
+function Get-MotivoBinario {
+    param([string]$out)
+    $m = [regex]::Match($out, '(?m)^binary tape(?: NOT written)?: *([^\r\n]*)')
+    if (-not $m.Success) { return (T "bin.no_output") }
+    $texto = $m.Groups[1].Value.Trim()
+    if ($m.Value -notmatch 'NOT written' -and $texto -eq "escrito") { return "" }
+    return ($texto -replace '^(rechazada|fallo): *', '')
 }
 
 # ============================================================================
@@ -953,9 +982,133 @@ function Test-PathsHealth {
 }
 
 # ============================================================================
+#  Binario de las rutas: el estado, sale de cinta_binaria.py, con la misma huella que el server
+# ============================================================================
+function Get-RutasBinario {
+    param([bool]$completo)
+    $res = @()
+    $py = Join-Path $PSScriptRoot "cinta_binaria.py"
+    if (-not $script:RoutesDir -or -not (Test-Path $script:RoutesDir) -or -not (Test-Path $py)) { return $res }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    if ($completo) { $out = & $script:PY $py $script:RoutesDir '--estado' '--completo' '--maquina' 2>&1 | Out-String }
+    else { $out = & $script:PY $py $script:RoutesDir '--estado' '--maquina' 2>&1 | Out-String }
+    $ErrorActionPreference = $prevEAP
+    foreach ($l in ($out -split "\r?\n")) {
+        if ($l -notmatch '^RESULT\|') { continue }
+        $p = $l.Split('|')
+        if ($p.Count -lt 5) { continue }
+        $res += [PSCustomObject]@{ Estado = $p[1]; Filas = $p[2]; Archivo = $p[3]; Detalle = $p[4] }
+    }
+    return $res
+}
+
+# Cuantas faltan: lo mira el menu. Sin leer los binarios enteros, para no demorar: un binario danado por dentro se ve en la lista.
+function Update-BinPendientes {
+    if (-not $script:BinSucio) { return }
+    $script:BinSucio = $false
+    $script:BinPendientes = @(Get-RutasBinario $false | Where-Object { $_.Estado -ne "al dia" }).Count
+}
+
+function Get-NombreRuta {
+    param([string]$archivo)
+    return ($archivo -replace '^BZBusRoute_', '' -replace '_cinta\.csv$', '')
+}
+
+# Rehace UNA. Nunca toca el CSV. true = quedo. Si falla lo dice en rojo; el que llama sigue con la siguiente.
+function Invoke-BinarizarUna {
+    param([string]$archivo)
+    $py = Join-Path $PSScriptRoot "cinta_binaria.py"
+    $nombre = Get-NombreRuta $archivo
+    Write-Host ("   " + ((T "bin.working") -f $nombre)) -ForegroundColor $C_INFO
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & $script:PY $py $script:RoutesDir '--una' $archivo '--forzar' '--maquina' 2>&1 | Out-String
+    $ErrorActionPreference = $prevEAP
+    $m = [regex]::Match($out, '(?m)^RESULT\|([^|\r\n]*)\|([^|\r\n]*)\|[^|\r\n]*\|([^\r\n]*)')
+    if ($m.Success -and $m.Groups[1].Value -eq "escrito") {
+        Write-Host ("   " + ((T "bin.done_one") -f $nombre, $m.Groups[2].Value)) -ForegroundColor $C_OK
+        Copy-BinAlMirror $archivo
+        return $true
+    }
+    if ($m.Success) { $motivo = $m.Groups[3].Value } else { $motivo = $out.Trim() }
+    Write-Host ("   " + ((T "bin.fail_one") -f $nombre, $motivo)) -ForegroundColor $C_ERR
+    return $false
+}
+
+# Sin mirror configurado, o sin esa ruta en el mirror, no hace nada.
+function Copy-BinAlMirror {
+    param([string]$archivo)
+    if (-not $script:ServerBMirror -or -not (Test-Path $script:ServerBMirror)) { return }
+    $csvB = Join-Path $script:ServerBMirror $archivo
+    if (-not (Test-Path $csvB)) { return }
+    $bin = $archivo -replace '\.csv$', '.bin'
+    # otra cinta en B: su binario seria descartado alla, con un aviso en cada carga
+    if ((Get-Item $csvB).Length -ne (Get-Item (Join-Path $script:RoutesDir $archivo)).Length) {
+        Write-Host ("   " + ((T "bin.mirror_other") -f $bin)) -ForegroundColor $C_WARN
+        return
+    }
+    try {
+        Copy-Item (Join-Path $script:RoutesDir $bin) (Join-Path $script:ServerBMirror $bin) -Force -ErrorAction Stop
+        Write-Host ("   " + ((T "bin.mirror_copied") -f $bin)) -ForegroundColor $C_INFO
+    } catch {
+        Write-Host ("   " + ((T "bin.mirror_fail") -f $bin, $_.Exception.Message)) -ForegroundColor $C_ERR
+    }
+}
+
+# [B]: la lista de rutas, con el mismo chequeo entero que hace el server. Se elige una, o [T] todas las que faltan.
+function Invoke-Binarizar {
+    Write-Section (T "bin.title") $C_TITLE
+    Wc ("   " + (T "bin.checking")) $C_INFO
+    $rutas = @(Get-RutasBinario $true)
+    $script:BinSucio = $true
+    if ($rutas.Count -eq 0) {
+        Wc ("   " + ((T "bin.none") -f $script:RoutesDir)) $C_INFO
+        Pause-Wizard
+        return
+    }
+    $i = 0
+    foreach ($r in $rutas) {
+        $i++
+        $color = $C_WARN
+        $estado = T "bin.state_stale"
+        if ($r.Estado -eq "al dia") { $color = $C_OK; $estado = T "bin.state_ok" }
+        elseif ($r.Estado -eq "sin binario") { $estado = T "bin.state_missing" }
+        $linea = "   " + ([string]$i).PadLeft(3) + "  " + (Get-NombreRuta $r.Archivo).PadRight(34) + ([string]$r.Filas).PadLeft(8) + " " + (T "bin.rows") + "  "
+        Wc $linea $C_INFO -NoNewline
+        if ($r.Detalle) { Wc ($estado + " (" + (T ("bin.why_" + $r.Detalle)) + ")") $color } else { Wc $estado $color }
+    }
+    $faltan = @($rutas | Where-Object { $_.Estado -ne "al dia" })
+    Write-Host ""
+    if ($faltan.Count -gt 0) { $pr = (T "bin.prompt") -f $faltan.Count } else { $pr = T "bin.prompt_none" }
+    $s = ([string](Read-Host ("   " + $pr))).Trim().ToUpper()
+    if ($s -eq "") { return }
+    $elegidas = @()
+    if ($s -eq "T") { $elegidas = $faltan }
+    else {
+        $n = 0
+        if (-not [int]::TryParse($s, [ref]$n) -or $n -lt 1 -or $n -gt $rutas.Count) {
+            Write-Host ("   " + (T "common.invalid")) -ForegroundColor $C_ERR
+            Pause-Wizard
+            return
+        }
+        $elegidas = @($rutas[$n - 1])
+    }
+    $bien = 0
+    $mal = 0
+    foreach ($r in $elegidas) {
+        if (Invoke-BinarizarUna $r.Archivo) { $bien++ } else { $mal++ }
+    }
+    if ($mal -gt 0) { $cSum = $C_ERR } else { $cSum = $C_OK }
+    Write-Host ("   " + ((T "bin.summary") -f $bien, $mal)) -ForegroundColor $cSum
+    Pause-Wizard
+}
+
+# ============================================================================
 #  Menu principal (conversor puro)
 # ============================================================================
 function Show-MainMenu {
+    Update-BinPendientes
     Clear-Host
     Show-BZBanner
     Wc ("  " + (T "menu.subtitle")) $C_INFO
@@ -965,7 +1118,10 @@ function Show-MainMenu {
     Wc ("   " + (T "menu.merge"))     $C_HILITE
     Wc ("   " + (T "menu.config"))    $C_INFO
     Wc ("   " + (T "menu.quit"))      $C_INFO
-    return Read-Choice (T "common.choice") @("1","2","3","6","Q")
+    # solo si hay algo para hacer
+    if ($script:BinPendientes -eq 1) { Write-Host ""; Wc ("   " + (T "menu.bin_una")) $C_WARN }
+    elseif ($script:BinPendientes -gt 1) { Write-Host ""; Wc ("   " + ((T "menu.bin_varias") -f $script:BinPendientes)) $C_WARN }
+    return Read-Choice (T "common.choice") @("1","2","3","6","B","Q")
 }
 
 # ============================================================================
@@ -1036,6 +1192,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         Enable-VTMode
         Select-Language
         Initialize-WizardPaths ($PSBoundParameters.ContainsKey('RoutesDir'))
+        $script:BinSucio = $true
         while ($true) {
           try {
             $choice = Show-MainMenu
@@ -1053,6 +1210,10 @@ if ($MyInvocation.InvocationName -ne '.') {
                 }
                 "6" {
                     Invoke-ConfigPaths
+                    $script:BinSucio = $true
+                }
+                "B" {
+                    Invoke-Binarizar
                 }
                 "Q" {
                     Write-Host ""

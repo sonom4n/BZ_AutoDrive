@@ -456,6 +456,199 @@ Marcador NUMPAD 4 (graba `isStop=true` en el wp) → nodo de evento. `Events[]` 
 
 - **Sin mod propio: lanzar y encadenar rutas desde el `init.c` de la misión** (manual §8.2). En `class CustomMission: MissionServer`: `override void OnInit() { super.OnInit(); CallLater(...60 s...) }`; cada ruta con **su propio runner** (`new BZBusService()` → `GetRunners().Insert(r)` → `SetHoldAtStops(false)` → `SetEtiqueta` → `RespawnFromPath("BZBusRoute_X.json")`), no con `PlayRouteByName` (su `holdAtStops=true` por defecto deja el vehículo retenido en la primera parada, y puede reusar el runner principal, que `UnregisterRunner` no da de baja). Encadenar = un `CallLater(..., 5000, true)` que mira `RunnerRouteEnded()`/`RunnerRouteCompleted()` y lanza la siguiente; un runner `RespawnFromPath` que termina COMPLETE se retira solo (`EndHoldSeconds`); uno que termina mal queda quieto → `UnregisterRunner`.
 
+- **A una hora del juego, en varias, en una ventana, o bajo una condición, desde el `init.c`** (sin mod propio; el framework no programa horarios y no lo va a hacer en la 1.3: lo decide el `init.c` o el mod de cada uno, y la API alcanza). Receta verificada contra el fuente de la 1.3 y el motor 1.30: `GetGame().GetWorld().GetDate(out año, mes, día, hora, minuto)` (`3_Game/Global/World.c`), `GetGame().GetPlayers(out array<Man>)` (`3_Game/Global/Game.c`), `GetCallQueue(...).CallLater(func, ms, repetir)` (`2_GameLib/tools.c`), y los métodos del runner del manual §8.2 y B.7 (`RespawnFromPath`, `SetHoldAtStops`, `SetEtiqueta`, `RunnerIsActive`, `RunnerEsperandoCabecera`, `RunnerRouteEnded`, `RunnerRouteCompleted`, `UnregisterRunner`), todos visibles desde la misión. ⚠ **Con aceleración del tiempo** (`serverTimeAcceleration`) una hora del juego puede durar segundos reales: no se compara `hora == 22` (se la saltea), se detecta el **cruce** de la hora entre dos miradas (`BZ_Cruzo`, que cuenta el paso de medianoche) y se mira cada 10 s reales. **Medido en un server** (05/11, sin cliente, en el `init.c` de la misión, con los parámetros de la prueba): compila; el reloj corrió cada 10 s; el cruce de la hora lanzó la ruta **una sola vez** y no la repitió; la ruta llegó `COMPLETE`; la vigilancia vio el fin y soltó el runner; la condición sin jugadores no lanzó el taxi. **Con un jugador** (05/11, la última prueba): la condición lanzó el taxi al conectarse y lo relanzó al terminar cada vuelta mientras siguió conectado; y un cambio de hora con COT (18:48 → 12:00) **disparó** el objetivo de las 19:31 en la versión sin `BZ_SALTO_MAX_MIN` (de ahí esta). ⚠ **Sin medir:** esta versión, con el salto. Un error en el `init.c` no deja arrancar la misión (`Can't compile`): mirá el RPT.
+
+```c
+class CustomMission: MissionServer
+{
+    // ... lo que ya tenias ...
+
+    ref BZBusService m_BZ_Programado;   // el runner lanzado por hora (null = ninguno corriendo)
+    ref BZBusService m_BZ_Taxi;         // el runner lanzado por condicion
+    int  m_BZ_MinPrev = -1;             // minuto del dia del mundo en la mirada anterior (-1: todavia no miro)
+    // mas de esto entre dos miradas (10 s) no es el paso del tiempo sino un CAMBIO DE HORA del admin (COT, un comando): se re-ancla
+    // sin disparar nada. Entre miradas el mundo avanza serverTimeAcceleration x serverNightTimeAcceleration / 6 minutos (4,6 x 1 = 0,8;
+    // 12 x 4 = 8); 60 cubre hasta 360x. Si tu server acelera mas (el tope es 24 x 64), subilo por encima de ese avance.
+    static const int BZ_SALTO_MAX_MIN = 60;
+    bool m_BZ_EnVentana = false;
+
+    override void OnInit()
+    {
+        super.OnInit();   // primero: ahi arranca el framework
+        GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.BZ_Reloj, 10000, true);   // cada 10 s REALES
+    }
+
+    // lanza una ruta con su propio runner (la receta del manual §8.2); null si no arranco
+    BZBusService BZ_Ruta(string archivo, string etiqueta)
+    {
+        BZBusService r = new BZBusService();
+        BZBusService.GetRunners().Insert(r);
+        r.SetHoldAtStops(false);
+        r.SetEtiqueta(etiqueta);
+        r.RespawnFromPath(archivo);
+        if (!r.RunnerIsActive() && !r.RunnerEsperandoCabecera())
+        {
+            BZBusService.UnregisterRunner(r);
+            return null;
+        }
+        return r;
+    }
+
+    // el minuto del dia del MUNDO (0..1439)
+    int BZ_MinutoDelDia()
+    {
+        int anio;
+        int mes;
+        int dia;
+        int hora;
+        int minuto;
+        GetGame().GetWorld().GetDate(anio, mes, dia, hora, minuto);
+        return hora * 60 + minuto;
+    }
+
+    // minutos del mundo que pasaron entre dos miradas, contando el paso de medianoche (atrasar la hora da un avance enorme)
+    int BZ_Avance(int antes, int ahora)
+    {
+        int d = ahora - antes;
+        if (d < 0) d = d + 24 * 60;
+        return d;
+    }
+
+    // true si el objetivo (en minutos del dia) quedo entre la mirada anterior y esta, contando el paso de medianoche
+    bool BZ_Cruzo(int antes, int ahora, int objetivo)
+    {
+        if (antes < 0) return false;                        // primera mirada: solo anota
+        if (antes <= ahora) return antes < objetivo && objetivo <= ahora;
+        return objetivo > antes || objetivo <= ahora;       // paso de medianoche entre las dos miradas
+    }
+
+    void BZ_Reloj()
+    {
+        int ahora = BZ_MinutoDelDia();
+
+        // un CAMBIO DE HORA del admin (hacia atras, o hacia adelante de mas de BZ_SALTO_MAX_MIN): se re-ancla y no se dispara nada.
+        // Sin esto, atrasar la hora disparaba todas las salidas entre la hora vieja y la medianoche (medido con COT: 18:48 -> 12:00)
+        if (m_BZ_MinPrev >= 0 && BZ_Avance(m_BZ_MinPrev, ahora) > BZ_SALTO_MAX_MIN)
+        {
+            Print("[BZ] salto de hora del mundo: minuto " + m_BZ_MinPrev.ToString() + " -> " + ahora.ToString() + ": se re-ancla sin disparar");
+            m_BZ_MinPrev = ahora;
+        }
+
+        // (1) UNA VEZ POR DIA, a las 22:00 del mundo. El cruce dispara una sola vez por dia; si la corrida anterior sigue, no se duplica
+        if (BZ_Cruzo(m_BZ_MinPrev, ahora, 22 * 60)) BZ_LanzarProgramado("BZBusRoute_NOCTURNO.json", "N22");
+
+        // (2) VARIAS HORAS: 8:00 y 20:00 (una linea por hora)
+        // if (BZ_Cruzo(m_BZ_MinPrev, ahora, 8 * 60) || BZ_Cruzo(m_BZ_MinPrev, ahora, 20 * 60)) BZ_LanzarProgramado("BZBusRoute_SERVICIO.json", "S");
+
+        // (3) UNA VENTANA (de 22 a 6): al entrar se lanza; al salir, si todavia anda, se retira.
+        //     Tras un salto de hora la ventana sigue a la hora NUEVA: si el salto cae adentro, lanza; si cae afuera, retira
+        // bool enVentana = (ahora >= 22 * 60 || ahora < 6 * 60);
+        // if (enVentana && !m_BZ_EnVentana) BZ_LanzarProgramado("BZBusRoute_NOCTURNO.json", "VENT");
+        // if (!enVentana && m_BZ_EnVentana && m_BZ_Programado) { BZBusService.UnregisterRunner(m_BZ_Programado); m_BZ_Programado = null; }
+        // m_BZ_EnVentana = enVentana;
+
+        m_BZ_MinPrev = ahora;
+        BZ_VigilarProgramado();
+        BZ_Condicion();
+    }
+
+    void BZ_LanzarProgramado(string archivo, string etiqueta)
+    {
+        if (m_BZ_Programado) return;   // la anterior todavia corre (o espera la cabecera): no se lanza otra encima
+        m_BZ_Programado = BZ_Ruta(archivo, etiqueta);
+    }
+
+    // encadenar con lo que ya esta: una ruta lanzada asi se retira sola cuando llega completa (a los EndHoldSeconds);
+    // si termino mal (ROUTE_INCOMPLETE, STUCK) se retira aca (desde la 1.3, si nadie lo hace en 60 s, el framework la retira igual)
+    void BZ_VigilarProgramado()
+    {
+        if (!m_BZ_Programado) return;
+        if (!m_BZ_Programado.RunnerRouteEnded()) return;   // todavia maneja, o espera el punto de salida
+        if (!m_BZ_Programado.RunnerRouteCompleted()) BZBusService.UnregisterRunner(m_BZ_Programado);
+        m_BZ_Programado = null;   // el proximo cruce de hora puede lanzar de nuevo
+    }
+
+    // (4) BAJO UNA CONDICION: un taxi mientras haya jugadores conectados. La condicion es la linea de `hay`: poné ahi la tuya
+    void BZ_Condicion()
+    {
+        array<Man> jugadores = new array<Man>();
+        GetGame().GetPlayers(jugadores);
+        bool hay = (jugadores.Count() > 0);
+        if (hay && !m_BZ_Taxi) m_BZ_Taxi = BZ_Ruta("BZBusRoute_TAXI.json", "TAXI");
+        if (m_BZ_Taxi && m_BZ_Taxi.RunnerRouteEnded())
+        {
+            if (!m_BZ_Taxi.RunnerRouteCompleted()) BZBusService.UnregisterRunner(m_BZ_Taxi);
+            m_BZ_Taxi = null;   // con la condicion todavia cierta, la proxima mirada lo relanza (si el punto de salida sigue ocupado, espera)
+        }
+    }
+}
+```
+
+  Lo que conviene saber: **una vez por día** = el cruce de la hora dispara una sola vez y, si la corrida anterior sigue, no se lanza otra encima (`m_BZ_Programado`); la **ventana** lanza al entrar y retira al salir con `UnregisterRunner` (que es `StopBus` + sacar del registro: borra vehículo y chofer); la **condición** relanza cada vez que la anterior termina mientras siga cierta (si el vehículo anterior todavía no se retiró, el nuevo espera el punto de salida: `RunnerEsperandoCabecera()`, no es una falla); `RunnerRouteEnded()` queda `true` también después de que el runner se retiró solo, así que la vigilancia puede mirarlo tarde; **un cambio de hora del admin** (COT, un comando) no es el paso del tiempo: si entre dos miradas el mundo «avanzó» más de `BZ_SALTO_MAX_MIN` minutos contando la medianoche (atrasar la hora da un avance enorme por el giro), la receta se re-ancla y no dispara nada (sin esto, atrasar de 18:48 a 12:00 disparó la salida de las 19:31: lo tomó como el paso de la medianoche), y la ventana sigue a la hora nueva. Reglas de Enforce del manual B.5: sin operador ternario, `new` sin argumentos, `ref` en los miembros que guardan el runner.
+
+- **Avisos propios desde un mod o el `init.c`.** Los avisos automáticos del framework son sólo para los admins (los elige el settings); los estados de un servicio («llegó a la parada», «desplegó los bots», «terminó») son del que lanzó el vehículo. **Sin código:** un evento `ui_broadcast` sobre el waypoint de la parada (§8: `value` a quién, `format` por dónde). **Con código:** la API del runner por polling, cada 1 s, y los avisos **en pantalla** (`SendNotificationToPlayerExtended`): por chat no, porque en un server con Expansion un `ChatMP` del server **no se vio** en el chat (medido 05/11; el server decía «a 1 jugador»), así que la receta no lo ofrece. ⚠ **La señal de la parada es el cruce de `IsHeld()`, con `SetHoldAtStops(true)`; `RunnerAtStop()` no sirve** (medido dos veces: con `SetHoldAtStops(false)` y con `true`, el aviso por `RunnerAtStop()` nunca salió). Por qué, leído en el fuente: con el cerebro 1.2 y `SetHoldAtStops(true)`, cuando la cinta entra en la **meseta grabada** de un waypoint con parada, el runner **retiene el vehículo él mismo** (`HoldRunner`, `IsHeld()` pasa a `true`) y espera tu `ResumeFromHold()`; con `false` reproduce la parada grabada tal cual, sin señal. `RunnerAtStop()` lo enciende sólo un `ARRIVED` del controlador, que no existe en una parada grabada común (ver el (f)). La última parada es el FIN de la ruta, no un hold: se avisa con `RunnerRouteEnded()` una sola vez, con `RunnerRouteCompleted()` y `RunnerEndReason()`. **Cuánto espera el bus:** si soltás en el mismo tick (como abajo, con `BZ_ESPERA_PARADA_S = 0`) el bus no espera nada más que lo grabado; para esperar N s, anotá el momento del cruce y soltá cuando pasaron (abajo). ⚠ **Un `HoldRunner()` o `HoldRunnerSuave()` pedido por tu propio mod también enciende `IsHeld()`**, y la API no distingue «parada grabada» de «hold mío» (`IsHoldPendiente()` tampoco: es `true` frenando hacia cualquiera de las dos, y no hay API pública que liste los waypoints con parada): la forma limpia es una bandera tuya (`m_BZ_HoldMio`, abajo) que ponés al pedir tu hold y sacás al soltarlo. Verificado contra el fuente de la 1.3 y el motor 1.30: `IsHeld()`, `ResumeFromHold()`, `SetHoldAtStops(bool)`, `RunnerPos()`, `RunnerRouteEnded()`, `RunnerRouteCompleted()`, `RunnerEndReason()` (públicos del runner); `GetGame().GetTickTime()` (segundos del server, `float`); `GetGame().GetPlayers(out array<Man>)` (`3_Game/Global/Game.c`); `NotificationSystem.SendNotificationToPlayerExtended(Man, float show_time, string title, string detail, string icon)` (`3_Game/Client/Notifications/NotificationSystem.c`: pese a la carpeta, es la llamada **del server**, que manda el RPC del motor al cliente). **Medido en un server** (05/11, sin cliente, en el `init.c` de la misión, una ruta con una parada grabada): con `SetHoldAtStops(false)` + `RunnerAtStop()`, el aviso de la parada **nunca**, el del fin sí, `COMPLETE`; con `SetHoldAtStops(true)` + `RunnerAtStop()`, **tampoco**, el del fin sí, `COMPLETE`; con **`SetHoldAtStops(true)` + el cruce de `IsHeld()`** (esta receta, soltando en el mismo tick): **el aviso salió en la parada**, el del fin sí, `COMPLETE` a 0,101 m. **Con un jugador a bordo** (05/11, la última prueba): el aviso de la parada **le llegó en pantalla** (a 1 jugador, visto) y el bus siguió con `ResumeFromHold`; el del fin, que iba por chat, **no se vio** (de ahí esta versión, todo en pantalla). ⚠ **Sin medir:** el aviso del fin en pantalla, y la espera de N s.
+
+```c
+    // en el mismo CustomMission de la receta del horario. ESTE runner se lanza con SetHoldAtStops(true) (en BZ_Ruta, o en
+    // una BZ_RutaTaxi igual con true): asi, al entrar en cada parada grabada, el runner retiene el vehiculo solo (IsHeld)
+    // y lo suelta cuando vos decis. RunnerAtStop() NO sirve aca: con el cerebro 1.2 nunca se enciende en una parada grabada.
+    bool  m_BZ_EnParadaPrev = false;
+    bool  m_BZ_FinAvisado = false;
+    float m_BZ_ParadaDesdeS = 0;            // cuando empezo la parada actual (reloj del server)
+    bool  m_BZ_HoldMio = false;             // true mientras ESTE mod tenga un HoldRunner/HoldRunnerSuave propio pedido
+    static const float BZ_ESPERA_PARADA_S = 0;     // segundos extra en cada parada, ademas de lo grabado (0 = se suelta enseguida)
+    // en OnInit, junto al CallLater del reloj: GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.BZ_Avisos, 1000, true);
+
+    // a los jugadores a menos de `radio` m del vehiculo: un toast en pantalla (titulo + texto). Por chat no: un ChatMP del
+    // server no se vio en el chat de un server con Expansion (medido)
+    void BZ_AvisarCerca(BZBusService r, string texto, float radio)
+    {
+        vector pos = r.RunnerPos();
+        array<Man> jugadores = new array<Man>();
+        GetGame().GetPlayers(jugadores);
+        for (int i = 0; i < jugadores.Count(); i++)
+        {
+            Man p = jugadores.Get(i);
+            if (!p || !p.GetIdentity()) continue;
+            if (vector.Distance(p.GetPosition(), pos) > radio) continue;
+            NotificationSystem.SendNotificationToPlayerExtended(p, 6, "Servicio de bus", texto, "");
+        }
+    }
+
+    void BZ_Avisos()
+    {
+        BZBusService r = m_BZ_Programado;
+        if (!r)
+        {
+            m_BZ_EnParadaPrev = false;
+            m_BZ_FinAvisado = false;
+            return;
+        }
+        // la parada: el CRUCE de IsHeld() (de false a true), una vez por parada. Con SetHoldAtStops(true) el runner
+        // retiene el vehiculo al entrar en la meseta grabada de un wp con parada (medido: el aviso sale en la parada).
+        // Un HoldRunner/HoldRunnerSuave pedido por este mismo mod tambien enciende IsHeld(): m_BZ_HoldMio lo aparta.
+        bool enParada = r.IsHeld() && !m_BZ_HoldMio;
+        if (enParada && !m_BZ_EnParadaPrev)
+        {
+            m_BZ_ParadaDesdeS = GetGame().GetTickTime();
+            BZ_AvisarCerca(r, "El bus llego a la parada", 150);
+        }
+        m_BZ_EnParadaPrev = enParada;
+        // soltar la parada es tuyo: enseguida (BZ_ESPERA_PARADA_S = 0: el bus se va cuando se cumplio lo grabado,
+        // medido asi) o tras N s mas (anotaste el cruce; soltas cuando pasaron)
+        if (enParada && GetGame().GetTickTime() - m_BZ_ParadaDesdeS >= BZ_ESPERA_PARADA_S) r.ResumeFromHold();
+        // el fin de la corrida: una vez, con el motivo (la ultima parada es el FIN, no un hold)
+        if (r.RunnerRouteEnded() && !m_BZ_FinAvisado)
+        {
+            m_BZ_FinAvisado = true;
+            if (r.RunnerRouteCompleted()) BZ_AvisarCerca(r, "El bus termino su recorrido", 150);
+            else BZ_AvisarCerca(r, "El bus no pudo terminar: " + r.RunnerEndReason(), 150);
+        }
+    }
+```
+
+  Lo que conviene saber: `RunnerRouteEnded()` queda `true` después de que el runner se retiró solo, así que el aviso del fin sale aunque se mire tarde; la vigilancia del horario pone `m_BZ_Programado` en `null` cuando terminó, así que llamá a `BZ_Avisos` antes que a `BZ_VigilarProgramado` (o guardá el runner en otra variable); un radio de 150 m es el que usa `ui_broadcast` con `"near"` sin radio. Reglas de Enforce del manual B.5.
+
 **Lenguaje:** Enforce (scope 3_Game→4_World→5_Mission; helpers compartidos al scope más temprano). Build: AddonBuilder NO valida Enforce (solo el runtime/RPT).
 
 **(a) Verbo nuevo** → rama en `BZBusService.ExecuteAction`:
@@ -470,9 +663,9 @@ Marcador NUMPAD 4 (graba `isStop=true` en el wp) → nodo de evento. `Events[]` 
 **(d) Quest hook** → `modded MissionServer.Expansion_OnQuestStart` (§9).
 **(e) Como dependencia (otro mod)** → `requiredAddons[] = {"BZ_AutoDrive"}` + `BZBusService.GetInstance().RespawnFromPath("BZBusRoute_X.json")` / `RespawnAs(clase)`. Eso usa el runner PRINCIPAL (una ruta por vez); para una flota, (f).
 **(f) La API del runner (flota, un runner por vehículo)** — referencia completa y para humanos en el **manual, Apéndice B.7**. Lo esencial, sin RPC, todo server-side:
-- **Lanzar:** `PlayRouteByName(fname, holdAtStops)` (taxi: no duplica, un runner por archivo) **o** `new BZBusService()` + `GetRunners().Insert(r)` (la ÚNICA referencia fuerte) + `SetHoldAtStops(true)` + `SetEtiqueta(e)` (ANTES de cargar) + `RespawnFromPath(fname)`; si `!RunnerIsActive() && !RunnerEsperandoCabecera()` → `UnregisterRunner(r)`. Terminar: `UnregisterRunner(r)` (= `StopBus` + sacar del registro; borra vehículo y chofer). **Nada se retira solo.**
+- **Lanzar:** `PlayRouteByName(fname, holdAtStops)` (taxi: no duplica, un runner por archivo) **o** `new BZBusService()` + `GetRunners().Insert(r)` (la ÚNICA referencia fuerte) + `SetHoldAtStops(true)` + `SetEtiqueta(e)` (ANTES de cargar) + `RespawnFromPath(fname)`; si `!RunnerIsActive() && !RunnerEsperandoCabecera()` → `UnregisterRunner(r)`. Terminar: `UnregisterRunner(r)` (= `StopBus` + sacar del registro; borra vehículo y chofer). **Qué se retira solo (1.3, verificado en `Completa12`):** un runner lanzado con `RespawnFromPath` (el puente 1.2 lo marca «lista», igual que el Reproductor) **se retira solo al llegar `COMPLETE`**, a los `EndHoldSeconds` (`EndOfRouteDespawn` → `UnregisterRunner`); si termina mal queda quieto hasta que tu mod lo retire o lo haga la red de 60 s; `PlayRouteByName` («taxi») y la ruta por defecto («config») se **relanzan** a los `RespawnDelay`.
 - **⚠ wp 0 ocupado** (otro `CarScript` a < 3,5 m): el runner ESPERA (re-intenta cada 5 s; NO corre el punto), `RunnerIsActive()` false + `RunnerEsperandoCabecera()` true: **no es una falla**. Panel `WAITING wp0 ocupado Ns`.
-- **Estado (polling a 1 s):** `RunnerIsActive` · `RunnerWpIdx/WpTotal` · `RunnerPos/SpeedKmh` · `RunnerAtStop` · `IsHeld` (hold) · `IsHoldPendiente` (1.2.5: frenando hacia una parada pedida o grabada) ≠ `RunnerIsPaused` (pausa blanda) · `RunnerRouteEnded/RouteCompleted/EndReason` · `RunnerFellBackTo11` · `RunnerBloqueado/BloqueadoMotivo/BloqueadoDesdeS` (escalera abierta) · `RunnerRecuperando/RecuperandoQue` (superconjunto: + C1, F1, re-ubicación) · `RunnerChoqueHaceS` (definición de la línea `*** CHOQUE ***`; −1 si no hubo) · `RunnerEsperandoCabecera/EsperandoCabeceraS`.
+- **Estado (polling a 1 s):** `RunnerIsActive` · `RunnerWpIdx/WpTotal` · `RunnerPos/SpeedKmh` · `RunnerAtStop` (⚠ con el cerebro 1.2 sólo lo enciende un `ARRIVED` del controlador, y ése sale sólo al cerrar un **tramo que no es el último** —los tramos los parte un cambio de sentido grabado o un `legBreak` declarado— y si hay un waypoint del JSON a menos de 10 m; **en una parada grabada común no se enciende** (medido): la señal es `IsHeld` con `SetHoldAtStops(true)`; con el cerebro 1.1 sí: a 3 m de cada `isStop` y al final de línea) · `IsHeld` (hold: un `HoldRunner` tuyo o, con `SetHoldAtStops(true)`, una parada grabada) · `IsHoldPendiente` (1.2.5: frenando hacia una parada pedida o grabada) ≠ `RunnerIsPaused` (pausa blanda) · `RunnerRouteEnded/RouteCompleted/EndReason` · `RunnerFellBackTo11` · `RunnerBloqueado/BloqueadoMotivo/BloqueadoDesdeS` (escalera abierta) · `RunnerRecuperando/RecuperandoQue` (superconjunto: + C1, F1, re-ubicación) · `RunnerChoqueHaceS` (definición de la línea `*** CHOQUE ***`; −1 si no hubo) · `RunnerEsperandoCabecera/EsperandoCabeceraS`.
 - **Control:** `HoldRunner` (con meseta grabada a < 8 m engancha EN ella; ⚠ un hold hasta 8 m antes de una parada grabada la da por servida) · **`HoldRunnerSuave(distM, aMs2)`** (1.2.5: para en CUALQUIER punto a `distM` m de arco siguiendo la línea, tope `v = 3,6·√(2·a·rem)` sin el gate de convergencia + piso de freno físico, engancha el hold a < 3 km/h o en el punto; `aMs2 ≤ 0` = `RunnerFrenadaMs2()`; false sin el 1.2, sin posesión de la cinta, en moto o con el punto atrás → `HoldRunner()`; meseta grabada antes del punto manda; cusp/fin recortan a 1 m; `HoldRunner()` duro con una suave pendiente ESCALA; F1/re-ubicación/SAFE_STOP/ahogo la CANCELAN con línea `[C12] PARADA PEDIDA cancelada`; `RunnerCintaS()`) · `ResumeFromHold` · `SetPaused` · `HornBeep` · `StopRunner` · `SetVehiclePartsLocked(bool)` / `VehiclePartsLocked()` (vehículo inviolable). **Identidad:** `GetInstance` · `GetRunners` · `GetRunnerForCar` · `GetBus/GetDriver` · `GetRouteName` · `Etiqueta/NombreLog` · `GetOrigin` · `IsControlPanelAdmin(sid)` (pública, fail-closed).
 - **Eventos** (`PollEvent`, `BZDriveEv`): 1 ARRIVED · 2 ROUTE_COMPLETE · 3 STUCK · 4 ROUTE_INCOMPLETE · 5 BLOQUEADO (no cierra). **1.2.1:** 2 y 4 salen en el REPOSO (≤ ~3,5 s después de llegar) con el veredicto estricto; `RunnerReposoFinM()` da la distancia en reposo. **La cola es interna**: el controlador es privado del runner y el runner la drena él mismo; un mod consumidor usa los métodos `Runner*` (polling).
 - **Contar en el RPT:** choques por EPISODIO (`*** CHOQUE #N ***` + `episodio cerrado`; `BACHE` aparte), BLOQUEADO == `BLOQUEO terminado` por coche, puntos negros por POSICIÓN (no por wp), `quedo:` por spawn. ⚠ ms sin ceros a la izquierda (`41.27` = 41,027 s); ⚠ los CSV de 40 Hz se nombran con la hora UTC y SIN fecha: ordenar por fecha de archivo.
@@ -583,7 +776,7 @@ Esto es lo que efectivamente nos pasó y nos costó tiempo. Cuando un admin/modd
 | copiar el PBO al server (`robocopy`) sale con exit **8/9** | el server O el cliente abiertos lockean el PBO | cerrar **ambos** antes de buildear/mirror; preguntar "¿abierto o cerrado?" |
 | Tras deployar una ruta NUEVA, spawnea el **vehículo anterior** | par `_hdr.json`/`_wp.csv` VIEJO (el framework **prefiere el par**); pasa con flujos viejos — `frame_to_route.py` ya escribe los tres | reconvertir con el wizard (escribe los cuatro archivos) + sincronizar el PAR a B (no solo el `.json`) |
 | Cliente pateado: **"El cliente tiene un PBO que no está en el servidor"** | el DZSALauncher cachea sus mods EN MEMORIA + quedaban copias viejas (`Local.json`, `!Workshop\@viejo`) | **SALIR DEL TODO** del launcher (bandeja → Exit) tras editar `Local.json`; borrar las copias viejas del mod |
-| "Faltan PBO" al conectar | falta la `.bikey` del mod en `keys/` | copiar la `.bikey` a `keys/` (A y B) |
+| "Faltan PBO" al conectar | falta la `.bikey` del mod en `keys/` | copiar la `.bikey` a `keys/` |
 | El launcher seguía cargando el mod viejo aunque edité el archivo | el `meta.cpp` tenía el `name` viejo (dos mods locales con mismo `name` se confunden) + launcher no relee hasta reiniciar | migrar el `name` del `meta.cpp`; reiniciar el launcher del todo |
 | Boot del server ~3 min | JSON de ruta enorme parseado en `Init()` | partir la ruta / usar el par fast-load (FGets); lazy-load (futuro) |
 | 40 mods → "Server can't transmit all data" | techo ~38 mods (Steam query ~255 bytes) | sacar no esenciales o consolidar PBOs chicos |
@@ -601,6 +794,14 @@ Esto es lo que efectivamente nos pasó y nos costó tiempo. Cuando un admin/modd
 | Una toma de la 1.29 choca en la 1.30 | el mapa cambió (p. ej. un wreck nuevo en la ruta) | las tomas se prueban en el server donde se grabaron; regrabar donde el mapa cambió |
 
 ---
+
+### 12.y — Noviembre 2026 (medido): el final de la cinta, la tripulación, `guard_stop` y el detector de choque
+
+- **El final de la cinta baja a los jugadores y cierra el vehículo** (`BZBajar`, `BZCierre`). En `Completa12`, justo después de la línea `FIN`, `BZBajar.BajarSentados` le manda a cada jugador vivo con identidad sentado una **sync juncture propia** (id 150; en el cliente y en el server el handler hace `GetOutVehicle` del comando de vehículo: el único camino medido que baja a un jugador vivo en la 1.30; el RPC para que el cliente arranque `ActionGetOutTransport` falla porque la puerta abierta no le llegó a tiempo). A los 3 s verifica y manda una segunda si sigue sentado; no baja a un inconsciente ni con el vehículo a más de 5 km/h. Si el fin va al retiro o al respawn (`FinVaARetiro`: `flag` sí, `quest` no, una falla sin ciclo que decide un mod no), `BZCierre.Cerrar` pone el `FORCEDLOCKED` de Expansion (`ExpansionVehicle.Get` + `SetLockState`; el `modded ActionGetInTransport` lo niega en los dos lados) hasta el borrado; el retiro también cierra en su paso 1, espera 1,5 s a que el estado llegue al cliente (`m_LockState` es variable de red) antes de borrar, cuenta ocupantes por tres caminos (padre, comando de vehículo, y **subiendo**: comando en subida o `ActionGetInTransport` en curso a ≤ 8 m) y reabre al estado previo en su tope de 600 s. Medido: borrar con un jugador a mitad de la subida tumba el server (la firma del 22/10); con el cierre, el cliente ya no ofrece «subir» (lo que le queda son acciones de COT, que no sientan). `GetOutVehicle` es un comando, no una acción: el cierre no frena ninguna bajada. **Para conservar pasajeros entre cintas**, un mod retiene con `HoldRunner()` antes del final: sin FIN no hay bajada ni cierre.
+- **La dormancia de eAI dormía al chofer en la puerta.** `eAIState_Dormant` duerme (`DisableSimulation`) a un bot quieto con comando de caminar, un solo waypoint alcanzado (o ninguno: entonces mira el del comando) y sin jugadores a la vista, y a un bot **pasivo** esa lista no se le llena nunca (`eAI_UpdateTargets` sale en `eAI_IsPassive`); dormido no cumple el `Notify_Transport` → el teleport de los 6 s (medido: 40 animados contra 742). Receta: **dos waypoints, el último repetido** (`Despierto`, de BZ_Trader) tras cada armado con `ONCE` y sin vaciar al llegar a la puerta. Medido después: 141 de 141 animados; las líneas de timeout traen el estado del bot (`cmd`, simulación apagada, waypoints).
+- **La red del MUSTER.** A los **15 s** (el doble del embarque más lento medido), un tripulante vivo a pie con las condiciones de eAI cumplidas (formación `IN`, líder sentado en ese vehículo, una plaza libre no reservada con la puerta despejada, amenaza < 0,4) se sienta por teleport con `SentarEnPlaza(…, true)` (borra el `Notify` pendiente), una vez por bot y por corrida; el tope de 120 s queda para amenaza, sin plazas o sin líder. Medido: el blindado pasó de 5/7 a 8/8 y 0 topes. Los bots `Guards` **nunca subieron solos** al spawn en el banco (78/78 por la red): `eAIState_Vehicles.GuardEx` no mira la facción y el crew nace en el grupo `Passive` de Boris; la hipótesis (no verificada) es que con los dos waypoints del chofer en el grupo quedan en el estado de waypoints sin pasar por `Vehicles`.
+- **`guard_stop` con el cerebro 1.2 frena suave.** `HoldRunnerSuave(v²/2a + 3 m, piso 10 m, a = RunnerFrenadaMs2)`; la fase 1 espera `IsHeld`; cae a la parada dura si la suave no se puede (sin el 1.2, moto, la cinta no posee, el AR en curso, el fin pegado), si el pedido se cancela antes de enganchar o si no engancha en 10 s; al terminar, `ResumeFromHold`. La emboscada sigue dura. Medido: 17/18 COMPLETE (antes 4/18). La incompleta: un `guard_stop` sin parada grabada justo antes de una rampa final del 8-10 % (clavado): va en llano, o se marca la parada al grabar.
+- **El detector de choque descarta la velocidad previa tras más de 0,2 s sin muestras** (`CHOQUE_HUECO_S`). `DetectarChoque` (40 Hz) comparaba la primera muestra tras un congelado, un hold, una pausa o un `stop_route` con la velocidad de **antes** (35 → 0,004 km/h en 25 ms = −390 m/s²), el AR derivaba a FÍSICO «por choque reciente» y hacía la reversa (14 de 18 vueltas INCOMPLETE). Ahora una muestra tras un hueco es la primera de nuevo, con línea `detector de choque: N s sin muestras … se descarta`. ⚠ **Un tirón del server de más de 0,2 s también descarta la previa con el vehículo en marcha** (medido uno de 0,238 s): un choque real justo en ese cuadro no se ve; el siguiente, sí.
 
 ## 13. Build & deploy
 
@@ -1199,15 +1400,16 @@ Notas: `targetLights` (0/1) y `targetHorn` (0=OFF/1=SHORT/2=LONG, `ECarHornState
 
 ### D.5 — Guía: agregar un verbo nuevo al DSL de eventos
 
-1. En `scripts\4_World\BZBusService.c`, ubicá el dispatcher `ExecuteAction(BZAction a)` (el `if/else if` por `a.verb`).
-2. Agregá una rama: `else if (a.verb == "miverbo") { /* tu lógica */ }`. Usá los campos existentes de `BZAction` (`strParam`, `floatParam`, etc.).
-3. Si necesitás un campo nuevo, agregalo a la clase `BZAction` en `BZBusConfig.c`. **Enforce no admite args de constructor**: creá el objeto vacío y seteá campos.
-4. Si el verbo manda algo al cliente (UI/sonido/toast), reenvialo por RPC (ver `BZBusRPC.c`, p.ej. `RECEIVE_TOAST`).
-5. Reempaquetá el PBO, después probá agregando el verbo a un `Events[]` del JSON → deploy → `NUMPAD 2` recarga la ruta sin reiniciar el server.
+1. En `scripts\4_World\BZBusService.c`, ubicá el dispatcher **`private void ExecuteAction(Car car, BZAction action, int evIdx)`**: la cadena `if / else if` sobre `verb` (= `action.verb`). `car` es el vehículo del runner y `evIdx` el índice del evento, para la línea de log de cada verbo: `[EVENT evIdx @ wp N] …`.
+2. Agregá una rama: `else if (verb == "miverbo") { /* tu lógica */ }`, y dejá la línea en el RPT como las demás: `BZBusLog.Info("[EVENT " + evIdx + " @ wp " + m_WaypointIndex + "] miverbo: …");`.
+3. Usá los campos que `BZAction` ya tiene (`BZBusConfig.c`): `verb`; `items` (add_cargo); `msg` y `format` (ui_broadcast); `slot`; `value` (texto genérico: facción, destinatario, el valor de set_var); `fvalue` (número genérico); `var` (set_var); `faction`, `loadout`, `count` (spawn_guard); `delay`; y los de guard_stop (`radius`, `holdS`, `clearS`, `maxS`, `boardS`, `unreachableS`). Un parámetro de texto va en `value`, uno numérico en `fvalue`. **No existen `strParam` ni `floatParam`.** Si necesitás un campo nuevo, agregalo a la clase `BZAction`: **plano** (un campo que contenga un `BZAction` o una `BZCondition` rompe la carga del JSON y ningún evento carga) y sin argumentos de constructor (Enforce no los admite: objeto vacío y campos).
+4. **El `delay` lo maneja el dispatcher, no tu verbo:** al dispararse el evento, una acción con `delay > 0` se encola con `CallLater(ExecuteActionDeferred, delay × 1000)` y tu rama corre igual, más tarde; el reloj corre desde el disparo del evento, no desde la acción anterior.
+5. Para mandar algo al cliente **no armes un RPC propio**: `Difundir(destino, msg, radio, formato)` elige a quién (`"admins"` default, `"all"`, `"near"` + radio en m, `"passengers"`) y `EnviarAviso(p, msg, formato)` por dónde (`"toast"` = `RECEIVE_TOAST`, que en el cliente termina en `NotificationSystem.AddNotificationExtended`; `"chat"` = `GetGame().ChatMP(p, "BZ AutoDrive: " + msg, "colorStatusChannel")`; `"both"`). Es exactamente lo que hace `ui_broadcast`.
+6. Reempaquetá el PBO, después probá agregando el verbo a las `actions` de un evento del JSON de la ruta → deploy → `NUMPAD 2` recarga la ruta sin reiniciar el server. Un verbo mal escrito no avisa al cargar, recién al disparar (un trigger mal escrito sí avisa al cargar).
 
 ### D.6 — Guía: agregar un vehículo nuevo
 
-1. **Classname exacto** del carpack (de fuente autoritativa: trader package / config.cpp / spawn-inspect). Copiá la `.bikey` del mod a `keys\` (A y B).
+1. **Classname exacto** del carpack (de fuente autoritativa: trader package / config.cpp / spawn-inspect). Copiá la `.bikey` del mod a `keys\`.
 2. **Grabá la ruta COMPLETA** como humano: `NUMPAD 5` inicia/para. El header (`header_*.txt`) captura el fingerprint (wheelbase, ángulo de dirección → R_min, marchas, masa, **partes reales**).
 3. **Wizard** (doble clic en `tools\Wizard.bat`): **[1] Convertir** te pide **solo el NOMBRE** (→ `BZBusRoute_<nombre>.json`). `frame_to_route.py` lee el header, generaliza, auto-detecta reversa y escribe los cuatro archivos `.json`+`_hdr.json`+`_wp.csv`+`_cinta.csv`, ya **desplegado** (hot-load). Sin modos ni linters.
 4. **Deploy:** lo hace el propio Convertir (split + escritura a `profiles\BZ_AutoDrive\`). El mirror a B sale de `wizard_config.json` (`ServerBMirror`); ver **[6] Configurar paths**.

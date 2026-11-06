@@ -2,7 +2,7 @@
 
 > Framework de conducción de vehículos por NPC para DayZ. Versión didáctica para admins/modders.
 > **Open source (MIT):** el código, este manual y el AI knowledge pack son públicos — descargalo, usalo en tu server, forkealo, extendelo y compartí tus rutas.
-> *Manual 1.2 — guía práctica del administrador.*
+> *Manual 1.3 — guía práctica del administrador.*
 
 ---
 
@@ -89,7 +89,7 @@ Lo que agregás depende de para qué lo quieras:
 - **El wizard** (`route_wizard.ps1`) corre en **tu PC** (fuera del juego), no en el server. Lo arrancás con doble clic en `tools\Wizard.bat` — no necesitás abrir PowerShell ni tipear nada.
 - **Si agregás un pack de vehículos:** algunos packs necesitan **otro mod de base** (un *core*) que el Workshop **no descarga solo**, y sin él **el server se cae al arrancar**. Después de agregar un pack, buscá en el RPT **`requires addon`**: si aparece, instalá el mod que nombra y ponelo **antes** del vehículo en `-mod=`. Y acordate de que el **cliente** carga los mods de la lista de su launcher (DZSA), no del `start.bat` del server: si no lo tildás ahí también, no vas a ver los vehículos nuevos.
 - **Python: ya viene incluido.** El conversor del wizard (`frame_to_route.py`), el que arma la ficha del vehículo (`envelope_emit.py`) y el import de v1 son Python, y el mod **trae su propio Python** en `tools\python\`: no tenés que instalar nada. *(Si esa carpeta faltara, el wizard usa el Python de tu PC si lo encuentra en el PATH, y si no hay ninguno te lo dice al abrir.)*
-- **Qué corre por defecto: no tenés que activar nada.** El cerebro de manejo 1.2, la cinta y la ley de volante nueva vienen **encendidos**. Si por algún motivo querés el comportamiento anterior en tu servidor, se apaga con un archivo en `profiles\BZ_AutoDrive\` **con cualquier texto adentro**: `CEREBRO_11.txt` vuelve al cerebro 1.1, `BZ12_SIN_CINTA.txt` corre sin cinta, `BZ12_SIN_FF_PRIMARIO.txt` vuelve a la ley de volante anterior. **Un archivo vacío no hace nada.** Una ruta que no tiene `_cinta.csv` (por ejemplo, una importada de v1) corre sin cinta y lo avisa en el log.
+- **Qué corre por defecto: no tenés que activar nada.** El cerebro de manejo 1.2, la cinta y la ley de volante nueva vienen **encendidos**. Si por algún motivo querés el comportamiento anterior en tu servidor, se apaga con un archivo en `profiles\BZ_AutoDrive\` **con cualquier texto adentro**: `CEREBRO_11.txt` vuelve al cerebro 1.1, `BZ12_SIN_CINTA.txt` corre sin cinta, `BZ12_SIN_FF_PRIMARIO.txt` vuelve a la ley de volante anterior. **Un archivo vacío no hace nada.** Una ruta que no tiene `_cinta.csv` (por ejemplo, una importada de v1) corre sin cinta y lo avisa en el log. El filtro de cliente (§13.4) también viene encendido.
 
 ---
 
@@ -182,9 +182,9 @@ Dos archivos más que conviene conocer:
 ### El menú del wizard
 Arrancás el wizard (doble clic en `Wizard.bat`) y te aparece el menú:
 
-> **[1] Convertir · [2] Importar ruta de BrigadaZ Transport v1 · [3] Merge de tramos (continuar grabación) · [6] Configurar paths · [Q] Salir**
+> **[1] Convertir y binarizar · [2] Importar ruta de BrigadaZ Transport v1 · [3] Merge de tramos (continuar grabación) · [B] Binarizar rutas · [6] Configurar paths · [Q] Salir**
 
-#### [1] Convertir — de grabación a ruta lista
+#### [1] Convertir y binarizar — de grabación a ruta lista
 Agarrás una grabación cruda (`frame_*.csv` + su `header_*.txt` apareado) y el wizard la vuelve una **ruta desplegada y lista en el Reproductor**, en un paso. Lo único que te pide es un **NOMBRE** → la ruta sale como `BZBusRoute_<nombre>` y aparece con ese nombre en el Reproductor. En la lista de grabaciones, cada una trae la etiqueta de la carpeta donde la encontró: `[Cl]` la del cliente, `[A]` la de grabaciones de tu server (`BZ_AutoDrive_PathLogger`, al lado de la carpeta de rutas) y `[B]` la del segundo server, si configuraste uno.
 
 **Qué genera y dónde va.** De una grabación salen **cuatro archivos de la ruta**, todos en tu **carpeta de rutas** (`RoutesDir` — ver `[6]`):
@@ -194,6 +194,7 @@ Agarrás una grabación cruda (`frame_*.csv` + su `header_*.txt` apareado) y el 
 | `BZBusRoute_<nombre>_hdr.json` | el **header**: vehículo, medidas del vehículo, config de manejo y la lista de **eventos** de tus NUMPAD 4 | **sí** — es el archivo que editás |
 | `BZBusRoute_<nombre>_wp.csv` | los **waypoints**, uno por punto de la ruta (unos 900 en una ruta de 10 minutos) | no |
 | `BZBusRoute_<nombre>_cinta.csv` | la **cinta**: tu manejo completo, muestreado fino a lo largo del recorrido —posición, rumbo, velocidad, volante, acelerador, freno y marcha— unas 12 veces más denso que los waypoints. Es de acá que sale la fidelidad: el NPC no interpola entre waypoints, reproduce esto | no |
+| `BZBusRoute_<nombre>_cinta.bin` | el **binario de la cinta**: la misma cinta en el formato que el server lee más rápido. El wizard lo genera al convertir; sin él la ruta funciona igual, con el CSV (§6B) | no |
 | `BZBusRoute_<nombre>.json` | el **master**: header + waypoints en un solo archivo | no, es respaldo |
 
 > **El par que manda es `_hdr.json` + `_wp.csv`.** Si los dos existen, el server carga ese par y **el `.json` completo queda sin usar**. Por eso los eventos van en el `_hdr.json`.
@@ -213,6 +214,14 @@ La ficha se mide sola cuando terminás la toma como dice §7.1, y **el wizard no
 > **Mientras el NPC maneja**, el server escribe además dos cosas en `profiles\BZ_AutoDrive\`: `BZ12_LOG_<ruta>_<hora>.csv`, con el detalle de esa corrida, y `AR_log.csv`, con una fila por cada vez que el AutoRecovery tuvo que intervenir (§9.6). Los podés borrar cuando quieras.
 
 > Te avisa que quedó **desplegada** (carga en caliente, **sin reiniciar**). Si configuraste un 2º server, **copia los archivos de la ruta** allá.
+
+#### [B] Binarizar rutas — el binario de las rutas que ya tenías
+Las rutas convertidas con una versión anterior no tienen `_cinta.bin`, y una cinta que volviste a convertir puede tener uno viejo. **Al abrir el wizard te avisa** si hay algo que hacer (`5 rutas sin binario o desactualizadas: [B] binarizar`); si no, no dice nada.
+- **`[B]`** lista las rutas de tu carpeta con su estado: `al dia`, `sin binario` o `desactualizado` (con el motivo: cambió el CSV, de otra versión del mod, cortado o dañado).
+- Elegís **una por número**, o **`[T]`** para todas las que faltan. Una ruta que no se puede convertir sale en rojo y sigue con la siguiente; **el CSV nunca se toca**.
+- Si tenés un server espejo configurado en `[6]`, el binario se copia allá también, pero **sólo si allá está la misma cinta** (mismo tamaño); si no, avisa y el server espejo sigue con su CSV.
+- **No es obligatorio:** sin binario la ruta carga igual, más lento, y el server lo dice en su RPT (`binario de la cinta descartado: se carga el CSV`).
+
 
 #### [2] Importar ruta de BrigadaZ Transport v1
 ¿Venías usando **BrigadaZ Transport v1** y ya tenés un recorrido grabado? **No lo grabes de nuevo** — esta opción lo trae al formato de BZ_AutoDrive.
@@ -250,18 +259,28 @@ Es una conversión **directa**: `frame_to_route.py` toma tu grabación + su `hea
 
 ## 6B. Los 4 archivos que genera el wizard — qué son y para qué sirve cada uno
 
-Cuando convertís una toma, el wizard no produce un archivo: produce **cuatro**. Es la pregunta que más aparece, y la respuesta corta es que **cada uno se lee en un momento distinto de la vida de la ruta**.
+Cuando convertís una toma, el wizard no produce un archivo: produce **cuatro** (y un quinto opcional, el binario de la cinta). Es la pregunta que más aparece, y la respuesta corta es que **cada uno se lee en un momento distinto de la vida de la ruta**.
 
 ```
-BZBusRoute_<NOMBRE>.json          ~510 KB    la ruta COMPLETA en un archivo: le da el NOMBRE en la lista.
+BZBusRoute_<NOMBRE>.json          ~490 KB    la ruta COMPLETA en un archivo: le da el NOMBRE en la lista.
 BZBusRoute_<NOMBRE>_hdr.json     ~3-12 KB    el CARNET: quien es el vehiculo y que sabemos de el.
-BZBusRoute_<NOMBRE>_wp.csv         ~82 KB    los PUNTOS del camino (una fila por waypoint).
-BZBusRoute_<NOMBRE>_cinta.csv     ~534 KB    tu manejo FIEL, 40 veces por segundo.
+BZBusRoute_<NOMBRE>_wp.csv         ~80 KB    los PUNTOS del camino (una fila por waypoint).
+BZBusRoute_<NOMBRE>_cinta.csv     ~500 KB    tu manejo FIEL, 40 veces por segundo.
+BZBusRoute_<NOMBRE>_cinta.bin     ~350 KB    la misma cinta, en binario: la carga mucho mas rapida (opcional).
 ```
 
-*(Los tamaños son de una ruta real de 1.016 waypoints y 2,8 km. Escalan con el largo.)*
+*(El ejemplo es una cinta de 500 KB, con las proporciones medidas en 41 rutas: el binario pesa unas 7 décimas de la cinta; el master, lo mismo que la cinta; el `_wp.csv`, la sexta parte; el carnet, el 1 %. Por waypoint son unos 0,5 KB de cinta, 0,35 KB de binario y 0,08 KB de `_wp.csv`. Todo escala con el largo de la toma.)*
 
-Los cuatro van juntos en la misma carpeta: `<perfil del server>\BZ_AutoDrive\`.
+Los cuatro —y el binario, si lo tenés— van juntos en la misma carpeta: `<perfil del server>\BZ_AutoDrive\`. Y para no buscarlo por todo el manual, **dónde va cada archivo del framework**:
+
+| archivo | dónde va |
+|---|---|
+| la grabación (`frame_*.csv` + `header_*.txt`) | en el **cliente**, la PC donde manejaste: `%LOCALAPPDATA%\DayZ\BZ_AutoDrive_PathLogger\` (si grabaste en el server, en `<perfil del server>\BZ_AutoDrive_PathLogger\`) |
+| la ruta (`.json`, `_hdr.json`, `_wp.csv`, `_cinta.csv` y `_cinta.bin`) | `<perfil del server>\BZ_AutoDrive\`, todos juntos (es tu `RoutesDir` del wizard) |
+| la ficha del vehículo (`envelope_<clase>.csv`, §6C) | `<perfil del server>\BZ_AutoDrive\`, al lado de las rutas |
+| la configuración (`BZAutoDrive_settings.json`, §13.1) | `<perfil del server>\BZ_AutoDrive\`; si no existe, el server la crea con los valores por defecto en el primer arranque |
+| los logs de las corridas (`ai_run_*.csv`, `boris_native_*.csv`) | en el server que las corrió: `<perfil del server>\BZ_AutoDrive_PathLogger\` |
+| la memoria del wizard (`wizard_config.json`: tus carpetas) | al lado del script del wizard, en `tools\`; no viene en el paquete: cada admin arranca sin él y el wizard le pide sus carpetas la primera vez |
 
 ### El master — `BZBusRoute_<NOMBRE>.json`
 
@@ -307,6 +326,15 @@ WpRows  CintaRows   cuantas filas tienen los otros dos archivos
 
 > **Por qué por distancia y no por tiempo.** Porque el NPC no repite tu reloj: repite tu **recorrido**. Si esperaste 6 segundos en un semáforo, eso no se reproduce solo — la espera se pone con un evento (§10).
 
+### El binario de la cinta — `_cinta.bin` *(desde la 1.3, opcional)*
+
+**Qué es.** Una copia de `_cinta.csv` que el server carga mucho más rápido: los mismos números, ya en el formato en que los lee. Lo crea el wizard al convertir («Convertir y binarizar»), y `[B]` lo genera para las rutas que ya tenías.
+
+**Para qué sirve.** Leer la cinta era la fase más larga de la carga. Con el binario esa fase pesa una fracción, y lanzar o relanzar varias rutas cuesta menos cuadros.
+
+**Se puede borrar sin perder nada:** sin él, el server carga el CSV. Y si el binario no corresponde a su CSV (cambiaste la cinta, o viene de otra versión del mod), el server lo descarta solo, carga el CSV y lo dice en el RPT: `[CARGA] <ruta>: binario de la cinta descartado (<motivo>): se carga el CSV`. **Después de actualizar el mod, abrí el wizard:** si avisa que hay rutas sin binario o desactualizadas, tocá `[B]` y después `[T]`.
+
+
 ### ★ Por qué cuatro y no uno
 
 Por una razón concreta y medida: **cargar una ruta entera en un solo cuadro cuelga el servidor.**
@@ -325,13 +353,13 @@ la cinta      se carga por tajadas; es la fase mas larga
 
 ### Preguntas frecuentes
 
-**¿Puedo borrar alguno?** No. Sin `_wp.csv` la ruta la maneja el cerebro 1.1; **sin `_cinta.csv` el NPC sigue el camino pero ya no reproduce tu manejo** (corre sin cinta); sin `_hdr.json` el servidor carga el master entero, que es lento y **congela el servidor** mientras lo lee; y sin el master la ruta no aparece en la lista. Una ruta que se carga por el master entero lo avisa en el RPT, y también a los admins conectados (`… is in the old format (no _wp.csv): loading it froze the server for N s…`): volvé a convertir la toma con el Wizard.
+**¿Puedo borrar alguno?** No. Sin `_wp.csv` la ruta la maneja el cerebro 1.1; **sin `_cinta.csv` el NPC sigue el camino pero ya no reproduce tu manejo** (corre sin cinta); sin `_hdr.json` el servidor carga el master entero, que es lento y **congela el servidor** mientras lo lee; y sin el master la ruta no aparece en la lista. Una ruta que se carga por el master entero lo avisa en el RPT, y también a los admins conectados (`… is in the old format (no _wp.csv): loading it froze the server for N s…`): volvé a convertir la toma con el Wizard. **El binario (`_cinta.bin`) sí se puede borrar:** sin él, el server carga el CSV.
 
 **¿Puedo editarlos a mano?** El master y el carnet son JSON y se dejan. **La cinta no se toca**: es una medición, no una configuración. Si algo de tu ruta no te gusta, la respuesta es **volver a grabarla**, no corregir los números.
 
 **¿Puedo usar esta ruta con otro vehículo?** No conviene, y la razón está en el carnet: la toma trae el *fingerprint* y las mediciones **de ese vehículo**. Si querés la misma ruta con otro auto, **grabala con ese auto** — te va a salir mejor que cualquier adaptación, porque el framework aprende de lo que grabás (§6C).
 
-**¿Los tengo que copiar a mano?** No: el wizard los deja donde van. Sólo asegurate de copiar **los cuatro** si movés una ruta de un servidor a otro.
+**¿Los tengo que copiar a mano?** No: el wizard los deja donde van. Sólo asegurate de copiar **los cuatro, y el binario si lo tenés,** si movés una ruta de un servidor a otro (van todos en la misma carpeta); sin el binario, `[B]` lo rehace del otro lado.
 
 ---
 
@@ -420,12 +448,12 @@ El NPC va a manejar **tan bien como manejaste vos** — la grabación es su manu
 
 ### 7.1 — Cómo terminar la toma (de esto depende que el NPC llegue exacto)
 
-Al final de la toma, **en llano**: frená, **soltá todo** —acelerador, freno y freno de mano— y **esperá a que el motor baje a ralentí**. Son dos o tres segundos, más en un deportivo. Recién ahí cortá con **NUMPAD 5**, con el motor encendido.
+Al final de la toma, **terminá en recta**: los últimos metros con el volante derecho, frenando hasta detenerte, y cortá con **NUMPAD 5** con el motor encendido. **El final puede quedar en cuesta**: el NPC llega igual, también en subida.
 
-En esos segundos el framework mide cuánto avanza el vehículo solo, sin acelerador. Esa medición es la que le permite clavar el punto final. Sin ella usa un valor estimado y la llegada se corre.
+**Si el final es en llano**, antes de cortar **soltá todo** —acelerador, freno y freno de mano— y **esperá a que el motor baje a ralentí**: son dos o tres segundos, más en un deportivo. En esos segundos el framework mide cuánto avanza el vehículo solo, sin acelerador. Esa medición es la que le permite clavar el punto final. Sin ella usa un valor estimado y la llegada se corre. **Si el final es en cuesta, mantené el freno de pie pisado** mientras cortás (si soltás, el vehículo rueda hacia atrás y eso queda grabado) y hacé esa medición en un tramo llano de la toma (§7.2).
 
 - **El freno de mano no sirve para esto:** con el freno de mano puesto no se puede medir si el vehículo avanza solo.
-- **En pendiente no se mide** (ver abajo).
+- **En pendiente no se mide** (la medición exige menos de unos 3° de inclinación): vale en cualquier tramo llano de la misma toma, o en una toma corta en llano del mismo vehículo.
 - **Alcanza con hacerlo una vez por vehículo.** El wizard guarda la medición por vehículo (`envelope_<clase>.csv`) y no la pisa en las tomas siguientes del mismo vehículo. Para rehacerla: `tools\python\python.exe tools\envelope_emit.py "<toma.csv>" --out "<RoutesDir>" --pisar`.
 
 ### 7.2 — Cómo parar (paradas intermedias)
@@ -581,11 +609,21 @@ class CustomMission: MissionServer
 **Lo que tenés que saber:**
 - **`SetHoldAtStops(false)`.** Con `true` —el default de `PlayRouteByName`— el vehículo se queda en cada parada hasta que alguien llame a `ResumeFromHold()`: desde un `init.c` quedaría parado para siempre en la primera.
 - **Un runner propio por ruta**, no `PlayRouteByName`: así cada uno se retira solo al terminar y lo podés dar de baja con `UnregisterRunner`. Sale en el panel con su etiqueta, y desde ahí también lo podés parar.
-- **Si termina mal** (`ROUTE_INCOMPLETE`, `STUCK`), el vehículo queda quieto: retiralo vos, como en el ejemplo.
+- **Si termina mal** (`ROUTE_INCOMPLETE`, `STUCK`), el vehículo queda quieto: retiralo vos, como en el ejemplo. *(Desde la 1.3, si no lo retirás vos ni leés el fin en 60 s, el framework lo retira solo: §B.7.)*
 - **Si el punto de salida está ocupado**, el runner espera a que se libere (`RunnerEsperandoCabecera()`): en una cadena de ida y vuelta, la vuelta sale cuando se retira el vehículo de la ida.
 - **Para un servicio que da vueltas para siempre**, dejá esa ruta como la ruta por defecto del server (§8), o relanzala cuando termine con el mismo esquema de la cadena.
 - **Los eventos de cada ruta** (§10) funcionan igual: el `init.c` decide cuándo arranca cada una; lo que pasa adentro lo ponen sus `Events`.
 - **Un error en el `init.c` no deja arrancar la misión.** Mirá el RPT (`Can't compile`). Valen las reglas de Enforce del Apéndice B.5: no hay operador ternario, `new` va sin argumentos, etc. La API completa (estado, pausa, eventos) está en el Apéndice B.7.
+
+### 8.3 — Qué pasa al final de la cinta *(desde la 1.3)*
+
+Cuando una corrida termina —llegó, no llegó o quedó trabada— y antes de que el framework retire o relance el vehículo:
+
+- **El jugador que viajaba sentado baja solo**, con la animación de siempre y **sin aviso**. Si querés avisarle, poné un evento `ui_broadcast` en el último waypoint (§10).
+- **Desde ese momento nadie sube.** El vehículo queda **cerrado a jugadores** (el cierre de Expansion: el cliente ni ofrece «subir») hasta que el framework lo borra. Lo mismo con el **STOP del panel** y en cualquier **retiro**: primero cierra, después baja al que esté sentado, y recién vacío borra. Si el retiro llega a su tope y deja el vehículo en el mundo, lo **reabre** como estaba.
+- **La moto también:** la bajada y el cierre son los mismos.
+- El retiro **nunca** borra un vehículo con un jugador sentado o subiendo: lo baja y espera.
+- **Si programás un mod:** el FIN baja a los jugadores. Para **conservar pasajeros entre cintas** (un comercio que viaja con gente a bordo, un taxi que encadena viajes), **retené el vehículo con `HoldRunner()` antes del final** (B.7.3) y seguí desde ahí, como hace un servicio de comercio: el hold no baja a nadie ni cierra el vehículo; el FIN, sí.
 
 ---
 
@@ -789,7 +827,7 @@ Grabás, convertís y lanzás igual que con un auto. Lo que cambia es cómo la m
 
 ### 9B.2 — Cómo grabar en moto
 
-Igual que un auto: **NUMPAD 5** para empezar y para terminar (§5, §7). Subite, prendé el motor, grabá, manejá y terminá **detenido**.
+Igual que un auto: **NUMPAD 5** para empezar y para terminar (§5, §7). Subite, prendé el motor, grabá, manejá y terminá **detenido**. **Terminá en recta**: los últimos metros con el manubrio derecho, frenando hasta detenerte. Si terminás doblando a paso de hombre, la moto puede quedar a medio metro del punto (§7.1).
 
 **Caminar la moto vale.** Si la sacás de un lugar caminándola hacia atrás, o caminás un tramo corto hacia adelante, grabalo así, con el motor prendido. El wizard detecta esos tramos (`[moto] caminando: … se reproduce por empuje`) y el NPC los repite **a tu velocidad**, empujando la moto con el chofer sentado. Se ve caminando, con la animación del juego, **hacia atrás y hacia adelante**. Si la doblaste mientras la empujabas (por ejemplo, sacándola marcha atrás y encarándola para otro lado), el NPC reproduce ese giro y corrige si se corre de la línea. Después respeta la espera que hayas hecho y arranca en primera, a fondo.
 
@@ -1085,7 +1123,7 @@ Reproduce un sonido **una vez**, en 3D, pegado al vehículo (se mueve con él). 
   ```
 - **Trampas:**
   - Durante la espera de arranque (spawn-hold) el congelado todavía no manda: esa fase va primero (motor encendido, freno puesto) y el vehículo pasa a manejar igual; recién ahí queda clavado. Un evento al principio de la ruta con `freeze_vehicle` funciona, pero un `stop_engine` al mismo tiempo se deshace (ver `stop_engine`).
-  - `guard_stop` usa el **mismo** congelado: al terminar lo suelta, aunque vos hayas congelado aparte.
+  - `guard_stop` con la parada dura (sin el cerebro 1.2) usa el **mismo** congelado: al terminar lo suelta, aunque vos hayas congelado aparte. Con el 1.2 frena suave y no lo toca.
   - Los eventos se siguen revisando con el vehículo congelado: un `timer` o un `player_in_radius` pueden soltarlo.
 - **Cerebro 1.2:** sí. Con el vehículo congelado el actuador del 1.2 se hace a un lado y se aplican freno y freno de mano.
 
@@ -1099,7 +1137,7 @@ Suelta el congelado de `freeze_vehicle`: saca el freno de mano y el vehículo re
   ```json
   { "verb": "unfreeze_vehicle", "delay": 10 }
   ```
-- **Trampas:** también suelta el congelado de un `guard_stop` en curso: el vehículo se va con los guardias afuera.
+- **Trampas:** también suelta el congelado de un `guard_stop` **duro** en curso: el vehículo se va con los guardias afuera.
 - **Cerebro 1.2:** sí.
 
 ##### `stop_route`
@@ -1317,7 +1355,7 @@ Baja a la **tripulación** (los bots de `Crew`) que esté sentada, salvo el que 
 
 La **parada con escolta entera** en un solo verbo:
 
-1. **Congela** el vehículo y espera a que baje de 3 km/h (mira cada 0,5 s, hasta 10 s; pasado eso despliega igual).
+1. **Frena.** Con el cerebro 1.2, una **parada suave**: sigue la línea y frena hasta quedar quieto en un punto unos metros adelante (si la toma tiene una parada grabada ahí, en ella), y el despliegue arranca con el vehículo quieto. Sin el 1.2, en moto, o si la suave no se puede en ese momento (una recuperación en curso, el final pegado), **congela** el vehículo y espera a que baje de 3 km/h (mira cada 0,5 s, hasta 10 s; pasado eso despliega igual).
 2. **Despliega**: igual que `dismount_guard`, pero con el anillo de `radius` metros (correa 2 m más afuera).
 3. **Espera** y sale por la primera de estas tres:
    - **zona limpia**: pasaron `holdS` segundos **y** van `clearS` segundos seguidos sin combate;
@@ -1325,7 +1363,7 @@ La **parada con escolta entera** en un solo verbo:
    - **tope**: pasaron `maxS` segundos, pase lo que pase.
 4. **Repliegue**: los vivos caminan de vuelta a sus asientos, hasta el vehículo donde esté.
 5. **Embarque**: espera a que estén todos los vivos sentados, o `boardS` segundos como máximo. El que no llegó, **se queda**.
-6. **Descongela** y la ruta sigue.
+6. **Suelta la parada** y la ruta sigue desde ahí.
 
 "Combate" es: algún bot de la tripulación con amenaza alta (el mismo umbral con que eAI entra a pelear) o el grupo en combate.
 
@@ -1335,10 +1373,11 @@ La **parada con escolta entera** en un solo verbo:
   { "verb": "guard_stop", "radius": 10, "holdS": 30, "clearS": 5, "maxS": 180, "boardS": 40, "unreachableS": 15 }
   ```
   `{ "verb": "guard_stop" }` solo ya anda con los defaults.
-- **Qué ves en el log:** `[MISION] wp N: guard_stop · radio ... -> freeze y espero la parada`, `despliegue X/Y`, `combate -> retengo`, `zona limpia tras ... -> repliegue` (o `amenaza fuera de la correa` o `tope de`), `embarcados X/Y ... -> sigue`.
+- **Qué ves en el log:** `[MISION] wp N: guard_stop · parada SUAVE (siguiendo la linea hasta el hold) · radio ...` (o `parada DURA (congelado)`), `despliegue X/Y`, `combate -> retengo`, `zona limpia tras ... -> repliegue` (o `amenaza fuera de la correa` o `tope de`), `embarcados X/Y ... -> sigue`.
 - **Trampas:**
   - Necesita tripulación declarada en `Crew` del header. Sin `Crew` no baja nadie: el vehículo queda parado unos `holdS` segundos y sigue *(sale del código; no probado en juego)*.
-  - Usa el **mismo** congelado que `freeze_vehicle`: al terminar lo suelta aunque vos lo hayas congelado aparte, y un `unfreeze_vehicle` en el medio suelta el vehículo con los guardias afuera.
+  - Con la parada **dura** usa el **mismo** congelado que `freeze_vehicle`: al terminar lo suelta aunque vos lo hayas congelado aparte, y un `unfreeze_vehicle` en el medio suelta el vehículo con los guardias afuera. Con la parada suave (cerebro 1.2) el congelado no se toca.
+  - **Dónde ponerlo** *(medido)*: un `guard_stop` donde la toma no frena, justo antes de una rampa final, deja al vehículo sin el envión de la toma para subirla (una cuesta del 8-10 % en los últimos metros lo clavó 6 de 7 veces). Ponelo en llano y lejos del final, o mejor: **marcá la parada con NUMPAD 4 al grabar** y el vehículo frena como vos.
   - Mientras la tripulación re-embarca, los eventos no se revisan.
   - La facción del grupo desplegado es la del primer bot de `Crew`; el campo `faction` de los demás no se usa. Con `Deploy.IgnoreInfected` (por defecto `true`), los guardias y los infectados se ignoran entre sí.
 - **Cerebro 1.2:** sí (funciona sobre el mismo congelado).
@@ -1858,6 +1897,11 @@ Si se aprieta Load otra vez sobre una ruta que ya está en marcha, **no se lanza
 
 El número se queda quieto un momento al terminar la ruta y sigue con la cinta: es un % de lo leído, no una barra inventada, y no marca 100 hasta que la carga terminó de verdad.
 
+**Desde la 1.3, además, todo lo pesado hace fila.** No sólo la carga: crear el vehículo, el chofer y cada bot de la tripulación, el embarque, el retiro y los pasos de armado del cerebro pasan por **una sola puerta, una operación por cuadro**, en orden de llegada. Dos cosas pesadas ya no caen en el mismo cuadro, ni al lanzar quince rutas juntas: cada una tarda unos cuadros más, y el server no lo siente. En el RPT se ve como `[EMBUDO] <ruta> <operación>: X ms · espero N cuadro(s)`.
+
+**Y una toma ya leída no se vuelve a leer.** Al relanzar una ruta (un servicio que da vueltas, un mod que lanza el mismo recorrido cada tanto), sus waypoints salen de la memoria del server, con una copia por vehículo: `[CACHE] <ruta>: N waypoints copiados de la cache, sin abrir el CSV`. Se vuelve a leer sólo si el archivo cambió (lo compara por tamaño y huella; el header, entero). **La primera lectura** va en tajadas de pocos milisegundos: `[LOADTIME] ... X ms de trabajo en N tajada(s)`.
+
+
 **La perilla** (opcional) va en `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`:
 
 ```json
@@ -1881,6 +1925,8 @@ Si alguna plaza no se llena (un bot que murió al aparecer, uno que no encuentra
 [MUSTER] TOPE de 120 s: arranca con 2/3 plazas ocupadas -- 1 bot(s) no subieron
 ```
 
+**Antes del tope hay una red** *(desde la 1.3)*: si a los **15 s** un bot vivo sigue a pie **con todo lo que necesita para subir** (la formación, el chofer sentado, una plaza libre con la puerta despejada, sin amenaza), el framework lo **sienta por teleport** en la primera plaza libre y sigue: `[MUSTER] RED a los 15 s: el bot 0 no subio con las condiciones de eAI cumplidas -> teleport a la plaza 1`. Un vehículo con una puerta que el bot no resuelve (medido en un blindado) deja de costar dos minutos. El tope de 120 s queda para lo que la red no resuelve: amenaza, sin plazas, sin chofer. Cada línea `[MUSTER]` lleva el nombre de la ruta.
+
 - `CrewBoardTimeoutS` — segundos de espera antes de salir igual; va en el mismo `BZAutoDrive_settings.json`. Default **120**. Es una **red de seguridad, no una perilla de tuning**: tiene que estar lejos de lo que tarda un embarque sano. Si ves `[MUSTER] TOPE` en corridas normales, el problema no es el número.
 
 
@@ -1890,6 +1936,13 @@ Si alguna plaza no se llena (un bot que murió al aparecer, uno que no encuentra
 [CARGA] PATRULLA LISTA: 1193 wps + 19075 frames de cinta en 264 tajadas / 8200 ms de reloj
 [CARGA] PATRULLA reparto: leer ruta 358 ms · armar ruta 330 ms · leer cinta 1105 ms · armar cinta 12 ms · PEOR TAJADA 6.1 ms
 ```
+
+**Cuánto le pesa a tu server** *(medido con 20 vehículos a la vez)*. No te damos fps ni milisegundos: dependen de tu procesador y de tus mods, y un número medido en otra máquina no te sirve. Lo que vale en cualquier server es la **proporción** contra algo que ya corre en él:
+
+- **Un vehículo en ruta pesa más o menos como tres bots de eAI sentados, más su propio chofer** (que es un bot más). Si tu server es más lento, los dos se vuelven más lentos en la misma proporción. La comparación es contra un bot **sentado**: uno caminando o peleando pesa más que eso.
+- **Crece parejo:** cada vehículo suma lo mismo, tengas 5 o 20. No hay un punto donde el framework se dispare.
+- **Lo pesado va de a uno:** cargar una ruta, crear el vehículo, el chofer y la tripulación, embarcar y retirar pasan por una sola puerta, **una operación por cuadro**, haya los vehículos que haya. Lo único que se puede llegar a notar es el motor creando el vehículo cuando sale una vuelta nueva, y nunca caen dos juntos en el mismo cuadro.
+- **Probado con hasta 20 vehículos a la vez.** Si tu server ya va justo con sus bots, contá cada vehículo como cuatro bots sentados más.
 
 ### 13.3 — Notificaciones: quién ve qué
 
@@ -1936,6 +1989,23 @@ Y por chat, a los que van arriba: `{ "verb": "ui_broadcast", "value": "passenger
 ---
 
 
+### 13.4 — Los vehículos se ven suaves: el filtro de cliente *(desde la 1.3)*
+
+Un vehículo que maneja el framework lo mueve el server; cada jugador lo recibe por red, y la orientación llega **en escalones** aunque el vehículo gire parejo. Se veía como un temblor constante, sobre todo parado arriba de un bus o mirándolo de cerca.
+
+**Desde la 1.3 el cliente suaviza lo que dibuja**, y nada más: ni la posición, ni la velocidad, ni la física, ni el manejo. El server marca qué vehículos maneja; el filtro corre sólo sobre esos, sólo en el cliente, y un vehículo con un **jugador al volante** no se filtra. Viene **encendido** y no hay que configurar nada.
+
+**Para apagarlo** (para todos los jugadores, también los que entran después), en `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`:
+
+```json
+{
+  "DisableClientVehicleSmoothing": true
+}
+```
+
+Si se apaga, los vehículos se ven como antes de la 1.3.
+
+
 ## 14. Audio (.ogg) — ponerle voz a tus eventos
 
 Con el verbo `play_sound` (en un evento NUMPAD 4) reproducís un audio **3D pegado al vehículo**. El audio lo ponés vos en tu addon:
@@ -1969,6 +2039,19 @@ Algunos clásicos (el detalle fino + más casos están en el **AI knowledge pack
 > **Tip de performance — correr el server en otra PC.** Si iterás mucho (grabás, convertís, probás), conviene **correr el server en una 2da PC** mientras tu PC principal corre el **cliente del juego + el wizard y las herramientas**. Así ninguna de las dos se ahoga y las corridas salen más fluidas. Para usarlo: *copiás* el `@BZ_AutoDrive` al 2do server (el mismo que usa tu cliente) y configurás su carpeta de rutas en **[6] Configurar paths**: el wizard le copia las rutas al convertir.
 
 ---
+
+**Líneas nuevas del RPT desde la 1.3, y qué significan:**
+
+| Línea | Qué pasó |
+|---|---|
+| `[CACHE] <ruta>: N waypoints copiados de la cache, sin abrir el CSV` | la toma ya estaba leída: el relanzamiento no leyó el archivo |
+| `[CACHE] <ruta>: la toma o su header cambiaron ... se relee` | cambiaste el `_wp.csv` o el `_hdr.json`: se lee de nuevo y se reemplaza |
+| `[CARGA] <ruta>: binario de la cinta descartado (<motivo>): se carga el CSV` | falta el `_cinta.bin`, o no corresponde a su CSV: la ruta anda igual; `[B]` en el wizard lo rehace |
+| `[EMBUDO] <ruta> <operación>: X ms · espero N cuadro(s) · quedan P` | una operación pesada esperó su turno; normal al lanzar varias rutas juntas |
+| `[C12] RED: nadie leyo el FIN en 60 s ... -> retiro` | una ruta lanzada por un mod terminó mal y nadie la reclamó: el framework la retiró |
+| `[C12] RED: FIN visto hace N s y el vehiculo sigue` | un mod leyó el fin de esa ruta y no hizo nada con el vehículo (cada 5 min) |
+| `[CLEANUP] ... paso 5: N ocupante(s) sentado(s) -> el vehiculo NO se borra` | hay un jugador sentado: el retiro espera a que baje |
+
 
 ### 15.1 — AI logger — la caja negra de Boris (ai_run)
 
@@ -2094,7 +2177,7 @@ Para que sepas qué pedirle al framework y qué no:
 - **Maniobras (parking / reversa / K-turn):** el **intercambio reversa→forward** —el punto más exigente del control, un K-turn adentro de un galpón— está **resuelto**: se **auto-detecta del cambio de sentido** que hiciste al grabar (no hace falta marcarlo — §9.4), funciona con reglas físicas y **sin constantes por-vehículo**, y se probó en un banco amplio (Golf FWD, BMW E60, OffroadHatchback, Hatchback FWD, Porsche GT2RS motor-central, Sedan, Toyota 86 RWD y el camión Truck_01) con **0 rescates de AutoRecovery**.
   **La condición es tuya y es una sola: hacé el cambio de sentido en recta, no en curva** (§9.5). Los ángulos de volante de la reversa son del vehículo, no del camino.
   **Para la misma ruta en otro vehículo, grabala con ese vehículo** — con una maniobra de por medio es lo único que generaliza.
-- **Precisión de llegada (endpoint).** El freno final se arma con lo que declara el config del vehículo y lo que se midió de él (cuanto más rápido llega, antes se arma: con la distancia de frenado que pide su velocidad real, más un margen), y **estaciona unos 10 cm antes del punto**, a propósito. El freno se planea con **la frenada que mediste vos en la toma** cuando la toma termina frenando a fondo (`[C12] FRENADA de la toma: 5.4 m/s2 …` en el RPT): el freno que declara el config suele ser optimista. De una moto a un bus, la misma regla: no se relaja por tamaño, porque el framework tiene que servir para vehículos que todavía no conocemos. **Los números, vehículo por vehículo, en §17.1.**
+- **Precisión de llegada (endpoint).** El freno final se arma con lo que declara el config del vehículo y lo que se midió de él (cuanto más rápido llega, antes se arma: con la distancia de frenado que pide su velocidad real, más un margen), y **queda a unos 10 cm del punto**: apunta al punto, y ahí es donde lo deja el freno real. El freno se planea con **la frenada que mediste vos en la toma** cuando la toma termina frenando a fondo (`[C12] FRENADA de la toma: 5.4 m/s2 …` en el RPT): el freno que declara el config suele ser optimista. De una moto a un bus, la misma regla: no se relaja por tamaño, porque el framework tiene que servir para vehículos que todavía no conocemos. **Los números, vehículo por vehículo, en §17.1.**
 - **El veredicto: cuándo una ruta está completa** *(desde la 1.2.1)*. El fin de ruta se decide **con el vehículo quieto**: medio segundo después de detenerse (a lo sumo unos 3 s después de llegar) sale `[C12] REPOSO tras T s: a X m de la pose final (longitudinal a m, lateral l m)`, y enseguida el `FIN`. `ROUTE_COMPLETE` exige **las tres**: (1) en reposo, a **0,25 m o menos** del punto final de la toma; (2) **ningún choque contra un objeto** en toda la corrida (un bache o un golpe contra el terreno no cuentan); (3) **ninguna intervención física del AutoRecovery** (maniobra o re-ubicación; los re-arranques suaves no cuentan, pero se listan). Si falla alguna, `ROUTE_INCOMPLETE`, y la misma línea dice por qué: `quedo a X m de la pose final en reposo`, `choco contra un objeto: wp N contra <clase>`, `AR fisico con accion: wp N <accion>`. Vale igual para autos y motos. *(En la 1.2 una llegada entre 0,25 m y 1 m contaba como completa con un aviso: ya no.)*
 - **Qué vehículos probamos.** Más de 40 clases de varios autores: autos, deportivos, 4x4, furgones, buses, camiones (hasta 7,5 m de batalla), militares, tractores y motos (§17.1).
 - **Lo que NO hace:** no inventa rutas (necesita tu grabación) ni descubre comportamiento más allá de lo que demostraste. Es determinista e inspeccionable — esa es su gracia.
@@ -2106,12 +2189,32 @@ Para que sepas qué pedirle al framework y qué no:
 Estos números salen de los logs del servidor de pruebas, **con el cerebro 1.2**. Cada fila es un vehículo y cada "llegada" es una corrida que terminó su ruta; la distancia es la que quedó entre el vehículo y el punto final grabado.
 
 **Cómo leerla:**
-- **La mediana ronda los 0,10-0,20 m a propósito.** El freno final estaciona unos **10 cm antes** del punto: pasarse es peor que quedarse corto. El objetivo es **0,25 m**: desde la 1.2.1, más que eso en reposo es `ROUTE_INCOMPLETE` (el veredicto, arriba). *(Los números de esta tabla son de la 1.2; con la 1.2.1, en las rutas de prueba, las llegadas quedan en 0,10-0,15 m.)*
+- **La mediana ronda los 0,10-0,12 m.** El freno apunta al punto y queda a unos **10 cm**, que es donde lo deja el freno real. El objetivo es **0,25 m**: desde la 1.2.1, más que eso en reposo es `ROUTE_INCOMPLETE` (el veredicto, arriba). *(La primera tabla es de la 1.3; las dos de abajo, de la 1.2.1 y la 1.2, quedan como historia.)*
 - **p90** = 9 de cada 10 llegadas quedaron a esa distancia o menos.
 - **Las corridas que no llegaron no están en la tabla**: se cuentan aparte, abajo.
 - Una corrida repetida desde el mismo punto de salida puede dar casi el mismo número: más llegadas no siempre son más variedad.
 
-**Con la llegada en su versión actual (desde el 17/09/2026).** 52 llegadas: mediana **0,11 m**, **87 %** dentro de 0,25 m, ninguna a más de 0,36 m. En ese período, 7 corridas no llegaron (vehículo trabado sin salida, o chofer muerto).
+**Con la 1.3 (noviembre de 2026): un circuito de montaña con subidas, 13 vehículos a la vez y, en la mitad de las corridas, restos de vehículos sobre la ruta.** 227 llegadas: mediana **0,11 m**, **97 %** dentro de 0,25 m. Autos, 4x4, camión y blindado cierran todos a **0,10-0,15 m** de mediana, también los pesados y en cuesta; de sus 159 llegadas, una sola quedó a más de 0,25 m (el blindado, después de chocar con un cisterna del evento). Las motos cierran con su propio conductor (§12): dos de ellas a 0,02 y 0,19 m fijos; la `Motorbike_01` llega a 0,02-0,05 m cuatro veces de cada diez y a 0,4-0,7 m las otras seis, entrando torcida (5-12°).
+
+| Tipo | Vehículo (clase) | Llegadas | Mediana | p90 | Dentro de 0,25 m |
+|---|---|---|---|---|---|
+| auto | `Sedan_02` | 20 | 0,10 m | 0,10 m | 100 % |
+| auto | `minicooper` | 18 | 0,11 m | 0,11 m | 100 % |
+| auto | `V140` | 18 | 0,11 m | 0,11 m | 100 % |
+| deportivo | `rx8hachi` | 14 | 0,11 m | 0,11 m | 100 % |
+| deportivo | `Star_Agera` | 12 | 0,15 m | 0,16 m | 100 % |
+| 4x4 / pickup | `Expansion_Landrover` | 17 | 0,10 m | 0,10 m | 100 % |
+| 4x4 / pickup | `Star_Jeep_Rubi_Extra` | 18 | 0,11 m | 0,17 m | 100 % |
+| 4x4 / pickup | `Star_Chevrolet_Z71` | 14 | 0,11 m | 0,13 m | 100 % |
+| camión | `Star_Oshkosh_M1083` | 16 | 0,12 m | 0,14 m | 100 % |
+| militar | `Star_APC_Cobra_camoorange` | 12 | 0,10 m | 0,11 m | 92 % |
+| moto | `Motorbike_02_Yellow` | 26 | 0,02 m | 0,03 m | 100 % |
+| moto | `Motorbike_02_Red` | 32 | 0,19 m | 0,19 m | 100 % |
+| moto | `Motorbike_01_Blue` | 10 | 0,43 m | 0,56 m | 40 % |
+
+*La `Motorbike_01_Blue` sale de una toma que termina doblando a paso de hombre: por eso queda lejos. Con una toma que termina en recta (§7.1) cierra a centímetros.*
+
+**Con la 1.2.1 (desde el 17/09/2026).** 52 llegadas: mediana **0,11 m**, **87 %** dentro de 0,25 m, ninguna a más de 0,36 m. En ese período, 7 corridas no llegaron (vehículo trabado sin salida, o chofer muerto).
 
 | Tipo | Vehículo (clase) | Llegadas | Mediana | p90 | Dentro de 0,25 m |
 |---|---|---|---|---|---|
@@ -2561,7 +2664,7 @@ Lo que tenés que saber:
 - **Qué pasa cuando la ruta se cierra** (`RunnerRouteEnded()`). Depende de cómo terminó y de cómo la lanzaste:
   - **`ROUTE_COMPLETE` de un runner lanzado con `RespawnFromPath`** (el camino B, y también el Reproductor): el vehículo **se retira** a los `EndHoldSeconds` segundos (0 = en el acto) y el runner **sale del registro**.
   - **`ROUTE_COMPLETE` de una ruta lanzada con `PlayRouteByName`** (o la ruta por defecto del server): se **re-lanza** a los `RespawnDelay` segundos (`0` vale 60 s).
-  - **`ROUTE_INCOMPLETE` o `STUCK`:** el vehículo **queda quieto**, sin ciclo. Retirarlo, reponerlo o dejarlo es de tu mod.
+  - **`ROUTE_INCOMPLETE` o `STUCK`:** el vehículo **queda quieto**. Retirarlo, reponerlo o dejarlo es de tu mod. **Desde la 1.3 hay una red:** si **nadie lee el fin** (`RunnerRouteEnded()`, `RunnerRouteCompleted()` o `RunnerEndReason()`) en **60 s**, el framework lo retira solo, como una ruta del panel (y nunca con un jugador a bordo: espera). Si tu mod **leyó el fin** queda a cargo: la red no lo toca, y el RPT avisa cada 5 minutos (`[C12] RED: FIN visto hace N s y el vehiculo sigue`) por si lo olvidaste. Si lo lanzaste desde el panel o es la ruta por defecto, concluye solo (se retira o respawnea como una completa).
   - Con `holdAtStops`, al llegar a la última parada el vehículo queda quieto en el hold hasta que lo sueltes.
 - **Cuál usar:** A para un viaje que dispara otro sistema (un taxi, una misión); B para un servicio con varios vehículos y reglas propias.
 
@@ -2586,7 +2689,7 @@ Lo que tenés que saber:
 | `RunnerBloqueadoMotivo()` / `RunnerBloqueadoDesdeS()` | por qué (con el último choque, si hubo) / desde hace cuántos segundos |
 | `RunnerRecuperando()` / `RunnerRecuperandoQue()` | `bool`: cualquier recuperación en curso (arranque en pendiente, alejarse, re-ubicarse, escalera) / cuál. Responde "¿va a poder moverse ahora?". Siempre que `RunnerBloqueado()` es `true`, éste también |
 | `RunnerChoqueHaceS()` | `float`: segundos desde el último choque de ese vehículo (`-1` si no chocó). Sirve para que **los dos** vehículos de un choque aparezcan, aunque sólo uno quede bloqueado |
-| `RunnerEsperandoCabecera()` / `RunnerEsperandoCabeceraS()` | `bool`: espera que se libere su punto de salida / desde hace cuántos segundos |
+| `RunnerEsperandoCabecera()` / `RunnerEsperandoCabeceraS()` | `bool`: espera que se libere su punto de salida / desde hace cuántos segundos | *(Desde la 1.3 también es `true` los pocos cuadros entre pedir el lanzamiento y crear el vehículo: la lectura y el spawn esperan su turno. Para distinguirlo, `RunnerEnEmbudo()`.)*
 
 Con el cerebro 1.1 (`RunnerFellBackTo11()`), los de bloqueo, recuperación y choque devuelven "nada".
 

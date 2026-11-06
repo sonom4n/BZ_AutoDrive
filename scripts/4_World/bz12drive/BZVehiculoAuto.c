@@ -182,4 +182,8 @@ class BZVehiculoAuto : BZVehiculo {
     override void BloquearPiezas(bool bloqueadas) {
         if (m_CarScript) m_CarScript.BZSetPartsLocked(bloqueadas);
     }
+
+    override void MarcarFiltroCliente(bool marca) {
+        if (m_CarScript) m_CarScript.BZSetFiltroMarca(marca);
+    }
 }

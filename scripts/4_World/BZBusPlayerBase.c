@@ -66,6 +66,12 @@ modded class PlayerBase {
         return BZBusService.GetInstance().IsControlPanelAdmin(sid);
     }
 
+    // la sync juncture de bajar (BZBajar): llega al cliente dueno y al server en el mismo paso; en los dos, GetOutVehicle
+    override void OnSyncJuncture(int pJunctureID, ParamsReadContext pCtx) {
+        super.OnSyncJuncture(pJunctureID, pCtx);
+        if (pJunctureID == BZBajar.SJ_BAJAR) BZBajar.Juncture(this, pCtx);
+    }
+
     override void OnRPC(PlayerIdentity sender, int rpc_type, ParamsReadContext ctx) {
         super.OnRPC(sender, rpc_type, ctx);
 

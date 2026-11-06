@@ -18,6 +18,99 @@
 //    paso 6  retiro terminado
 //  Cada paso deja una linea [CLEANUP] con el segundo del retiro: si algo se cae, la ultima linea dice en que paso.
 // ============================================================================
+// CUANTOS ESTAN SENTADOS EN UN VEHICULO, de cualquier tipo: bot, jugador, cadaver. Existe en toda version (la red la usa
+// tambien en la 1.29, donde no hay BZRetiro). Por DOS caminos, y vale el MAYOR: CrewMember(i), y los jugadores (GetPlayers)
+// cuyo padre o vehiculo comandado es este. El 22/10 CrewMember dio 0 con un jugador sentado en un ExpansionBus, y en la
+// 1.30 borrar un vehiculo con alguien sentado tumba el server: la guarda no puede fiarse de la unica llamada que ya mintio.
+// Es el patron de BZHeliRetiro (BZ_HeliDrive) y de BZTraderBot.
+class BZOcupantes
+{
+    // los sentados que no estan en salvo (null = todos)
+    static int Contar(Object o, array<Human> salvo)
+    {
+        Transport tr = Transport.Cast(o);
+        if (!tr) return 0;
+        int porCrew = 0;
+        for (int i = 0; i < tr.CrewSize(); i++)
+        {
+            Human h = tr.CrewMember(i);
+            if (h && !EnLista(h, salvo)) porCrew = porCrew + 1;
+        }
+        int porJugador = 0;
+        array<Man> jugadores = new array<Man>();
+        GetGame().GetPlayers(jugadores);
+        for (int j = 0; j < jugadores.Count(); j++)
+        {
+            Human hj = Human.Cast(jugadores.Get(j));
+            if (!hj || EnLista(hj, salvo)) continue;
+            if (SentadoEn(hj, tr) || Subiendo(hj, tr)) porJugador = porJugador + 1;
+        }
+        if (porJugador > porCrew) return porJugador;
+        return porCrew;
+    }
+
+    // sentado en este vehiculo: por padre (el enganche al sentarse) o por el vehiculo que comanda
+    static bool SentadoEn(Human h, Transport tr)
+    {
+        if (h.GetParent() == tr) return true;
+        HumanCommandVehicle hcv = h.GetCommand_Vehicle();
+        if (hcv && hcv.GetTransport() == tr) return true;
+        return false;
+    }
+
+    // ★ EL TERCER CAMINO: esta SUBIENDO. Medido (04/11): entre el pedido de la accion de subir y la plaza hay un hueco en el que los dos
+    // caminos de arriba dan 0; el vehiculo se borro ahi y el server cayo al simular al jugador. Cuenta el comando de vehiculo en subida
+    // sobre este vehiculo, o la accion de subir en curso (la vanilla; la de Expansion es la misma clase moddeada) con el jugador cerca:
+    // el objetivo de la accion es privado del ActionManager, y la accion exige alcanzar la puerta, asi que la cercania es la medida
+    static const float SUBIENDO_CERCA_M = 8.0;
+    static bool Subiendo(Human h, Transport tr)
+    {
+        HumanCommandVehicle hcv = h.GetCommand_Vehicle();
+        if (hcv && hcv.GetTransport() == tr && hcv.IsGettingIn()) return true;
+        return AccionDeSubirCerca(h, tr);
+    }
+
+    static bool AccionDeSubirCerca(Human h, Transport tr)
+    {
+        PlayerBase pb = PlayerBase.Cast(h);
+        if (!pb) return false;
+        ActionManagerBase am = pb.GetActionManager();
+        if (!am) return false;
+        ActionBase ab = am.GetRunningAction();
+        if (!ab || !ab.IsInherited(ActionGetInTransport)) return false;
+        return vector.Distance(h.GetPosition(), tr.GetPosition()) <= SUBIENDO_CERCA_M;
+    }
+
+    // quien esta subiendo (y no cuenta todavia como sentado) y por que camino se lo vio; "" si nadie. Para la linea del paso 5
+    static string QuienSube(Object o, array<Human> salvo)
+    {
+        Transport tr = Transport.Cast(o);
+        if (!tr) return "";
+        string s = "";
+        array<Man> jugadores = new array<Man>();
+        GetGame().GetPlayers(jugadores);
+        for (int j = 0; j < jugadores.Count(); j++)
+        {
+            Human hj = Human.Cast(jugadores.Get(j));
+            if (!hj || EnLista(hj, salvo) || SentadoEn(hj, tr) || !Subiendo(hj, tr)) continue;
+            string como = "comando de vehiculo en subida";
+            if (AccionDeSubirCerca(hj, tr)) como = "accion de subir en curso, a " + vector.Distance(hj.GetPosition(), tr.GetPosition()).ToString() + " m";
+            string nombre = hj.GetType();
+            PlayerBase pbj = PlayerBase.Cast(hj);
+            if (pbj && pbj.GetIdentity()) nombre = pbj.GetIdentity().GetName();
+            if (s != "") s = s + ", ";
+            s = s + nombre + " (" + como + ")";
+        }
+        return s;
+    }
+
+    static bool EnLista(Human h, array<Human> lista)
+    {
+        if (!lista) return false;
+        return lista.Find(h) >= 0;
+    }
+}
+
 #ifndef DAYZ_1_29
 class BZRetiro
 {
@@ -41,17 +134,10 @@ class BZRetiro
     private float             m_TAjenosAviso;
     private bool              m_Hecho;
 
-    // cuantos estan sentados en un vehiculo (0 si no es un vehiculo)
+    // cuantos estan sentados en un vehiculo (0 si no es un vehiculo), por los dos caminos: ver BZOcupantes
     static int Ocupantes(Object o)
     {
-        Transport tr = Transport.Cast(o);
-        if (!tr) return 0;
-        int n = 0;
-        for (int i = 0; i < tr.CrewSize(); i++)
-        {
-            if (tr.CrewMember(i)) n++;
-        }
-        return n;
+        return BZOcupantes.Contar(o, null);
     }
 
     static void Retirar(EntityAI veh, array<Human> bots, string rotulo)
@@ -107,18 +193,10 @@ class BZRetiro
         return m_Bots.Find(h) >= 0;
     }
 
-    // los sentados en el vehiculo que NO son nuestros (jugadores, cadaveres, bots ajenos)
+    // los sentados en el vehiculo que NO son nuestros (jugadores, cadaveres, bots ajenos), por los dos caminos
     private int Ajenos()
     {
-        Transport tr = Transport.Cast(m_Veh);
-        if (!tr) return 0;
-        int n = 0;
-        for (int i = 0; i < tr.CrewSize(); i++)
-        {
-            Human h = tr.CrewMember(i);
-            if (h && !EsNuestro(h)) n++;
-        }
-        return n;
+        return BZOcupantes.Contar(m_Veh, m_Bots);
     }
 
     private bool Afuera(Human b)
@@ -152,6 +230,7 @@ class BZRetiro
     {
         string tipo = "(sin vehiculo)";
         if (m_Veh) tipo = m_Veh.GetType();
+        if (m_Veh) BZCierre.Cerrar(m_Veh, Pre() + "paso 1");   // desde aca nadie sube (si el FIN ya lo cerro, no se repite)
         BZBusLog.Info(Pre() + "paso 1: " + tipo + " frenado y soltado · nuestros " + m_Bots.Count().ToString() + " · ocupantes ajenos " + Ajenos().ToString());
         Frenar();
         int bajando = 0;
@@ -188,8 +267,10 @@ class BZRetiro
             }
             if (Afuera(b))
             {
+                if (!BZEmbudo.PedirCuadro("retiro: borrar bot")) break;   // un borrado por cuadro; el resto, en el poll siguiente
                 BorrarBot(b, "afuera");
                 m_Bots.RemoveOrdered(i);
+                break;
             }
         }
         if (m_Bots.Count() == 0)
@@ -236,14 +317,20 @@ class BZRetiro
         if (ocupados > 0)
         {
             Frenar();
+            string sube = BZOcupantes.QuienSube(m_Veh, m_Bots);
+            if (sube != "") BZBusLog.Warn(Pre() + "paso 5: SUBIENDO: " + sube + " -> el vehiculo NO se borra");
             if (m_TAjenos == 0 || m_TAjenos - m_TAjenosAviso >= AJENOS_AVISO_CADA_S)
             {
                 m_TAjenosAviso = m_TAjenos;
-                BZBusLog.Warn(Pre() + "paso 5: " + ocupados.ToString() + " ocupante(s) sentado(s) -> el vehiculo NO se borra (reintento cada " + (AJENOS_REINTENTO_MS / 1000).ToString() + " s, tope " + Seg(AJENOS_TOPE_S) + " s)");
+                BZBusLog.Warn(Pre() + "paso 5: " + ocupados.ToString() + " ocupante(s) sentado(s) o subiendo -> el vehiculo NO se borra (reintento cada " + (AJENOS_REINTENTO_MS / 1000).ToString() + " s, tope " + Seg(AJENOS_TOPE_S) + " s)");
             }
+            // un jugador sentado se baja por la juncture (BZBajar) en cada reintento (no manda a quien ya bajo); el vehiculo sigue sin borrarse con el adentro
+            int bajando = BZBajar.BajarSentados(m_Veh, Pre() + "paso 5");
+            if (bajando > 0) BZBusLog.Info(Pre() + "paso 5: bajada pedida a " + bajando.ToString() + " jugador(es)");
             if (m_TAjenos >= AJENOS_TOPE_S)
             {
                 BZBusLog.Warn(Pre() + "paso 6: TOPE con " + ocupados.ToString() + " ocupante(s): el vehiculo queda en el mundo, frenado y sin runner");
+                BZCierre.Reabrir(m_Veh, Pre() + "paso 6 (tope)");   // queda en el mundo: vuelve al estado que tenia
                 m_Hecho = true;
                 return;
             }
@@ -251,7 +338,20 @@ class BZRetiro
             GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.PasoVehiculo, AJENOS_REINTENTO_MS, false);
             return;
         }
-        BZBusLog.Info(Pre() + "paso 5: delete vehiculo (vacio)");
+        // el cierre viaja por la red: antes de borrar, que le haya llegado al cliente (si no, el que esta por subir no se entera)
+        float cerradoHace = BZCierre.CerradoHaceS(m_Veh);
+        if (cerradoHace >= 0 && cerradoHace < BZCierre.ESPERA_S)
+        {
+            GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.PasoVehiculo, POLL_MS, false);
+            return;
+        }
+        if (!BZEmbudo.PedirCuadro("retiro: borrar vehiculo"))
+        {
+            GetGame().GetCallQueue(CALL_CATEGORY_GAMEPLAY).CallLater(this.PasoVehiculo, POLL_MS, false);   // el cuadro ya tiene su operacion pesada
+            return;
+        }
+        BZBusLog.Info(Pre() + "paso 5: delete vehiculo (vacio, cerrado hace " + Seg(cerradoHace) + " s)");
+        BZCierre.Olvidar(m_Veh);
         m_Veh.Delete();
         m_Veh = null;
         BZBusLog.Info(Pre() + "paso 6: retiro terminado");

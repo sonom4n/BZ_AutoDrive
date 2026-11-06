@@ -654,6 +654,43 @@ class BZVehicleManual
         return a;
     }
 
+    // ★ LA GANANCIA DEL PEDAL DE FRENO (m/s2 por unidad de pedal): lo que el pedal HACE, sin el techo del piso ni el de la toma. Es la
+    // misma cuenta de MaxBrakeDecel antes de techarla (par de frenos sobre radio y masa). El techo dice cuanto puede frenar el vehiculo
+    // como mucho; con un pedal a 0,3-0,5 estos configs ya llegan a el, y dosificar `pedal = aNeed / techo` pedia 2x de mas (medido en el
+    // endpoint, ver BZEndpointSlam). 0 si el config no da para calcularla.
+    float GananciaFisicaPedal()
+    {
+        if (wheelRadiusM < 0.05) return 0;
+        if (massKg < 1.0) return 0;
+        return (maxBrakeTorqueFront + maxBrakeTorqueRear) / wheelRadiusM / massKg;
+    }
+
+    // la ganancia con la que el ENDPOINT dosifica el pedal (candidato A): la fisica, nunca por debajo del tope (asi el pedal nunca sale mas
+    // fuerte que hoy) ni por encima de GAN_PEDAL_MAX_X veces el tope (un config con pares enormes no deja el pedal en nada). Con A apagado,
+    // el tope de siempre: el comportamiento de antes, byte por byte.
+    static const float GAN_PEDAL_MAX_X = 4.0;
+    float GananciaPedal(int surf)
+    {
+        float tope = MaxBrakeDecelEndpoint(surf);
+        if (tope < 0.5) tope = 0.5;
+        if (!BZEndpointSlam.s_CandA) return tope;
+        float g = GananciaFisicaPedal();
+        if (g < tope) return tope;
+        if (g > tope * GAN_PEDAL_MAX_X) return tope * GAN_PEDAL_MAX_X;
+        return g;
+    }
+
+    string GananciaPedalFuente(int surf)
+    {
+        float tope = MaxBrakeDecelEndpoint(surf);
+        if (tope < 0.5) tope = 0.5;
+        if (!BZEndpointSlam.s_CandA) return "tope, A apagado";
+        float g = GananciaFisicaPedal();
+        if (g < tope) return "tope: la fisica no lo supera";
+        if (g > tope * GAN_PEDAL_MAX_X) return "fisica " + g.ToString() + ", acotada a 4x el tope";
+        return "fisica";
+    }
+
     // Velocidad maxima (a redline) de la marcha con INDICE DE RATIO gi (0 = 1ra fisica).
     float TopSpeedForGear(int gi)
     {

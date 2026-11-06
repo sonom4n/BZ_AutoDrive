@@ -141,6 +141,11 @@ class BZRouteData
     void BZRouteData()
     {
         m_Pos        = new array<vector>();
+        m_BqMinX     = new array<float>();
+        m_BqMaxX     = new array<float>();
+        m_BqMinZ     = new array<float>();
+        m_BqMaxZ     = new array<float>();
+        m_BqCota     = new array<float>();
         m_RecKmh     = new array<float>();
         m_RecThr     = new array<float>();
         m_RecSteerDeg = new array<float>();
@@ -199,16 +204,12 @@ class BZRouteData
         m_ArmFase  = 0;
         m_ArmSub   = 0;
         m_ArmBanda = 0;
-        m_PctPaso  = 0;
         m_ArmI     = 0;   // los cursores de las pasadas por unidades
         m_ArmH     = 0;
         m_ArmFirstValid = -1;
         m_ArmSuave.Clear();
         m_ArmLo    = 0;
         m_ArmLegL  = 0;
-        m_PctI     = 1;
-        m_PctCuenta = 0;
-        CbIniciar();
         m_CvH      = 0;
         m_CvHprev  = 0;
         m_CvMx     = 0;
@@ -221,6 +222,12 @@ class BZRouteData
         for (gT = 0; gT < ARM_GRUPOS; gT++) m_TkFase.Insert(0);
         m_TkPeorUnidad = 0;
         m_ArmPeorGrupo = 0;
+        m_BqListo = false;
+        m_BqMinX.Clear();
+        m_BqMaxX.Clear();
+        m_BqMinZ.Clear();
+        m_BqMaxZ.Clear();
+        m_BqCota.Clear();
     }
 
     // recHeadRad: rumbo grabado en RADIANES, o -999 si la toma no lo trae.
@@ -283,15 +290,12 @@ class BZRouteData
     // Ahora cada llamada a ArmarPaso() hace UNA UNIDAD DE TRABAJO y vuelve, para que la cola
     // (BZCargaCola) decida si hay presupuesto para otra en este cuadro. La unidad esta elegida
     // para que NINGUNA supere UNA PASADA sobre los n puntos:
-    //   Arc · Headings · Curvature · el conteo de aLat · CADA pasada de biseccion · CuentaEnBanda
-    //   por banda · los reportes · SegmentLegs
-    // La biseccion era lo unico que no entraba: son 18 pasadas por percentil y hay 2 globales mas
-    // 2 por banda con muestras (≈122 pasadas en total). Por eso PercentilALat se partio en
-    // PctIniciar/PctPaso: MISMA cuenta, misma secuencia de operaciones, una pasada por llamada.
+    //   Arc · Headings · Curvature · la pasada de aLat · un Sort · los percentiles de una banda · los reportes · SegmentLegs
+    // La biseccion del aLat ya no recorre los wps: eran 18 pasadas por percentil, 2 globales mas 2 por banda (122 a 190
+    // pasadas por ruta; 616 de los 661 ms de armar RAMAL02_KRASNOSTAV_RIFY). Ahora es UNA pasada que guarda los validos, un
+    // Sort nativo de cada grupo, y la misma biseccion contando con busqueda binaria.
     //
-    // ⚠ El resultado tiene que ser IDENTICO al de antes: es scheduling, no un cambio de calculo.
-    // Verificado en el banco (carga_cola_banco.py §B) contra los 1193 waypoints reales de PATRULLA:
-    // el percentil reanudable da el MISMO float que el monolitico, en exactamente 18 pasadas.
+    // ⚠ El resultado tiene que ser IDENTICO al de antes: mismos mid, misma cuenta, mismo float.
     //
     // true = el armado TERMINO (bien o mal). IsReady() dice cual de las dos.
     private int   m_ArmFase;
@@ -302,16 +306,13 @@ class BZRouteData
     private float m_ArmMx;
     private int   m_ArmBanda;
     private int   m_ArmCBanda;
-    // biseccion en curso (el estado que antes vivia en los locales de PercentilALat)
-    private int   m_PctPaso;
-    private float m_PctLo;
-    private float m_PctHi;
-    private float m_PctObj;
-    private int   m_PctBanda;
+    // los aLat validos de la toma y de cada banda: se llenan en la pasada de la fase 4 y se sueltan al terminar la fase 7
+    private ref array<float> m_ALatOrden;
+    private ref array<ref array<float>> m_ALatOrdenBanda;
     // NINGUNA UNIDAD DEL ARMADO
     // PASA DE ~1 ms. La cola corta por reloj ENTRE unidades: una tajada se pasa solo si UNA unidad dura mas que el presupuesto,
     // y aca cada fase era una pasada ENTERA sobre los n puntos (17.307 en ROUTE2_FULL): rumbos + suavizado (11 trig por wp),
-    // curvatura, el conteo de aLat, cada pasada de la biseccion (~190 por ruta de bus), CuentaEnBanda, la convencion vieja y
+    // curvatura, la pasada de aLat, la convencion vieja y
     // SegmentLegs. Ahora cada pasada tiene su cursor y se corta cuando el contador fino dice ARM_UNIDAD_TICKS: la tajada peor
     // queda en presupuesto + ~1 ms (el falsador de BusDrive: <= 6 ms en todas las lineas `reparto:`). Los CALCULOS son los
     // mismos, en el mismo orden: armado_banco_968.py compara S/Head/Curv/aLat/bandas/legs de esta version contra la monolitica
@@ -327,10 +328,6 @@ class BZRouteData
     private ref array<float> m_ArmSuave;
     private int   m_ArmLo;           // SegmentLegs: el inicio del leg abierto (era el local `lo`)
     private int   m_ArmLegL;         // ReindexLegOf: el leg en curso
-    private int   m_PctI;            // PctPaso: cursor y cuenta de la pasada en curso
-    private int   m_PctCuenta;
-    private int   m_CbI;             // CuentaEnBanda: cursor y cuenta
-    private int   m_CbC;
     private float m_CvH;             // convencion vieja: el estado que vivia en los locales de ReportarConvencionVieja
     private float m_CvHprev;
     private float m_CvMx;
@@ -384,12 +381,6 @@ class BZRouteData
         r = r + " · alat " + MsDeTicks(m_TkFase.Get(3)) + " · vieja " + MsDeTicks(m_TkFase.Get(4)) + " · legs " + MsDeTicks(m_TkFase.Get(5)) + " ms";
         r = r + " · peor unidad " + MsDeTicks(m_TkPeorUnidad) + " ms en " + NombreGrupo(m_ArmPeorGrupo) + ")";
         return r;
-    }
-
-    private void CbIniciar()
-    {
-        m_CbI = 1;
-        m_CbC = 0;
     }
 
     bool ArmarPaso()
@@ -597,11 +588,20 @@ class BZRouteData
                     m_ArmSub = 0;
                     return false;
                 }
+                m_ALatOrden = new array<float>();
+                m_ALatOrdenBanda = new array<ref array<float>>();
+                int bO;
+                for (bO = 0; bO < ALAT_NBANDAS; bO++)
+                {
+                    ref array<float> filaO = new array<float>();
+                    m_ALatOrdenBanda.Insert(filaO);
+                }
             }
             int hechos4 = 0;
             while (m_ArmI < m_ArmN - 1)
             {
-                float a4 = ALatEn(m_ArmI);
+                int i4 = m_ArmI;
+                float a4 = ALatEn(i4);
                 m_ArmI = m_ArmI + 1;
                 hechos4 = hechos4 + 1;
                 if (a4 >= 0)
@@ -609,83 +609,70 @@ class BZRouteData
                     m_ArmTotal++;
                     if (a4 > m_ArmMx) m_ArmMx = a4;
                     if (a4 >= ALAT_TOPE) m_ArmFuera++;
+                    m_ALatOrden.Insert(a4);
+                    m_ALatOrdenBanda.Get(BandaDe(m_RecKmh.Get(i4))).Insert(a4);
                 }
                 if (ArmSeAcabo(t0, hechos4)) return false;
             }
             m_ArmSub = 0;
             if (m_ArmTotal < 10)
             {
+                m_ALatOrden = null;
+                m_ALatOrdenBanda = null;
                 m_ArmFase = 9;
                 return false;
             }
-            PctIniciar(m_ArmTotal, 0.90, ALAT_TOPE, -1);
             m_ArmFase = 5;
             return false;
         }
-        // --- fases 5 y 6: los dos percentiles GLOBALES, por pasadas de biseccion (cada pasada, por unidades)
+        // --- fases 5 y 6: los dos percentiles GLOBALES. El Sort no se puede cortar: es una unidad sola.
         if (m_ArmFase == 5)
         {
-            if (PctPaso(m_ArmN, t0))
-            {
-                m_ALatToma = m_PctHi;
-                PctIniciar(m_ArmTotal, 0.95, ALAT_TOPE_DIR, -1);
-                m_ArmFase = 6;
-            }
+            m_ALatOrden.Sort();
+            m_ArmFase = 6;
             return false;
         }
         if (m_ArmFase == 6)
         {
-            if (PctPaso(m_ArmN, t0))
-            {
-                m_ALatDir = m_PctHi;
-                m_ALatBanda.Clear();        // lo que hacia MedirBandas al entrar
-                m_ALatDirBanda.Clear();
-                m_ArmBanda = 0;
-                m_ArmSub = 0;
-                CbIniciar();
-                m_ArmFase = 7;
-            }
+            m_ALatToma = PctEnOrden(m_ALatOrden, m_ArmTotal, 0.90, ALAT_TOPE);
+            m_ALatDir = PctEnOrden(m_ALatOrden, m_ArmTotal, 0.95, ALAT_TOPE_DIR);
+            m_ALatOrden = null;
+            m_ALatBanda.Clear();        // lo que hacia MedirBandas al entrar
+            m_ALatDirBanda.Clear();
+            m_ArmBanda = 0;
+            m_ArmSub = 0;
+            m_ArmFase = 7;
             return false;
         }
-        // --- fase 7: las bandas. Mismo ORDEN de Insert que MedirBandas (p90 y p95 de una banda antes de pasar a la siguiente)
+        // --- fase 7: las bandas, de a una: su Sort en una unidad y sus dos percentiles en otra
         if (m_ArmFase == 7)
         {
             if (m_ArmBanda >= ALAT_NBANDAS)
             {
+                m_ALatOrdenBanda = null;
                 m_ArmFase = 8;
                 m_ArmSub = 0;
                 return false;
             }
+            array<float> ordenB = m_ALatOrdenBanda.Get(m_ArmBanda);
+            m_ArmCBanda = ordenB.Count();
+            if (m_ArmCBanda < ALAT_MIN_MUEST)
+            {
+                m_ALatBanda.Insert(-1.0);
+                m_ALatDirBanda.Insert(-1.0);
+                m_ArmBanda = m_ArmBanda + 1;
+                return false;
+            }
             if (m_ArmSub == 0)
             {
-                if (!CuentaEnBandaPaso(m_ArmN, m_ArmBanda, t0)) return false;
-                if (m_ArmCBanda < ALAT_MIN_MUEST)
-                {
-                    m_ALatBanda.Insert(-1.0);
-                    m_ALatDirBanda.Insert(-1.0);
-                    m_ArmBanda = m_ArmBanda + 1;
-                    return false;
-                }
-                PctIniciar(m_ArmCBanda, 0.90, ALAT_TOPE, m_ArmBanda);
+                ordenB.Sort();
                 m_ArmSub = 1;
                 return false;
             }
-            if (m_ArmSub == 1)
-            {
-                if (PctPaso(m_ArmN, t0))
-                {
-                    m_ALatBanda.Insert(m_PctHi);
-                    PctIniciar(m_ArmCBanda, 0.95, ALAT_TOPE_DIR, m_ArmBanda);
-                    m_ArmSub = 2;
-                }
-                return false;
-            }
-            if (PctPaso(m_ArmN, t0))
-            {
-                m_ALatDirBanda.Insert(m_PctHi);
-                m_ArmBanda = m_ArmBanda + 1;
-                m_ArmSub = 0;
-            }
+            m_ALatBanda.Insert(PctEnOrden(ordenB, m_ArmCBanda, 0.90, ALAT_TOPE));
+            m_ALatDirBanda.Insert(PctEnOrden(ordenB, m_ArmCBanda, 0.95, ALAT_TOPE_DIR));
+            m_ArmBanda = m_ArmBanda + 1;
+            m_ArmSub = 0;
             return false;
         }
         // --- fase 8: el reporte del agarre lateral + la convencion vieja (era ReportarConvencionVieja, una pasada mas)
@@ -809,7 +796,23 @@ class BZRouteData
             m_ArmSub = 0;
             return false;
         }
-        // --- fase 12: LegOf por leg (era ReindexLegOf), y listo
+        // --- fase 13: los bloques de la poda de MasCercanoEnRango, y listo
+        if (m_ArmFase == 13)
+        {
+            int hechos13 = 0;
+            while (m_ArmI < m_Count)
+            {
+                SumarWpAlBloque(m_ArmI);
+                m_ArmI = m_ArmI + 1;
+                hechos13 = hechos13 + 1;
+                if (ArmSeAcabo(t0, hechos13)) return false;
+            }
+            m_BqListo = true;
+            m_Ready = true;
+            m_ArmFase = 14;
+            return true;
+        }
+        // --- fase 12: LegOf por leg (era ReindexLegOf)
         int hechos12 = 0;
         while (m_ArmLegL < m_LegCount)
         {
@@ -824,9 +827,9 @@ class BZRouteData
             hechos12 = hechos12 + 1;
             if (ArmSeAcabo(t0, hechos12)) return false;
         }
-        m_Ready = true;
         m_ArmFase = 13;
-        return true;
+        m_ArmI = 0;
+        return false;
     }
 
     // ⚠⚠ SOLO PARA SELF-TESTS Y BANCOS: arma la ruta ENTERA en esta llamada.
@@ -850,46 +853,37 @@ class BZRouteData
         return m_Ready;
     }
 
-    // La biseccion, partida en pasadas. PctIniciar deja el estado; cada PctPaso hace UNA pasada
-    // sobre los n puntos y devuelve true cuando ya hizo las ALAT_PASOS. El valor queda en m_PctHi.
-    private void PctIniciar(int total, float frac, float tope, int banda)
+    // La biseccion del percentil: las mismas ALAT_PASOS, los mismos mid y la misma comparacion que cuando recorria los wps.
+    // Lo unico que cambia es de donde sale la cuenta. `orden` esta ordenado y sin NaN: la fase 4 solo guarda a >= 0.
+    private float PctEnOrden(array<float> orden, int total, float frac, float tope)
     {
-        m_PctPaso = 0;
-        m_PctLo = 0;
-        m_PctHi = tope;
-        m_PctObj = total * frac;
-        m_PctBanda = banda;
-        m_PctI = 1;        // la pasada arranca en 1 y cuenta desde cero
-        m_PctCuenta = 0;
+        float loP = 0;
+        float hiP = tope;
+        float objP = total * frac;
+        float midP;
+        int pasoP;
+        for (pasoP = 0; pasoP < ALAT_PASOS; pasoP++)
+        {
+            midP = (loP + hiP) * 0.5;
+            if (CuantosHasta(orden, midP) >= objP) hiP = midP;
+            else loP = midP;
+        }
+        return hiP;
     }
 
-    // una pasada de la biseccion, POR UNIDADES. `mid` no cambia dentro de la pasada (lo/hi se mueven recien
-    // al terminarla), asi que recalcularlo por llamada da el mismo valor. Devuelve true solo cuando las ALAT_PASOS terminaron.
-    private bool PctPaso(int n, int t0)
+    // Cuantos valores de `orden` son <= tope, por busqueda binaria: los que son iguales a tope cuentan.
+    private int CuantosHasta(array<float> orden, float tope)
     {
-        if (m_PctPaso >= ALAT_PASOS) return true;
-        float mid = (m_PctLo + m_PctHi) * 0.5;
-        int hechosP = 0;
-        while (m_PctI < n - 1)
+        int aC = 0;
+        int bC = orden.Count();
+        int mC;
+        while (aC < bC)
         {
-            int iP = m_PctI;
-            m_PctI = m_PctI + 1;
-            hechosP = hechosP + 1;
-            float aP = ALatEn(iP);
-            if (aP >= 0)
-            {
-                bool cuentaP = true;
-                if (m_PctBanda >= 0 && BandaDe(m_RecKmh.Get(iP)) != m_PctBanda) cuentaP = false;
-                if (cuentaP && aP <= mid) m_PctCuenta++;
-            }
-            if (ArmSeAcabo(t0, hechosP)) return false;
+            mC = (aC + bC) / 2;
+            if (orden.Get(mC) <= tope) aC = mC + 1;
+            else bC = mC;
         }
-        if (m_PctCuenta >= m_PctObj) m_PctHi = mid;
-        else m_PctLo = mid;
-        m_PctPaso = m_PctPaso + 1;
-        m_PctI = 1;
-        m_PctCuenta = 0;
-        return m_PctPaso >= ALAT_PASOS;
+        return aC;
     }
 
     float ALatToma() { return m_ALatToma; }
@@ -918,32 +912,9 @@ class BZRouteData
     // (R < 3 m) que dan aLat de 120-125 en un tick suelto. El p90 los ignora y aun asi da
     // 2.5x el cap. No hace falta limpiar la ruta para que esto ande.
     //
-    // ✖ Y por HISTOGRAMA, no ordenando: Enforce no ordena arrays, y un O(n^2) sobre 1249
-    // waypoints al cargar no es gratis.
-    // MedirALatDeLaToma vivia aca. Su cuerpo se repartio en las fases 3..7 de
-    // ArmarPaso() -- mismas cuentas, mismo orden, una pasada por llamada. Se BORRA en vez de
+    // MedirALatDeLaToma vivia aca. Su cuerpo se repartio en las fases 4..7 de ArmarUnidad. Se BORRA en vez de
     // dejarla al lado "por las dudas": dos caminos para el mismo numero es como se cuelan las
     // divergencias silenciosas.
-    // Cuantas muestras utiles caen en una banda (-1 = todas). La usa la fase 6 de ArmarPaso.
-    // la cuenta de una banda, POR UNIDADES. true = termino; el resultado queda en m_ArmCBanda.
-    private bool CuentaEnBandaPaso(int n, int banda, int t0)
-    {
-        int hechosC = 0;
-        while (m_CbI < n - 1)
-        {
-            int iC = m_CbI;
-            m_CbI = m_CbI + 1;
-            hechosC = hechosC + 1;
-            if (ALatEn(iC) >= 0)
-            {
-                if (banda < 0 || BandaDe(m_RecKmh.Get(iC)) == banda) m_CbC++;
-            }
-            if (ArmSeAcabo(t0, hechosC)) return false;
-        }
-        m_ArmCBanda = m_CbC;
-        CbIniciar();
-        return true;
-    }
 
     private int BandaDe(float kmh)
     {
@@ -979,8 +950,7 @@ class BZRouteData
     float ALatTomaEn(float kmh) { return EnBandas(m_ALatBanda, kmh, m_ALatToma); }
     float ALatDirEn(float kmh)  { return EnBandas(m_ALatDirBanda, kmh, m_ALatDir); }
 
-    // PercentilALat vivia aca -> PctIniciar/PctPaso (una pasada de biseccion
-    // por llamada). El banco prueba que el resultado es el MISMO float.
+    // PercentilALat vivia aca -> PctEnOrden. El banco prueba que el resultado es el MISMO float.
 
     // El lateral sostenido en el waypoint i, o -1 si la muestra no sirve. Una sola
     // definicion para las dos pasadas: si divergieran, la biseccion contaria otra cosa que
@@ -1221,6 +1191,140 @@ class BZRouteData
     // ReindexLegOf vive en ArmarUnidad fase 12, por unidades.
 
     // ======================= ACCESSORS (bounds-safe) =======================
+
+    // LA PODA DE LA BUSQUEDA DEL WP MAS CERCANO: la misma idea y la misma garantia que la poda de la cinta (ver BZCintaRunner).
+    private static const int BLOQUE_WPS = 64;
+    private ref array<float> m_BqMinX;
+    private ref array<float> m_BqMaxX;
+    private ref array<float> m_BqMinZ;
+    private ref array<float> m_BqMaxZ;
+    private ref array<float> m_BqCota;
+    private bool m_BqListo;
+
+    private void SumarWpAlBloque(int k)
+    {
+        vector pB = m_Pos.Get(k);
+        float xB = pB[0];
+        float zB = pB[2];
+        if (k % BLOQUE_WPS == 0)
+        {
+            m_BqMinX.Insert(xB);
+            m_BqMaxX.Insert(xB);
+            m_BqMinZ.Insert(zB);
+            m_BqMaxZ.Insert(zB);
+            m_BqCota.Insert(0.0);
+            return;
+        }
+        int bB = m_BqCota.Count() - 1;
+        if (xB < m_BqMinX.Get(bB)) m_BqMinX.Set(bB, xB);
+        if (xB > m_BqMaxX.Get(bB)) m_BqMaxX.Set(bB, xB);
+        if (zB < m_BqMinZ.Get(bB)) m_BqMinZ.Set(bB, zB);
+        if (zB > m_BqMaxZ.Get(bB)) m_BqMaxZ.Set(bB, zB);
+    }
+
+    // El wp mas cercano a p entre lo y hi, inclusive: la misma respuesta que MasCercanoBarrido. Gana el primero.
+    int MasCercanoEnRango(vector p, int lo, int hi)
+    {
+        if (!m_BqListo || lo < 0 || hi >= m_Count || lo > hi) return MasCercanoBarrido(p, lo, hi);
+        int bIni = lo / BLOQUE_WPS;
+        int bFin = hi / BLOQUE_WPS;
+        int bP;
+        int bS = bIni;
+        float cS = -1;
+        float dxC;
+        float dzC;
+        float cB;
+        for (bP = bIni; bP <= bFin; bP++)
+        {
+            dxC = 0;
+            if (p[0] < m_BqMinX.Get(bP)) dxC = p[0] - m_BqMinX.Get(bP);
+            else if (p[0] > m_BqMaxX.Get(bP)) dxC = p[0] - m_BqMaxX.Get(bP);
+            dzC = 0;
+            if (p[2] < m_BqMinZ.Get(bP)) dzC = p[2] - m_BqMinZ.Get(bP);
+            else if (p[2] > m_BqMaxZ.Get(bP)) dzC = p[2] - m_BqMaxZ.Get(bP);
+            cB = dxC * dxC + dzC * dzC;
+            m_BqCota.Set(bP, cB);
+            if (cS < 0 || cB < cS)
+            {
+                bS = bP;
+                cS = cB;
+            }
+        }
+        int iW;
+        int iniW;
+        int finW;
+        vector qW;
+        float dxW;
+        float dzW;
+        float d2W;
+        bool hayU = false;
+        float u2 = 0;
+        iniW = bS * BLOQUE_WPS;
+        if (iniW < lo) iniW = lo;
+        finW = bS * BLOQUE_WPS + BLOQUE_WPS - 1;
+        if (finW > hi) finW = hi;
+        for (iW = iniW; iW <= finW; iW++)
+        {
+            qW = m_Pos.Get(iW);
+            dxW = p[0] - qW[0];
+            dzW = p[2] - qW[2];
+            d2W = dxW * dxW + dzW * dzW;
+            if (!hayU || d2W < u2)
+            {
+                hayU = true;
+                u2 = d2W;
+            }
+        }
+        int mejorW = lo;
+        float dMinW = 1000000000.0;
+        for (bP = bIni; bP <= bFin; bP++)
+        {
+            cB = m_BqCota.Get(bP);
+            if (cB > u2 || cB >= dMinW) continue;
+            iniW = bP * BLOQUE_WPS;
+            if (iniW < lo) iniW = lo;
+            finW = bP * BLOQUE_WPS + BLOQUE_WPS - 1;
+            if (finW > hi) finW = hi;
+            for (iW = iniW; iW <= finW; iW++)
+            {
+                qW = m_Pos.Get(iW);
+                dxW = p[0] - qW[0];
+                dzW = p[2] - qW[2];
+                d2W = dxW * dxW + dzW * dzW;
+                if (d2W < dMinW)
+                {
+                    dMinW = d2W;
+                    mejorW = iW;
+                }
+            }
+        }
+        return mejorW;
+    }
+
+    // El barrido de siempre: es la referencia, y cubre lo que los bloques no (sin indice, limites fuera de la ruta).
+    int MasCercanoBarrido(vector p, int lo, int hi)
+    {
+        int mejorW = lo;
+        float dMinW = 1000000000.0;
+        int iW;
+        vector qW;
+        float dxW;
+        float dzW;
+        float d2W;
+        for (iW = lo; iW <= hi; iW++)
+        {
+            qW = Pos(iW);
+            dxW = p[0] - qW[0];
+            dzW = p[2] - qW[2];
+            d2W = dxW * dxW + dzW * dzW;
+            if (d2W < dMinW)
+            {
+                dMinW = d2W;
+                mejorW = iW;
+            }
+        }
+        return mejorW;
+    }
 
     private int ClampIdx(int i)
     {

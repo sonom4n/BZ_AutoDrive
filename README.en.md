@@ -5,6 +5,7 @@
 You record a route by driving it yourself. An NPC (Boris) drives it forever, with **each vehicle's real physics**. It trains no per-vehicle model and needs no hand-placed waypoints: it **reads the config the car already declares** in the engine (torque curve, gearbox, steering, geometry), **replays your driving point by point**, and **learns from your own takes** how that vehicle behaves. **It drives any vehicle with no per-vehicle setup.**
 
 > Spanish version: [README.md](README.md) · **MIT** license · **BrigadaZ** project
+> The full manual is next to this file: `MANUAL_BZ_AutoDrive.en.md` / `MANUAL_BZ_AutoDrive.en.pdf` (Spanish: `.md` / `.pdf`).
 
 ---
 
@@ -85,6 +86,8 @@ PathLogger (record)  →  Wizard (route + tape + vehicle profile)  →  1.2 brai
 To use it: subscribe on the Workshop (it ships signed). To build your fork: package the PBO however you prefer — DayZ Tools (AddonBuilder) or your own pipeline — and sign it with your **own** key. Each modder packages their own way.
 
 ## Status
+
+**v1.3** — more vehicles at once with less load on relaunches (a single gate for heavy work, a route already read is not re-read, sliced reading, binary tape); vehicles look smooth from any client (filter, can be turned off); a run that fails concludes on its own and, if no mod claims it, the framework retires the vehicle after 60 s; retiring never deletes a vehicle with a player seated. Compiles on DayZ 1.30.164.
 
 **v1.2.5** — a smooth stop anywhere on the route for mods that use the framework (`HoldRunnerSuave`: it keeps its line and brakes down to the point); the panel shows the exact version. Tested on DayZ 1.30 and its Update 2.
 

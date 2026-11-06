@@ -126,4 +126,7 @@ class BZVehiculo {
     bool LucesPrendidas() { return false; }
     void Bocina(int estado) {}
     void BloquearPiezas(bool bloqueadas) {}
+
+    // la marca del filtro de cliente: solo el auto (BZClienteFiltro va en CarScript)
+    void MarcarFiltroCliente(bool marca) {}
 }

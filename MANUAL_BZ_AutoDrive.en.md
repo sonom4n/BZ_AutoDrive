@@ -2,7 +2,7 @@
 
 > NPC vehicle-driving framework for DayZ. Didactic edition for admins/modders.
 > **Open source (MIT):** the code, this manual and the AI knowledge pack are public — download it, use it on your server, fork it, extend it and share your routes.
-> *Manual 1.2 — the admin's practical guide.*
+> *Manual 1.3 — the admin's practical guide.*
 
 ---
 
@@ -89,7 +89,7 @@ What you add depends on what you want it for:
 - **The wizard** (`route_wizard.ps1`) runs on **your PC** (outside the game), not on the server. You launch it by double-clicking `tools\Wizard.bat` — no need to open PowerShell or type anything.
 - **If you add a vehicle pack:** some packs need **another base mod** (a *core*) that the Workshop **doesn't download on its own**, and without it **the server crashes on boot**. After adding a pack, search the RPT for **`requires addon`**: if it shows up, install the mod it names and put it **before** the vehicle in `-mod=`. And remember that the **client** loads the mods from its launcher's list (DZSA), not from the server's `start.bat`: if you don't tick it there too, you won't see the new vehicles.
 - **Python: already included.** The wizard's converter (`frame_to_route.py`), the tool that builds the vehicle profile (`envelope_emit.py`) and the v1 import are Python, and the mod **ships its own Python** in `tools\python\`: you don't have to install anything. *(If that folder is missing, the wizard uses your PC's Python if it finds it in the PATH, and if there is none, it tells you when it opens.)*
-- **What runs by default: you don't have to turn anything on.** The 1.2 driving brain, the tape and the new steering law come **on**. If for some reason you want the previous behavior on your server, you turn it off with a file in `profiles\BZ_AutoDrive\` **with any text inside**: `CEREBRO_11.txt` goes back to the 1.1 brain, `BZ12_SIN_CINTA.txt` runs tapeless, `BZ12_SIN_FF_PRIMARIO.txt` goes back to the previous steering law. **An empty file does nothing.** A route that has no `_cinta.csv` (for example, one imported from v1) runs tapeless and says so in the log.
+- **What runs by default: you don't have to turn anything on.** The 1.2 driving brain, the tape and the new steering law come **on**. If for some reason you want the previous behavior on your server, you turn it off with a file in `profiles\BZ_AutoDrive\` **with any text inside**: `CEREBRO_11.txt` goes back to the 1.1 brain, `BZ12_SIN_CINTA.txt` runs tapeless, `BZ12_SIN_FF_PRIMARIO.txt` goes back to the previous steering law. **An empty file does nothing.** A route that has no `_cinta.csv` (for example, one imported from v1) runs tapeless and says so in the log. The client filter (§13.4) also comes on.
 
 ---
 
@@ -182,9 +182,9 @@ Two more files worth knowing:
 ### The wizard menu
 You launch the wizard (double-click `Wizard.bat`) and the menu appears:
 
-> **[1] Convert · [2] Import a BrigadaZ Transport v1 route · [3] Merge recording segments (continue a recording) · [6] Configure paths · [Q] Quit**
+> **[1] Convert & binarize · [2] Import a BrigadaZ Transport v1 route · [3] Merge recording segments (continue a recording) · [B] Binarize routes · [6] Configure paths · [Q] Quit**
 
-#### [1] Convert — from recording to ready route
+#### [1] Convert & binarize — from recording to ready route
 You take a raw recording (`frame_*.csv` + its paired `header_*.txt`) and the wizard turns it into a **route deployed and ready in the Player**, in one step. The only thing it asks you for is a **NAME** → the route comes out as `BZBusRoute_<name>` and shows up under that name in the Player. In the recordings list, each one carries the tag of the folder where it was found: `[Cl]` the client's, `[A]` your server's recordings folder (`BZ_AutoDrive_PathLogger`, next to the routes folder) and `[B]` the second server's, if you set one up.
 
 **What it generates and where it goes.** From one recording come **four route files**, all in your **routes folder** (`RoutesDir` — see `[6]`):
@@ -194,6 +194,7 @@ You take a raw recording (`frame_*.csv` + its paired `header_*.txt`) and the wiz
 | `BZBusRoute_<name>_hdr.json` | the **header**: vehicle, vehicle measurements, driving config and the list of **events** from your NUMPAD 4 presses | **yes** — this is the file you edit |
 | `BZBusRoute_<name>_wp.csv` | the **waypoints**, one per point of the route (around 900 on a 10-minute route) | no |
 | `BZBusRoute_<name>_cinta.csv` | the **tape**: your complete driving, finely sampled along the route —position, heading, speed, steering, throttle, brake and gear— about 12 times denser than the waypoints. This is where the fidelity comes from: the NPC doesn't interpolate between waypoints, it replays this | no |
+| `BZBusRoute_<name>_cinta.bin` | the **binary tape**: the same tape in the format the server reads fastest. The wizard generates it when converting; without it the route works the same, from the CSV (§6B) | no |
 | `BZBusRoute_<name>.json` | the **master**: header + waypoints in a single file | no, it's a backup |
 
 > **The pair that takes priority is `_hdr.json` + `_wp.csv`.** If both exist, the server loads that pair and **the full `.json` goes unused**. That's why the events go in the `_hdr.json`.
@@ -213,6 +214,14 @@ The profile is measured automatically when you end the take the way §7.1 says, 
 > **While the NPC drives**, the server also writes two things to `profiles\BZ_AutoDrive\`: `BZ12_LOG_<route>_<time>.csv`, with the detail of that run, and `AR_log.csv`, with one row for each time the AutoRecovery had to step in (§9.6). You can delete them whenever you want.
 
 > It tells you the route is **deployed** (hot load, **no restart**). If you configured a 2nd server, it **copies the route files** there.
+
+#### [B] Binarize routes — the binary for the routes you already had
+Routes converted with an earlier version have no `_cinta.bin`, and a tape you converted again may have an old one. **When you open the wizard it tells you** if there is something to do (`5 routes without a binary or outdated: [B] binarize`); if not, it says nothing.
+- **`[B]`** lists the routes in your folder with their state: `up to date`, `no binary` or `outdated` (with the reason: the CSV changed, from another mod version, truncated or damaged).
+- You pick **one by number**, or **`[T]`** for all the missing ones. A route that cannot be converted shows in red and it moves on to the next; **the CSV is never touched**.
+- If you have a mirror server configured in `[6]`, the binary is copied there too, but **only if the same tape is there** (same size); otherwise it warns, and the mirror keeps using its CSV.
+- **It is not mandatory:** without a binary the route loads the same, slower, and the server says so in its RPT (`binario de la cinta descartado: se carga el CSV`).
+
 
 #### [2] Import a BrigadaZ Transport v1 route
 Were you using **BrigadaZ Transport v1** and already have a recorded route? **Don't record it again** — this option brings it into BZ_AutoDrive's format.
@@ -250,18 +259,28 @@ It's a **direct** conversion: `frame_to_route.py` takes your recording + its `he
 
 ## 6B. The 4 files the wizard generates — what they are and what each one is for
 
-When you convert a take, the wizard doesn't produce one file: it produces **four**. It's the question that comes up most, and the short answer is that **each one is read at a different moment in the route's life**.
+When you convert a take, the wizard doesn't produce one file: it produces **four** (plus an optional fifth, the tape's binary). It's the question that comes up most, and the short answer is that **each one is read at a different moment in the route's life**.
 
 ```
-BZBusRoute_<NAME>.json            ~510 KB    the COMPLETE route in one file: gives it its NAME in the list.
+BZBusRoute_<NAME>.json            ~490 KB    the COMPLETE route in one file: gives it its NAME in the list.
 BZBusRoute_<NAME>_hdr.json       ~3-12 KB    the ID CARD: who the vehicle is and what we know about it.
-BZBusRoute_<NAME>_wp.csv           ~82 KB    the POINTS of the path (one row per waypoint).
-BZBusRoute_<NAME>_cinta.csv       ~534 KB    your FAITHFUL driving, 40 times per second.
+BZBusRoute_<NAME>_wp.csv           ~80 KB    the POINTS of the path (one row per waypoint).
+BZBusRoute_<NAME>_cinta.csv       ~500 KB    your FAITHFUL driving, 40 times per second.
+BZBusRoute_<NAME>_cinta.bin       ~350 KB    the same tape, in binary: much faster to load (optional).
 ```
 
-*(The sizes are from a real route of 1,016 waypoints and 2.8 km. They scale with the length.)*
+*(The example is a 500 KB tape, with the proportions measured on 41 routes: the binary weighs about seven tenths of the tape; the master, the same as the tape; the `_wp.csv`, a sixth; the ID card, 1 %. Per waypoint that is about 0.5 KB of tape, 0.35 KB of binary and 0.08 KB of `_wp.csv`. Everything scales with the length of the take.)*
 
-All four go together in the same folder: `<server profile>\BZ_AutoDrive\`.
+All four —and the binary, if you have it— go together in the same folder: `<server profile>\BZ_AutoDrive\`. And so you don't have to hunt through the manual, **where every file of the framework goes**:
+
+| file | where it goes |
+|---|---|
+| the recording (`frame_*.csv` + `header_*.txt`) | on the **client**, the PC you drove on: `%LOCALAPPDATA%\DayZ\BZ_AutoDrive_PathLogger\` (if you recorded on the server, in `<server profile>\BZ_AutoDrive_PathLogger\`) |
+| the route (`.json`, `_hdr.json`, `_wp.csv`, `_cinta.csv` and `_cinta.bin`) | `<server profile>\BZ_AutoDrive\`, all together (it is your wizard's `RoutesDir`) |
+| the vehicle's sheet (`envelope_<class>.csv`, §6C) | `<server profile>\BZ_AutoDrive\`, next to the routes |
+| the configuration (`BZAutoDrive_settings.json`, §13.1) | `<server profile>\BZ_AutoDrive\`; if it doesn't exist, the server creates it with the default values on the first start |
+| the run logs (`ai_run_*.csv`, `boris_native_*.csv`) | on the server that ran them: `<server profile>\BZ_AutoDrive_PathLogger\` |
+| the wizard's memory (`wizard_config.json`: your folders) | next to the wizard script, in `tools\`; it doesn't ship in the package: every admin starts without it and the wizard asks for their folders the first time |
 
 ### The master — `BZBusRoute_<NAME>.json`
 
@@ -307,6 +326,15 @@ WpRows  CintaRows   how many rows the other two files have
 
 > **Why by distance and not by time.** Because the NPC doesn't repeat your clock: it repeats your **course**. If you waited 6 seconds at a traffic light, that isn't reproduced on its own — the wait is set with an event (§10).
 
+### The binary tape — `_cinta.bin` *(since 1.3, optional)*
+
+**What it is.** A copy of `_cinta.csv` that the server loads much faster: the same numbers, already in the format it reads. The wizard creates it when converting ("Convert & binarize"), and `[B]` generates it for the routes you already had.
+
+**What it's for.** Reading the tape was the longest phase of the load. With the binary that phase weighs a fraction, and launching or relaunching several routes costs fewer frames.
+
+**It can be deleted without losing anything:** without it, the server loads the CSV. And if the binary does not match its CSV (you changed the tape, or it comes from another mod version), the server discards it on its own, loads the CSV and says so in the RPT: `[CARGA] <route>: binario de la cinta descartado (<reason>): se carga el CSV`. **After updating the mod, open the wizard:** if it warns about routes without a binary or out of date, press `[B]` and then `[T]`.
+
+
 ### ★ Why four and not one
 
 For a concrete, measured reason: **loading a whole route in a single frame hangs the server.**
@@ -325,13 +353,13 @@ the tape      is loaded in slices; it's the longest phase
 
 ### Frequently asked questions
 
-**Can I delete any of them?** No. Without `_wp.csv` the route is driven by the 1.1 brain; **without `_cinta.csv` the NPC follows the path but no longer reproduces your driving** (it runs tapeless); without `_hdr.json` the server loads the whole master, which is slow and **freezes the server** while it reads it; and without the master the route doesn't show up in the list. A route loaded through the whole master says so in the RPT, and to the connected admins too (`… is in the old format (no _wp.csv): loading it froze the server for N s…`): convert the take again with the Wizard.
+**Can I delete any of them?** No. Without `_wp.csv` the route is driven by the 1.1 brain; **without `_cinta.csv` the NPC follows the path but no longer reproduces your driving** (it runs tapeless); without `_hdr.json` the server loads the whole master, which is slow and **freezes the server** while it reads it; and without the master the route doesn't show up in the list. A route loaded through the whole master says so in the RPT, and to the connected admins too (`… is in the old format (no _wp.csv): loading it froze the server for N s…`): convert the take again with the Wizard. **The binary (`_cinta.bin`) can be deleted:** without it, the server loads the CSV.
 
 **Can I edit them by hand?** The master and the ID card are JSON and can be edited. **The tape is not to be touched**: it's a measurement, not a configuration. If something about your route doesn't satisfy you, the answer is **to record it again**, not to correct the numbers.
 
 **Can I use this route with another vehicle?** It's not advisable, and the reason is in the ID card: the take carries the *fingerprint* and the measurements **of that vehicle**. If you want the same route with another car, **record it with that car** — it'll come out better than any adaptation, because the framework learns from what you record (§6C).
 
-**Do I have to copy them by hand?** No: the wizard puts them where they go. Just make sure you copy **all four** if you move a route from one server to another.
+**Do I have to copy them by hand?** No: the wizard puts them where they go. Just make sure you copy **all four, and the binary if you have it,** if you move a route from one server to another (they all live in the same folder); without the binary, `[B]` rebuilds it on the other side.
 
 ---
 
@@ -420,12 +448,12 @@ The NPC will drive **as well as you drove** — the recording is its driving man
 
 ### 7.1 — How to end the take (the NPC's exact arrival depends on this)
 
-At the end of the take, **on flat ground**: brake, **let go of everything** —throttle, brake and handbrake— and **wait for the engine to drop to idle**. It's two or three seconds, more on a sports car. Only then cut with **NUMPAD 5**, with the engine running.
+At the end of the take, **finish on a straight**: the last few meters with the steering straight, braking until you stop, and cut with **NUMPAD 5** with the engine running. **The end can be on a slope**: the NPC arrives all the same, uphill too.
 
-During those seconds the framework measures how far the vehicle moves forward on its own, with no throttle. That measurement is what lets it nail the final point. Without it, it uses an estimated value and the arrival drifts.
+**If the end is on flat ground**, before cutting **let go of everything** —throttle, brake and handbrake— and **wait for the engine to drop to idle**: it's two or three seconds, more on a sports car. During those seconds the framework measures how far the vehicle moves forward on its own, with no throttle. That measurement is what lets it nail the final point. Without it, it uses an estimated value and the arrival drifts. **If the end is on a slope, keep the foot brake pressed** while you cut (if you release it, the vehicle rolls back and that gets recorded) and do that measurement on a flat stretch of the take (§7.2).
 
 - **The handbrake is no good for this:** with the handbrake on, it can't measure whether the vehicle moves forward on its own.
-- **On a slope it isn't measured** (see below).
+- **On a slope it isn't measured** (the measurement requires less than about 3° of slope): any flat stretch of the same take works, or a short take on flat ground with the same vehicle.
 - **Doing it once per vehicle is enough.** The wizard saves the measurement per vehicle (`envelope_<class>.csv`) and doesn't overwrite it on later takes of the same vehicle. To redo it: `tools\python\python.exe tools\envelope_emit.py "<take.csv>" --out "<RoutesDir>" --pisar`.
 
 ### 7.2 — How to stop (intermediate stops)
@@ -581,11 +609,21 @@ class CustomMission: MissionServer
 **What you need to know:**
 - **`SetHoldAtStops(false)`.** With `true` —the default of `PlayRouteByName`— the vehicle stays at every stop until someone calls `ResumeFromHold()`: from an `init.c` it would sit at the first stop forever.
 - **Its own runner per route**, not `PlayRouteByName`: that way each one removes itself when it ends and you can remove it with `UnregisterRunner`. It shows in the panel with its label, and you can stop it from there too.
-- **If it ends badly** (`ROUTE_INCOMPLETE`, `STUCK`), the vehicle stays still: remove it yourself, as in the example.
+- **If it ends badly** (`ROUTE_INCOMPLETE`, `STUCK`), the vehicle stays still: remove it yourself, as in the example. *(Since 1.3, if you neither remove it nor read the end within 60 s, the framework removes it on its own: §B.7.)*
 - **If the starting point is occupied**, the runner waits for it to clear (`RunnerEsperandoCabecera()`): in an out-and-back chain, the way back leaves when the outbound vehicle is removed.
 - **For a service that loops forever**, make that route the server's default route (§8), or relaunch it when it ends with the same chain pattern.
 - **Each route's events** (§10) work the same: `init.c` decides when each one starts; what happens inside comes from its `Events`.
 - **An error in `init.c` keeps the mission from starting.** Check the RPT (`Can't compile`). The Enforce rules of Appendix B.5 apply: no ternary operator, `new` takes no arguments, etc. The full API (state, pause, events) is in Appendix B.7.
+
+### 8.3 — What happens at the end of the route *(since 1.3)*
+
+When a run ends —it arrived, it didn't, or it got stuck— and before the framework retires or relaunches the vehicle:
+
+- **The player riding seated gets out on their own**, with the usual animation and **no notice**. If you want to warn them, put a `ui_broadcast` event on the last waypoint (§10).
+- **From that moment nobody gets in.** The vehicle stays **locked to players** (Expansion's lock: the client doesn't even offer "get in") until the framework deletes it. The same with the **panel's STOP** and in any **retirement**: first it locks, then it gets the seated player out, and only once empty does it delete. If retiring hits its cap and leaves the vehicle in the world, it **unlocks** it as it was.
+- **Motorbikes too:** the same dismount and the same lock.
+- Retiring **never** deletes a vehicle with a player seated or getting in: it gets them out and waits.
+- **If you program a mod:** the END gets the players out. To **keep passengers between routes** (a trading service travelling with people aboard, a taxi chaining trips), **hold the vehicle with `HoldRunner()` before the end** (B.7.3) and carry on from there, as a trading service does: the hold gets nobody out and locks nothing; the END does.
 
 ---
 
@@ -789,7 +827,7 @@ You record, convert and launch the same as with a car. What changes is how it ri
 
 ### 9B.2 — How to record on a motorbike
 
-Same as a car: **NUMPAD 5** to start and to stop (§5, §7). Get on, start the engine, record, ride and finish **stopped**.
+Same as a car: **NUMPAD 5** to start and to stop (§5, §7). Get on, start the engine, record, ride and finish **stopped**. **Finish on a straight**: the last few meters with the handlebar straight, braking until you stop. If you finish turning at walking pace, the bike can end up half a meter from the point (§7.1).
 
 **Walking the bike is fine.** If you get it out of a spot by walking it backward, or you walk a short stretch forward, record it that way, with the engine on. The wizard detects those stretches (`[moto] caminando: … se reproduce por empuje` = "walking: … replayed by pushing") and the NPC repeats them **at your speed**, pushing the bike with the rider seated. It looks like walking, with the game's animation, **backward and forward**. If you turned the bike while pushing it (for example, backing it out of a spot and pointing it another way), the NPC reproduces that turn and corrects if it drifts off the line. Afterwards it respects the wait you made and starts off in first gear, at full throttle.
 
@@ -1085,7 +1123,7 @@ Plays a sound **once**, in 3D, attached to the vehicle (it moves with it). You d
   ```
 - **Pitfalls:**
   - During the start wait (spawn-hold) the freeze is not in charge yet: that phase runs first (engine on, brake applied) and the vehicle switches to driving anyway; only then is it locked in place. An event at the start of the route with `freeze_vehicle` works, but a `stop_engine` at the same time gets undone (see `stop_engine`).
-  - `guard_stop` uses the **same** freeze: when it finishes it releases it, even if you froze it separately.
+  - `guard_stop` with the hard stop (without the 1.2 brain) uses the **same** freeze: when it finishes it releases it, even if you froze it separately. With 1.2 it brakes smoothly and does not touch it.
   - Events are still checked with the vehicle frozen: a `timer` or a `player_in_radius` can release it.
 - **Brain 1.2:** yes. With the vehicle frozen, the 1.2 actuator steps aside and brake and handbrake are applied.
 
@@ -1099,7 +1137,7 @@ Releases the freeze of `freeze_vehicle`: it takes off the handbrake and the vehi
   ```json
   { "verb": "unfreeze_vehicle", "delay": 10 }
   ```
-- **Pitfalls:** it also releases the freeze of a `guard_stop` in progress: the vehicle leaves with the guards outside.
+- **Pitfalls:** it also releases the freeze of a **hard** `guard_stop` in progress: the vehicle leaves with the guards outside.
 - **Brain 1.2:** yes.
 
 ##### `stop_route`
@@ -1317,7 +1355,7 @@ Dismounts the **crew** (the `Crew` bots) that is seated, except the one driving.
 
 The **stop with full escort** in a single verb:
 
-1. **Freezes** the vehicle and waits for it to drop below 3 km/h (checks every 0.5 s, up to 10 s; after that it deploys anyway).
+1. **Brakes.** With the 1.2 brain, a **smooth stop**: it follows the line and brakes until it stands still at a point a few meters ahead (if the take has a recorded stop there, at that stop), and the deployment starts with the vehicle still. Without 1.2, on a motorbike, or if the smooth stop is not possible at that moment (a recovery in progress, the end right ahead), it **freezes** the vehicle and waits for it to drop below 3 km/h (checks every 0.5 s, up to 10 s; after that it deploys anyway).
 2. **Deploys**: same as `dismount_guard`, but with a ring of `radius` meters (leash 2 m further out).
 3. **Waits** and exits on the first of these three:
    - **area clear**: `holdS` seconds have passed **and** there have been `clearS` seconds in a row without combat;
@@ -1325,7 +1363,7 @@ The **stop with full escort** in a single verb:
    - **cap**: `maxS` seconds have passed, no matter what.
 4. **Fall back**: the survivors walk back to their seats, to wherever the vehicle is.
 5. **Boarding**: waits until all survivors are seated, or `boardS` seconds at most. Whoever did not make it **stays behind**.
-6. **Unfreezes** and the route carries on.
+6. **Releases the stop** and the route carries on from there.
 
 "Combat" means: any crew bot with a high threat level (the same threshold eAI uses to start fighting), or the group in combat.
 
@@ -1335,10 +1373,11 @@ The **stop with full escort** in a single verb:
   { "verb": "guard_stop", "radius": 10, "holdS": 30, "clearS": 5, "maxS": 180, "boardS": 40, "unreachableS": 15 }
   ```
   `{ "verb": "guard_stop" }` on its own already works with the defaults.
-- **What you see in the log:** `[MISION] wp N: guard_stop · radio ... -> freeze y espero la parada` (= "radius ... -> freeze and wait for the stop"), `despliegue X/Y` (= "deployment X/Y"), `combate -> retengo` (= "combat -> holding"), `zona limpia tras ... -> repliegue` (= "area clear after ... -> fall back") (or `amenaza fuera de la correa` = "threat outside the leash", or `tope de` = "cap of"), `embarcados X/Y ... -> sigue` (= "boarded X/Y ... -> moves on").
+- **What you see in the log:** `[MISION] wp N: guard_stop · parada SUAVE (siguiendo la linea hasta el hold) · radio ...` (= "smooth stop (following the line up to the hold) · radius ..."; or `parada DURA (congelado)` = "hard stop (frozen)"), `despliegue X/Y` (= "deployment X/Y"), `combate -> retengo` (= "combat -> holding"), `zona limpia tras ... -> repliegue` (= "area clear after ... -> fall back") (or `amenaza fuera de la correa` = "threat outside the leash", or `tope de` = "cap of"), `embarcados X/Y ... -> sigue` (= "boarded X/Y ... -> moves on").
 - **Pitfalls:**
   - It needs a crew declared in `Crew` in the header. Without `Crew` nobody gets out: the vehicle stays stopped for about `holdS` seconds and moves on *(from the code; not tested in game)*.
-  - It uses the **same** freeze as `freeze_vehicle`: when it finishes it releases it even if you froze it separately, and an `unfreeze_vehicle` in between releases the vehicle with the guards outside.
+  - With the **hard** stop it uses the **same** freeze as `freeze_vehicle`: when it finishes it releases it even if you froze it separately, and an `unfreeze_vehicle` in between releases the vehicle with the guards outside. With the smooth stop (1.2 brain) the freeze is not touched.
+  - **Where to put it** *(measured)*: a `guard_stop` where the take doesn't brake, right before a final climb, leaves the vehicle without the take's momentum to climb it (an 8-10 % grade in the last meters got it stuck 6 times out of 7). Put it on flat ground and away from the end, or better: **mark the stop with NUMPAD 4 while recording** and the vehicle brakes as you did.
   - While the crew re-boards, events are not checked.
   - The deployed group's faction is that of the first `Crew` bot; the `faction` field of the others is not used. With `Deploy.IgnoreInfected` (default `true`), the guards and the infected ignore each other.
 - **Brain 1.2:** yes (it works on the same freeze).
@@ -1858,6 +1897,11 @@ If you press Load again on a route that is already running, **it is not launched
 
 The number stays still for a moment when the route part is done and then goes on with the tape: it is a % of what has been read, not a made-up bar, and it does not show 100 until loading has really finished.
 
+**Since 1.3, everything heavy queues up as well.** Not only the load: creating the vehicle, the driver and each crew bot, boarding, retiring and the brain's setup steps go through **a single gate, one operation per frame**, in order of arrival. Two heavy things no longer land in the same frame, not even when launching fifteen routes at once: each one takes a few frames longer, and the server does not feel it. In the RPT it shows as `[EMBUDO] <route> <operation>: X ms · espero N cuadro(s)`.
+
+**And a route already read is not read again.** When a route is relaunched (a service that loops, a mod that launches the same course every so often), its waypoints come from the server's memory, with a copy per vehicle: `[CACHE] <route>: N waypoints copiados de la cache, sin abrir el CSV`. It is read again only if the file changed (compared by size and fingerprint; the header, whole). **The first read** goes in slices of a few milliseconds: `[LOADTIME] ... X ms de trabajo en N tajada(s)`.
+
+
 **The knob** (optional) goes in `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`:
 
 ```json
@@ -1881,6 +1925,8 @@ If a seat does not get filled (a bot that died on spawning, one that cannot find
 [MUSTER] TOPE de 120 s: arranca con 2/3 plazas ocupadas -- 1 bot(s) no subieron
 ```
 
+**There is a safety net before the cap** *(since 1.3)*: if after **15 s** a living bot is still on foot **with everything it needs to get in** (the formation, the driver seated, a free seat with its door clear, no threat), the framework **seats it by teleport** in the first free seat and carries on: `[MUSTER] RED a los 15 s: el bot 0 no subio con las condiciones de eAI cumplidas -> teleport a la plaza 1` (= "NET at 15 s: bot 0 did not get in with eAI's conditions met -> teleport to seat 1"). A vehicle with a door the bot can't work out (measured on an armored vehicle) no longer costs two minutes. The 120 s cap stays for what the net can't solve: a threat, no seats, no driver. Every `[MUSTER]` line carries the route's name.
+
 - `CrewBoardTimeoutS` — seconds of waiting before it leaves anyway; it goes in the same `BZAutoDrive_settings.json`. Default **120**. It is a **safety net, not a tuning knob**: it must be far above what a healthy boarding takes. If you see `[MUSTER] TOPE` (= "cap") in normal runs, the number is not the problem.
 
 
@@ -1890,6 +1936,13 @@ If a seat does not get filled (a bot that died on spawning, one that cannot find
 [CARGA] PATRULLA LISTA: 1193 wps + 19075 frames de cinta en 264 tajadas / 8200 ms de reloj
 [CARGA] PATRULLA reparto: leer ruta 358 ms · armar ruta 330 ms · leer cinta 1105 ms · armar cinta 12 ms · PEOR TAJADA 6.1 ms
 ```
+
+**How much it costs your server** *(measured with 20 vehicles at once)*. We don't give you fps or milliseconds: they depend on your CPU and your mods, and a number measured on another machine is of no use to you. What holds on any server is the **proportion** against something already running on it:
+
+- **A vehicle on a route costs about as much as three seated eAI bots, plus its own driver** (which is one more bot). If your server is slower, both get slower in the same proportion. The comparison is against a **seated** bot: one walking or fighting costs more than that.
+- **It grows evenly:** every vehicle adds the same, whether you have 5 or 20. There is no point where the framework takes off.
+- **The heavy work goes one at a time:** loading a route, creating the vehicle, the driver and the crew, boarding and retiring all go through a single gate, **one operation per frame**, however many vehicles there are. The only thing you might notice is the engine creating the vehicle when a new lap starts, and two never land on the same frame.
+- **Tested with up to 20 vehicles at once.** If your server is already tight with its bots, count each vehicle as four more seated bots.
 
 ### 13.3 — Notifications: who sees what
 
@@ -1936,6 +1989,23 @@ And by chat, to those on board: `{ "verb": "ui_broadcast", "value": "passengers"
 ---
 
 
+### 13.4 — Vehicles look smooth: the client filter *(since 1.3)*
+
+A vehicle driven by the framework is moved by the server; every player receives it over the network, and the orientation arrives **in steps** even when the vehicle turns evenly. It looked like a constant shake, especially standing on top of a bus or watching it up close.
+
+**Since 1.3 the client smooths what it draws**, and nothing else: not the position, not the speed, not the physics, not the driving. The server marks which vehicles it drives; the filter runs only on those, only on the client, and a vehicle with a **player at the wheel** is not filtered. It comes **on** and there is nothing to configure.
+
+**To turn it off** (for every player, including those who join later), in `<server>\profiles\BZ_AutoDrive\BZAutoDrive_settings.json`:
+
+```json
+{
+  "DisableClientVehicleSmoothing": true
+}
+```
+
+If it is off, vehicles look as they did before 1.3.
+
+
 ## 14. Audio (.ogg) — give your events a voice
 
 With the `play_sound` verb (in a NUMPAD 4 event) you play a **3D sound attached to the vehicle**. You provide the audio in your addon:
@@ -1969,6 +2039,19 @@ Some classics (the fine detail + more cases are in the **AI knowledge pack**, se
 > **Performance tip — run the server on another PC.** If you iterate a lot (record, convert, test), it is worth **running the server on a 2nd PC** while your main PC runs the **game client + the Wizard and the tools**. That way neither of the two chokes and the runs are smoother. To use it: you *copy* the `@BZ_AutoDrive` to the 2nd server (the same one your client uses) and set its routes folder in **[6] Configure paths**: the Wizard copies the routes to it when converting.
 
 ---
+
+**New RPT lines since 1.3, and what they mean:**
+
+| Line | What happened |
+|---|---|
+| `[CACHE] <route>: N waypoints copiados de la cache, sin abrir el CSV` | the route was already read: the relaunch did not read the file |
+| `[CACHE] <route>: la toma o su header cambiaron ... se relee` | you changed the `_wp.csv` or the `_hdr.json`: it is read again and replaced |
+| `[CARGA] <route>: binario de la cinta descartado (<reason>): se carga el CSV` | the `_cinta.bin` is missing, or does not match its CSV: the route works anyway; `[B]` in the wizard rebuilds it |
+| `[EMBUDO] <route> <operation>: X ms · espero N cuadro(s) · quedan P` | a heavy operation waited its turn; normal when launching several routes at once |
+| `[C12] RED: nadie leyo el FIN en 60 s ... -> retiro` | a route launched by a mod ended badly and nobody claimed it: the framework retired it |
+| `[C12] RED: FIN visto hace N s y el vehiculo sigue` | a mod read that route's end and did nothing with the vehicle (every 5 min) |
+| `[CLEANUP] ... paso 5: N ocupante(s) sentado(s) -> el vehiculo NO se borra` | a player is seated: retiring waits for them to get out |
+
 
 ### 15.1 — AI logger — Boris's black box (ai_run)
 
@@ -2093,7 +2176,7 @@ So you know what to ask of the framework and what not to:
 - **Maneuvers (parking / reverse / K-turn):** the **reverse→forward interchange** —the hardest point of the control, a K-turn inside a shed— is **solved**: it is **auto-detected from the direction change** you made when recording (you don't need to mark it — §9.4), it works with physical rules and **no per-vehicle constants**, and it was tested on a broad bank (Golf FWD, BMW E60, OffroadHatchback, Hatchback FWD, mid-engine Porsche GT2RS, Sedan, Toyota 86 RWD and the Truck_01 truck) with **0 AutoRecovery recoveries**.
   **The condition is yours, and there is only one: make the direction change on a straight, not in a curve** (§9.5). The steering angles of the reverse belong to the vehicle, not to the road.
   **For the same route on another vehicle, record it with that vehicle** — when there is a maneuver in the route, that is the only thing that generalizes.
-- **Arrival precision (endpoint).** The final brake is built from what the vehicle's config declares and what was measured on it (the faster it arrives, the earlier it is armed: with the braking distance its real speed needs, plus a margin), and it **parks about 10 cm before the point**, on purpose. The brake is planned with **the braking you measured yourself in the take** when the take ends braking hard (`[C12] FRENADA de la toma: 5.4 m/s2 …` in the RPT): the brake a config declares tends to be optimistic. From a motorbike to a bus, the same rule: it isn't relaxed by size, because the framework has to work for vehicles we don't know yet. **The numbers, vehicle by vehicle, are in §17.1.**
+- **Arrival precision (endpoint).** The final brake is built from what the vehicle's config declares and what was measured on it (the faster it arrives, the earlier it is armed: with the braking distance its real speed needs, plus a margin), and it **ends up about 10 cm from the point**: it aims at the point, and that is where the real brake leaves it. The brake is planned with **the braking you measured yourself in the take** when the take ends braking hard (`[C12] FRENADA de la toma: 5.4 m/s2 …` in the RPT): the brake a config declares tends to be optimistic. From a motorbike to a bus, the same rule: it isn't relaxed by size, because the framework has to work for vehicles we don't know yet. **The numbers, vehicle by vehicle, are in §17.1.**
 - **The verdict: when a route is complete** *(since 1.2.1)*. The end of a route is decided **with the vehicle at rest**: half a second after it stops (at most about 3 s after arriving) the RPT prints `[C12] REPOSO tras T s: a X m de la pose final (longitudinal a m, lateral l m)` (= "AT REST after T s: X m from the final pose"), and right after it the `FIN`. `ROUTE_COMPLETE` requires **all three**: (1) at rest, **0.25 m or less** from the take's final point; (2) **no crash against an object** during the whole run (a bump or a hit against the terrain don't count); (3) **no physical AutoRecovery intervention** (maneuver or relocation; soft restarts don't count, but are listed). If any fails, `ROUTE_INCOMPLETE`, and the same line says why: `quedo a X m de la pose final en reposo` (stopped X m from the final pose at rest), `choco contra un objeto: wp N contra <class>` (hit an object), `AR fisico con accion: wp N <action>` (physical AR). Same for cars and motorbikes. *(In 1.2 an arrival between 0.25 m and 1 m counted as complete with a warning: not anymore.)*
 - **Which vehicles we tested.** More than 40 classes from several authors: cars, sports cars, 4x4s, vans, buses, trucks (up to a 7.5 m wheelbase), military vehicles, tractors and motorbikes (§17.1).
 - **What it does NOT do:** it doesn't invent routes (it needs your recording), and it doesn't discover behavior beyond what you demonstrated. It's deterministic and inspectable — that's its appeal.
@@ -2105,12 +2188,32 @@ So you know what to ask of the framework and what not to:
 These numbers come from the test server's logs, **with the 1.2 brain**. Each row is a vehicle, and each "arrival" is a run that finished its route; the distance is what was left between the vehicle and the recorded final point.
 
 **How to read it:**
-- **The median sits around 0.10-0.20 m on purpose.** The final brake parks about **10 cm before** the point: overshooting is worse than falling short. The target is **0.25 m**: since 1.2.1, more than that at rest is `ROUTE_INCOMPLETE` (the verdict, above). *(The numbers in this table are from 1.2; with 1.2.1, on the test routes, arrivals land at 0.10-0.15 m.)*
+- **The median sits around 0.10-0.12 m.** The brake aims at the point and ends up about **10 cm** from it, which is where the real brake leaves it. The target is **0.25 m**: since 1.2.1, more than that at rest is `ROUTE_INCOMPLETE` (the verdict, above). *(The first table is from 1.3; the two below, from 1.2.1 and 1.2, stay as history.)*
 - **p90** = 9 out of 10 arrivals ended up at that distance or closer.
 - **Runs that did not arrive are not in the table**: they are counted separately, below.
 - A run repeated from the same starting point can give almost the same number: more arrivals don't always mean more variety.
 
-**With the current version of the arrival (since 2026-09-17).** 52 arrivals: median **0.11 m**, **87 %** within 0.25 m, none farther than 0.36 m. In that period, 7 runs did not arrive (vehicle stuck with no way out, or driver dead).
+**With 1.3 (November 2026): a mountain circuit with climbs, 13 vehicles at once and, in half of the runs, vehicle wrecks on the route.** 227 arrivals: median **0.11 m**, **97 %** within 0.25 m. Cars, 4x4s, the truck and the armored vehicle all close at a **0.10-0.15 m** median, the heavy ones and uphill too; of their 159 arrivals, only one ended up more than 0.25 m away (the armored vehicle, after hitting a tanker wreck from the event). Motorbikes close with their own driver (§12): two of them at a fixed 0.02 and 0.19 m; the `Motorbike_01` arrives within 0.02-0.05 m four times out of ten and at 0.4-0.7 m the other six, coming in crooked (5-12°).
+
+| Type | Vehicle (class) | Arrivals | Median | p90 | Within 0.25 m |
+|---|---|---|---|---|---|
+| car | `Sedan_02` | 20 | 0.10 m | 0.10 m | 100 % |
+| car | `minicooper` | 18 | 0.11 m | 0.11 m | 100 % |
+| car | `V140` | 18 | 0.11 m | 0.11 m | 100 % |
+| sports car | `rx8hachi` | 14 | 0.11 m | 0.11 m | 100 % |
+| sports car | `Star_Agera` | 12 | 0.15 m | 0.16 m | 100 % |
+| 4x4 / pickup | `Expansion_Landrover` | 17 | 0.10 m | 0.10 m | 100 % |
+| 4x4 / pickup | `Star_Jeep_Rubi_Extra` | 18 | 0.11 m | 0.17 m | 100 % |
+| 4x4 / pickup | `Star_Chevrolet_Z71` | 14 | 0.11 m | 0.13 m | 100 % |
+| truck | `Star_Oshkosh_M1083` | 16 | 0.12 m | 0.14 m | 100 % |
+| military | `Star_APC_Cobra_camoorange` | 12 | 0.10 m | 0.11 m | 92 % |
+| motorbike | `Motorbike_02_Yellow` | 26 | 0.02 m | 0.03 m | 100 % |
+| motorbike | `Motorbike_02_Red` | 32 | 0.19 m | 0.19 m | 100 % |
+| motorbike | `Motorbike_01_Blue` | 10 | 0.43 m | 0.56 m | 40 % |
+
+*The `Motorbike_01_Blue` comes from a take that ends turning at walking pace: that is why it ends up far. With a take that ends on a straight (§7.1) it closes within centimeters.*
+
+**With 1.2.1 (since 2026-09-17).** 52 arrivals: median **0.11 m**, **87 %** within 0.25 m, none farther than 0.36 m. In that period, 7 runs did not arrive (vehicle stuck with no way out, or driver dead).
 
 | Type | Vehicle (class) | Arrivals | Median | p90 | Within 0.25 m |
 |---|---|---|---|---|---|
@@ -2560,7 +2663,7 @@ What you need to know:
 - **What happens when the route closes** (`RunnerRouteEnded()`). It depends on how it ended and on how you launched it:
   - **`ROUTE_COMPLETE` of a runner launched with `RespawnFromPath`** (path B, and also the player): the vehicle **is retired** after `EndHoldSeconds` seconds (0 = immediately) and the runner **leaves the registry**.
   - **`ROUTE_COMPLETE` of a route launched with `PlayRouteByName`** (or the server's default route): it is **relaunched** after `RespawnDelay` seconds (`0` means 60 s).
-  - **`ROUTE_INCOMPLETE` or `STUCK`:** the vehicle **stays still**, with no cycle. Retiring it, replacing it or leaving it there is up to your mod.
+  - **`ROUTE_INCOMPLETE` or `STUCK`:** the vehicle **stays still**. Retiring it, replacing it or leaving it there is up to your mod. **Since 1.3 there is a safety net:** if **nobody reads the end** (`RunnerRouteEnded()`, `RunnerRouteCompleted()` or `RunnerEndReason()`) within **60 s**, the framework retires it on its own, like a panel route (and never with a player aboard: it waits). If your mod **read the end** it is in charge: the net does not touch it, and the RPT warns every 5 minutes (`[C12] RED: FIN visto hace N s y el vehiculo sigue`) in case you forgot. If you launched it from the panel or it is the default route, it concludes on its own (it retires or respawns like a complete one).
   - With `holdAtStops`, when it reaches the last stop, the vehicle stays still in the hold until you release it.
 - **Which one to use:** A for a trip that another system triggers (a taxi, a mission); B for a service with several vehicles and its own rules.
 
@@ -2585,7 +2688,7 @@ What you need to know:
 | `RunnerBloqueadoMotivo()` / `RunnerBloqueadoDesdeS()` | why (with the last crash, if there was one) / for how many seconds |
 | `RunnerRecuperando()` / `RunnerRecuperandoQue()` | `bool`: any recovery in progress (hill start, moving away, relocating, ladder) / which one. It answers "will it be able to move now?". Whenever `RunnerBloqueado()` is `true`, this one is too |
 | `RunnerChoqueHaceS()` | `float`: seconds since that vehicle's last crash (`-1` if it has not crashed). It lets **both** vehicles in a crash show up, even if only one of them stays blocked |
-| `RunnerEsperandoCabecera()` / `RunnerEsperandoCabeceraS()` | `bool`: it is waiting for its start point to be freed / for how many seconds |
+| `RunnerEsperandoCabecera()` / `RunnerEsperandoCabeceraS()` | `bool`: it is waiting for its start point to be freed / for how many seconds | *(Since 1.3 it is also `true` for the few frames between requesting the launch and creating the vehicle: the read and the spawn wait their turn. To tell them apart, `RunnerEnEmbudo()`.)*
 
 With brain 1.1 (`RunnerFellBackTo11()`), the block, recovery and crash methods return "nothing".
 

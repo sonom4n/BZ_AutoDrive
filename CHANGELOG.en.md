@@ -6,6 +6,22 @@ Newest on top. Up to 1.1 the **driving** (*config-as-manual* model) stayed stabl
 
 ---
 
+## v1.3
+
+**More vehicles at once with less load on relaunches; the server never deletes a vehicle with a player seated; and a run that fails no longer stays frozen.** Tested on a server with DayZ **1.30.164** and Expansion.
+
+- **Improved: the vehicle stops at the final point.** It used to brake too hard, stop halfway through the last few meters and finish by creeping up to the point; uphill or with heavy vehicles it could end up more than a meter away. Now it doses the brake with what the vehicle really brakes and stops at the point, within about 10 cm. Uphill it sets off without rolling back, and it arrives straight.
+- **Improved: when the route ends, the seated player gets out on their own and the vehicle stays locked.** When a run ends, the player who was riding seated gets out of the vehicle (with the usual animation, no notice: if you want to warn them, you add an event), and the vehicle stays locked to players until the framework retires it; the same when you stop it from the panel. That way retiring never finds anyone aboard. It applies to motorbikes too.
+- **New: vehicles look smooth from any client (client filter).** What a player sees of a framework-driven vehicle arrived over the network in steps and looked like it was shaking, especially on top of it or close by. A filter on the client smooths only what is drawn: not the position, not the physics, not the driving. It comes **on**; `"DisableClientVehicleSmoothing": true` in `BZAutoDrive_settings.json` turns it off for everyone (§13.4).
+- **Improved: performance with many vehicles.** Everything heavy in the framework —reading a route, creating the vehicle, the driver and the crew, boarding, retiring— goes through **a single gate, one operation per frame**, and no longer lands together in the same frame. A route already read is **not read again** on relaunch (it stays in memory, with a copy per vehicle, until the file changes), and the first read goes **in slices of a few milliseconds**. The AutoRecovery rescue (the search over the tape) and the route's lateral-limit computation are **much faster, with the same answer**.
+- **New: the binary tape (`_cinta.bin`).** A copy of `_cinta.csv` that the server loads much faster. The wizard creates it when converting (**"Convert & binarize"**), and option **`[B]`** generates it for the routes you already had (`[T]`: all the missing ones). It is copied to the mirror server along with the route. Without a binary, or with an outdated one, the server loads the CSV and says so in the RPT (§6B).
+- **New: route registry.** Several vehicles on the same route load it **once** and share it. Each route stays loaded **until the server restarts**; only the old version of a route you reconverted is released when its last vehicle retires.
+- **Improved: a run that fails concludes on its own.** Launched from the panel or as the default route, a route that ends badly (`ROUTE_INCOMPLETE`, `STUCK`) retires or respawns like a complete one. Launched by a mod, the mod receives the end and decides; **if nobody claims it within 60 s, the framework retires the vehicle** (never with someone aboard); if a mod read it and does nothing, a notice every 5 minutes in the RPT (§B.7).
+- **Improved: retiring counts seated players two ways.** The datum that can fail on 1.30 (the crew list) is no longer the only one: every connected player is checked too. A vehicle with a player seated is **never deleted**; it waits for them to get out.
+- **Compatibility: DayZ 1.30.164.289.** That version's compiler is stricter than the previous one; the package compiles and runs with it.
+
+---
+
 ## v1.2.5
 
 **A smooth stop anywhere on the route, for mods that use the framework**, and the panel with the exact version. Tested on DayZ 1.30 and its Update 2.

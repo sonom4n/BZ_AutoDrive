@@ -1599,6 +1599,13 @@ def main():
     if args.cinta:
         info_cinta = {}
         n_cinta = emitir_cinta(args.frame, os.path.join(args.profile, base + "_cinta.csv"), moto_neutral, moto_idle, info_cinta)
+        # the binary the server reads first; if this fails, the server just reads the CSV
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import cinta_binaria
+            print("binary tape:", cinta_binaria.escribir(os.path.join(args.profile, base + "_cinta.csv"), forzar=True)[0])
+        except Exception as e_bin:
+            print("binary tape NOT written:", e_bin)
         if n_cinta:
             hdr["CintaRows"] = n_cinta
         if moto and "caminata" in info_cinta:

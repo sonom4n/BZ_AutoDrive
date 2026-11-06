@@ -83,6 +83,7 @@ modded class CarScript {
         RegisterNetSyncVariableBool("m_BZLightsWanted");
         RegisterNetSyncVariableInt("m_BZLightPulse");
         RegisterNetSyncVariableBool("m_BZPartsLocked");
+        RegisterNetSyncVariableBool("m_BZFiltroMarca");
     }
 
     // VEHICULO INVIOLABLE. Con el auto parado, el motor deja soltar ruedas, puertas, bateria y demas (CarScript.
@@ -100,6 +101,31 @@ modded class CarScript {
     }
 
     bool BZPartsLocked() { return m_BZPartsLocked; }
+
+    // LA MARCA DEL FILTRO DE CLIENTE (BZClienteFiltro): la pone el server en los vehiculos que maneja el framework. NetSync: le
+    // llega a todo jugador, tambien al que entra despues. Sin marca y sin estado, EOnPostFrame no hace otra cosa que comparar.
+    bool m_BZFiltroMarca;
+    private ref BZClienteFiltroEstado m_BZFiltroEst;
+    void BZSetFiltroMarca(bool marca) {
+        if (!GetGame().IsServer()) return;
+        if (m_BZFiltroMarca == marca) return;
+        m_BZFiltroMarca = marca;
+        SetSynchDirty();
+    }
+    BZClienteFiltroEstado BZFiltroEstado() {
+        if (!m_BZFiltroEst) m_BZFiltroEst = new BZClienteFiltroEstado();
+        return m_BZFiltroEst;
+    }
+    BZClienteFiltroEstado BZFiltroEstadoSiHay() {
+        return m_BZFiltroEst;
+    }
+    void BZFiltroOlvidar() {
+        m_BZFiltroEst = null;
+    }
+    override void EOnPostFrame(IEntity other, int extra) {
+        super.EOnPostFrame(other, extra);
+        if (m_BZFiltroMarca || m_BZFiltroEst) BZClienteFiltro.Cuadro(this, m_BZFiltroMarca);
+    }
 
     override bool CanReleaseAttachment(EntityAI attachment) {
         if (m_BZPartsLocked) return false;
@@ -454,7 +480,10 @@ modded class CarScript {
         // el grabador cuadro a cuadro (cliente que maneja, antes de buscar runner), el probe del server y el receptor
         // fisico del runner: BZVehiculoGanchos.PostSimulate, compartido con la moto. Devuelve el runner dueno.
         BZBusService srv = BZVehiculoGanchos.PostSimulate(this, BZV(), timeSlice);
-        if (!srv) return;
+        if (!srv) {
+            if (m_BZFiltroMarca) BZSetFiltroMarca(false);   // ya no lo maneja ningun runner, por el camino que sea
+            return;
+        }
 
         // Cuando GearStrategy="follow_recording" esta activo, la AT por RPM no
         // debe correr: el recording es source of truth para gear. Si la AT

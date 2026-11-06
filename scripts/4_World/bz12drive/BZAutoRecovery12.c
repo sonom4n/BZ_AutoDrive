@@ -553,6 +553,15 @@ class BZAutoRecovery12
         return m_FisActivo && m_FisAgotado;
     }
 
+    // G: el controlador agota la escalera por presupuesto (tantas escaleras, o tanto tiempo, sin avanzar): lo que sigue es STUCK con FIN
+    void AgotarPorTope(string motivo)
+    {
+        m_FisActivo = true;
+        m_FisAgotado = true;
+        m_FisPend = 0;
+        if (!Silencio()) Print("[AR] escalera fisica AGOTADA por tope: " + motivo);
+    }
+
     bool FisicoHabilitado()
     {
         return m_FisEn;

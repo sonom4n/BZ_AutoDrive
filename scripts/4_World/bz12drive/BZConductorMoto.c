@@ -791,112 +791,30 @@ class BZConductorMoto {
 
     // LA AUTORIDAD DE LA CINTA, al cargar: los toques grabados con el slew del conductor contra la guinada geometrica de
     // la toma (rumbo por cuadro; el dt sale del arco y la velocidad grabadas), por franja fina y retraso (ver AUTF_*)
+    // La mide BZAutCintaMedida (BZAutCinta.c), con el mismo calculo en tajadas y guardada por toma; el runner se la da
+    // por TomarAutoridadCinta antes del primer cuadro. Esto es el RESPALDO: si llego al primer cuadro sin ella, se mide de una vez (como antes)
     void MedirAutoridadCinta(BZCintaRunner c) {
-        int nF = c.Frames();
-        if (nF < 50 || !c.TieneSteering()) {
-            BZBusLog.Info("[MOTO] autoridad por franja fina: la cinta no trae el steering grabado; la ley directa usa el envelope");
-            return;
+        BZAutCintaMedida mA = new BZAutCintaMedida();
+        while (!mA.Avanzar(c, 100000.0)) {
         }
-        array<float> teclaSlew = new array<float>();
-        array<float> dtCuadro = new array<float>();
-        array<float> guinada = new array<float>();
-        float slewPrev = 0;
-        int k;
-        for (k = 0; k < nF; k++) {
-            float dtk = -1;
-            float kmhK = c.KmhDeFrame(k);
-            if (k < nF - 1 && kmhK >= AUTF_KMH_MIN) {
-                float dsK = c.SDeFrame(k + 1) - c.SDeFrame(k);
-                if (dsK > 0.001) dtk = dsK / (kmhK / 3.6);
-            }
-            if (dtk > 0.2) dtk = -1;   // un salto de la cinta no es un cuadro
-            dtCuadro.Insert(dtk);
-            float pasoSl = 1.0;
-            if (dtk > 0) pasoSl = RATE * dtk;
-            float dSl = c.SteerDeFrame(k) - slewPrev;
-            if (dSl > pasoSl) dSl = pasoSl;
-            if (dSl < -pasoSl) dSl = -pasoSl;
-            slewPrev = slewPrev + dSl;
-            teclaSlew.Insert(slewPrev);
-        }
-        for (k = 0; k < nF; k++) {
-            float rG = -99;
-            if (k > 0 && k < nF - 1 && dtCuadro.Get(k - 1) > 0 && dtCuadro.Get(k) > 0) {
-                float dH = Envolver((c.RumboDeFrame(k + 1) - c.RumboDeFrame(k - 1)) * Math.DEG2RAD);
-                rG = dH / (dtCuadro.Get(k - 1) + dtCuadro.Get(k));
-            }
-            guinada.Insert(rG);
-        }
-        int nSlots = AUTF_N * AUTF_LAGS;
-        array<float> acN = new array<float>();
-        array<float> acSx = new array<float>();
-        array<float> acSy = new array<float>();
-        array<float> acSxx = new array<float>();
-        array<float> acSxy = new array<float>();
-        array<float> acSyy = new array<float>();
-        int iz;
-        for (iz = 0; iz < nSlots; iz++) {
-            acN.Insert(0);
-            acSx.Insert(0);
-            acSy.Insert(0);
-            acSxx.Insert(0);
-            acSxy.Insert(0);
-            acSyy.Insert(0);
-        }
-        for (k = 0; k < nF; k++) {
-            if (dtCuadro.Get(k) <= 0) continue;
-            int bK = FranjaFinaDe(c.KmhDeFrame(k));
-            float xK = teclaSlew.Get(k);
-            int li;
-            for (li = 0; li < AUTF_LAGS; li++) {
-                int jK = k + RetrasoCuadros(li);
-                if (jK >= nF) continue;
-                float yK = guinada.Get(jK);
-                if (yK < -90) continue;
-                int ixK = bK * AUTF_LAGS + li;
-                acN.Set(ixK, acN.Get(ixK) + 1);
-                acSx.Set(ixK, acSx.Get(ixK) + xK);
-                acSy.Set(ixK, acSy.Get(ixK) + yK);
-                acSxx.Set(ixK, acSxx.Get(ixK) + xK * xK);
-                acSxy.Set(ixK, acSxy.Get(ixK) + xK * yK);
-                acSyy.Set(ixK, acSyy.Get(ixK) + yK * yK);
+        TomarAutoridadCinta(mA);
+    }
+
+    // la autoridad de la cinta ya medida (por el runner, en tajadas, o de la cache de la toma): se copia por franja y se anuncia con la misma
+    // linea de siempre mas su origen. Sin steering en la cinta no hay medida y la ley directa usa el envelope, como antes
+    void TomarAutoridadCinta(BZAutCintaMedida mA) {
+        m_AutCintaHecha = true;
+        if (!mA || !mA.Lista()) return;
+        mA.m_Usos = mA.m_Usos + 1;
+        if (!mA.m_SinSteering) {
+            int bT;
+            for (bT = 0; bT < AUTF_N; bT++) {
+                m_AutCinta.Set(bT, mA.m_Aut.Get(bT));
+                m_AutCintaR.Set(bT, mA.m_R.Get(bT));
+                m_AutCintaN.Set(bT, mA.m_N.Get(bT));
             }
         }
-        string lCon = "";
-        string lSin = "";
-        int bF;
-        for (bF = 0; bF < AUTF_N; bF++) {
-            float mejorR = -2;
-            float mejorA = -1;
-            int mejorN = 0;
-            int lg;
-            for (lg = 0; lg < AUTF_LAGS; lg++) {
-                int ixF = bF * AUTF_LAGS + lg;
-                float nn = acN.Get(ixF);
-                if (nn < AUT_MIN_N) continue;
-                float vx = acSxx.Get(ixF) - acSx.Get(ixF) * acSx.Get(ixF) / nn;
-                float vy = acSyy.Get(ixF) - acSy.Get(ixF) * acSy.Get(ixF) / nn;
-                float cov = acSxy.Get(ixF) - acSx.Get(ixF) * acSy.Get(ixF) / nn;
-                if (vx <= 0.000001 || vy <= 0.000001) continue;
-                float rr = cov / Math.Sqrt(vx * vy);
-                if (rr > mejorR) {
-                    mejorR = rr;
-                    mejorA = cov / vx;
-                    mejorN = nn;
-                }
-            }
-            if (mejorR >= AUT_R_MIN && mejorA >= AUT_ABS_MIN && mejorA <= AUT_ABS_MAX) {
-                m_AutCinta.Set(bF, mejorA);
-                m_AutCintaR.Set(bF, mejorR);
-                m_AutCintaN.Set(bF, mejorN);
-                lCon = lCon + " " + NombreFranjaFina(bF) + " " + Red(mejorA) + " (r " + Red(mejorR) + ", n " + mejorN + ")";
-            } else {
-                lSin = lSin + " " + NombreFranjaFina(bF);
-            }
-        }
-        string lA = "[MOTO] autoridad de la CINTA por franja fina (rad/s por unidad; toques con slew " + Red(RATE) + "/s contra la guinada grabada):" + lCon;
-        if (lSin != "") lA = lA + " · sin medida (va el envelope):" + lSin;
-        BZBusLog.Info(lA);
+        BZBusLog.Info(mA.m_Linea + " · " + mA.Origen());
     }
 
     // LA AUTORIDAD PROPIA, andando: el volante filtrado (AUTP_FILTRO_S) contra la tasa de giro del cuerpo, por
@@ -1365,7 +1283,7 @@ class BZConductorMoto {
             return true;
         }
 
-        if (!m_AutCintaHecha) {
+        if (!m_AutCintaHecha) {   // el runner ya la trajo (TomarAutoridadCinta); esto es el respaldo, de una vez
             m_AutCintaHecha = true;
             MedirAutoridadCinta(c);
         }

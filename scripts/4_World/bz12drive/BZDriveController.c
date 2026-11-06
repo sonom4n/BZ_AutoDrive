@@ -202,6 +202,13 @@ class BZDriveController
     // el 107 imprimio 4 lineas en 13 s por un solo choque. Decision del analista: UNA LINEA POR EPISODIO, sin tope.
     private const float CHOQUE_EPISODIO_S = 5.0;   // un impacto a menos de esto del anterior es el mismo episodio
     private float m_ChoqueKmhPrev;
+    // ★ EL HUECO. Medido (05/11, guard_stop): el sampler no corre con el vehiculo congelado o retenido (SampleDrive12 vuelve antes), asi que
+    // la velocidad previa del detector quedo en la de ANTES del congelado (35 km/h) y la primera muestra al retomar (0,004 km/h en 0,025 s)
+    // dio -390 m/s2: un CHOQUE que no existio, y el AR se fue a FISICO «por choque reciente» (14 de 18 vueltas INCOMPLETE). Lo mismo deja
+    // cualquier camino que deje de muestrear con el vehiculo en marcha: freeze_vehicle, la emboscada, stop_route, la pausa, un HoldRunner duro.
+    // Una muestra que llega tras un hueco no se compara con nada: es la primera de nuevo.
+    private const float CHOQUE_HUECO_S = 0.2;   // mas que esto sin muestras = hueco (un cuadro son 25 ms; un tiron del server, 100-200)
+    private float m_ChoqueMuestraT;             // el reloj de la ultima muestra del detector
     private ref BZHistRuedas m_HistRuedas;   // las ruedas en el suelo de los ultimos cuadros (solo instrumento)
     private bool  m_AvanzoEsteTick;
     // El mecanismo de direccion solo salia en la caja negra, que vuelca cuando algo YA fallo.
@@ -684,6 +691,23 @@ class BZDriveController
     // Son dos variables distintas a proposito -- si Sample pisara el objetivo con el
     // valor rampeado, el volante se clavaria en el primer paso de rampa.
     private float m_TargetSteer;
+    // B: el remanente del cuadro anterior mientras el slam arranca en cuesta (ver EndpointFrameCuesta)
+    private float m_CuestaRemPrev;
+    private bool  m_CuestaRemOk;
+    // F: el arrastre entre vehiculos y la cesion de paso
+    private float  m_ArrS;            // segundos de contacto sostenido con m_ArrClase (un vehiculo)
+    private string m_ArrClase;
+    private bool   m_ArrAvisado;      // el EMPUJADO se dice una vez por episodio
+    private bool   m_CederActivo;
+    private float  m_CederT;          // segundos de cesion
+    private float  m_CederQuietoT;    // segundos quieto dentro de la cesion
+    private float  m_CederSinContT;   // segundos sin contacto dentro de la cesion
+    private int    m_Cesiones;
+    // G: el presupuesto de escaleras del AR
+    private int    m_EscAbiertas;
+    private float  m_EscT0 = -1;
+    private float  m_EscS0;
+    private bool   m_ArTopeDicho;
     private float m_AppliedSteer;
 
     // Ventana del BZLegView, en metros. Atras alcanza para medir pose; adelante cubre
@@ -831,6 +855,15 @@ class BZDriveController
         m_Slam.Reset();
         m_Derivation.Reset();
         m_Arbiter.Reset();
+    }
+
+    // ARRANCAR EN UN WP, antes del primer tick: el cursor de la ruta y el de la cinta. Sin AR: nada se trabo. Es el mismo arranque de siempre.
+    // Los dos ejes son distintos: la cinta se ancla por la posicion del wp grabado, nunca por el arco de la ruta.
+    void ArrancarEn(int wp, vector posGrabada)
+    {
+        if (!m_Ready) return;
+        SeekTo(wp);
+        if (m_Cinta) m_Cinta.AnclarArranque(posGrabada, m_Route.LegRev(m_Route.LegOf(wp)));
     }
 
     void Resume()
@@ -1837,26 +1870,7 @@ class BZDriveController
 
     private int WpMasCercanoEnLeg(vector p)
     {
-        int mejorW = m_Leg.legLo;
-        float dMinW = 1000000000.0;
-        int iW;
-        vector qW;
-        float dxW;
-        float dzW;
-        float d2W;
-        for (iW = m_Leg.legLo; iW <= m_Leg.legHi; iW++)
-        {
-            qW = m_Route.Pos(iW);
-            dxW = p[0] - qW[0];
-            dzW = p[2] - qW[2];
-            d2W = dxW * dxW + dzW * dzW;
-            if (d2W < dMinW)
-            {
-                dMinW = d2W;
-                mejorW = iW;
-            }
-        }
-        return mejorW;
+        return m_Route.MasCercanoEnRango(p, m_Leg.legLo, m_Leg.legHi);
     }
 
     // C1: config del ahogo (la entrega el servicio).
@@ -2000,12 +2014,18 @@ class BZDriveController
         }
         else if (m_Mode == BZDriveMode.BZDM_ENDPOINT)
         {
-            m_Slam.Actuate(st, m_Leg, m_Manual, m_SurfKind, m_Out);
-            ReportarSlam(st, dt);
-            if (m_Slam.IsLatched())
+            EnElCierreAntesDelSlam(st);   // E: un contacto reciente se decide ANTES de que el slam juzgue (puede sacar del ENDPOINT)
+            if (m_Mode == BZDriveMode.BZDM_ENDPOINT)
             {
-                if (m_CierrePorQue == "") m_CierrePorQue = "el endpoint clavo la pose (slam latcheado)";
-                OnArrived();
+                // F: la cesion de paso tambien suspende las reglas 2/3/4 del slam (frenar a fondo detras de otro no es llegar)
+                m_Slam.SetArEnCurso(m_AR.FisicoEnCurso() || m_F1Activo || m_ReubPend || m_CederActivo);
+                m_Slam.Actuate(st, m_Leg, m_Manual, m_SurfKind, m_Out);
+                ReportarSlam(st, dt);
+                if (m_Slam.IsLatched())
+                {
+                    if (m_CierrePorQue == "") m_CierrePorQue = "el endpoint clavo la pose (slam latcheado)";
+                    OnArrived();
+                }
             }
         }
         else if (m_Mode == BZDriveMode.BZDM_HALTED)
@@ -2052,6 +2072,7 @@ class BZDriveController
         // diagnostico publica en el MISMO tick en que el abandono va a disparar.
         DiagnosticarSinRescate(st, dt);   // por que NO lo rescato nadie (solo imprime)
         DetectarTrabaPorProgreso(st, dt);   // y si nadie lo rescata, se abre la escalera
+        DetectarArrastre(st, dt);           // F: empuja o es empujado por otro vehiculo, aunque no se detenga
         AbandonarSiEsImposible();
         ReportarDireccion(st, dt);
         NoPlanearHastaElBog(st);
@@ -2060,6 +2081,7 @@ class BZDriveController
         DetectarPlaneo(st, dt);
         AplicarRecuperacionAhogo(st, dt);   // C1: ULTIMA palabra sobre gas/freno/marcha en Plan
         AplicarAccionFisica(st, dt);        // F1/F3/G1: la escalera fisica, despues de C1
+        AplicarCeder(st, dt);               // F: la cesion de paso, ULTIMA palabra (freno a fondo hasta que el otro se fue)
         SoltarMesetaSiSeAlejo(st);   // engancha por cercania, se suelta por lejania
         SostenerMeseta(st);   // una detencion IMPUESTA se sostiene, no se espera
         m_Out.handbrake = HandbrakeFiel();
@@ -2067,6 +2089,7 @@ class BZDriveController
         // (BusDrive 9.3): el PRIMER GAS tras el hold se mide en Sample (40 Hz, 25 ms), no aca: con el reloj del
         // Plan 275 de 297 holds daban 0,5 s y el falsador pre-registrado (mediana < 0,2 s) no se podia testear.
         DetectarAperturaDeEscalera(st);   // el aviso BLOQUEADO sale de la TRANSICION, no de quien abre
+        VigilarTopeDelAR(st);             // G: tantas escaleras sin avanzar es STUCK, no un vehiculo trabado para siempre
         m_Out.mode = m_Mode;
         m_TargetSteer = m_Out.steering;
         CacheEndPose();
@@ -2738,7 +2761,7 @@ class BZDriveController
             if (m_Cinta) sAgot = m_Cinta.SEst();
             string cabAh = "AHOGO persistente tras " + m_BogIntentos.ToString() + " intentos · ";
             if (escaleraAh) cabAh = "AHOGO con la escalera abierta (sin primera + hillstart: el AR es dueño) · ";
-            m_AR.Fisico(st.pos, m_Leg.nearWp, sAgot, cabAh + evAh, BZAutoRecovery12.RuedasEnElPiso(st));
+            if (ArCierreDeja(st, cabAh)) m_AR.Fisico(st.pos, m_Leg.nearWp, sAgot, cabAh + evAh, BZAutoRecovery12.RuedasEnElPiso(st));
             return;
         }
         m_AR.CerrarPorAhogo();   // el re-arranque pendiente, si lo hay, no saco al vehiculo
@@ -2971,8 +2994,226 @@ class BZDriveController
         ClasificarFisico(st, "CLAVADO");
     }
 
+    // ★ E: EL AR EN EL CIERRE. En ENDPOINT la escalera fisica solo se abre con un CONTACTO reciente: una entidad reportada por el motor hace
+    // menos de E_CONTACTO_S, o la linea *** CHOQUE *** de hace menos de eso. Un trabado, un clavado o un ahogo SIN contacto en el cierre es
+    // el arranque lento (la sub-mordida en cuesta) y lo cierra el slam (regla 4): medido, la reversa de 3 m del AR a 0,6 m del punto, sin
+    // choque, era lo que dejaba a la Sarka a 0,73 y al APC a 0,52. Con contacto, SEGUNDA APROXIMACION: el slam se reinicia y el arbitro vuelve
+    // a decidir el modo en este mismo tick (sale del ENDPOINT, que es donde AplicarAccionFisica cortaba la F1); la F1 reversa y re-encara, la
+    // cinta re-arma al rodar y el arbitro vuelve a entrar al endpoint por el camino de siempre. true = la escalera se abre.
+    private const float E_CONTACTO_S = 5.0;
+    private const float E_IMP_MIN = 300.0;   // E: impulso minimo para que un contacto con un objeto cuente como choque (los roces dan 0-180)
+    private float m_EHaceUsado = -1;   // E: el "hace" del contacto que ya disparo la maniobra; uno mas reciente vuelve a disparar
+
+    // la clase del contacto es un vehiculo (Transport: autos, motos, buses). Un objeto del mapa sin clase viene como "modelo X" y no lo es
+    private bool EsVehiculo(string clase)
+    {
+        if (clase == "") return false;
+        if (clase.IndexOf("modelo ") == 0) return false;
+        return GetGame().IsKindOf(clase, "Transport");
+    }
+
+    private float CursorS()
+    {
+        if (m_Cinta && m_Cinta.Valida()) return m_Cinta.SEst();
+        if (m_Leg && m_Leg.valid) return m_Leg.cursorS;
+        return 0;
+    }
+
+    // ★ F: EL ARRASTRE ENTRE VEHICULOS. Con un objeto fijo el vehiculo se clava y el AR lo ve; con otro vehiculo no: lo empuja (o lo empujan)
+    // y sigue rodando, mas lento o mas rapido que la toma, y nadie se entera. Medido en las cajas: el RX8 empujo al V140 3,4 y 6,0 s a
+    // 123 -> 4 km/h con gas 1 (grabado 162-176); arrastro al Oshkosh 23,8 s a 65-157 km/h con gas 1 (grabado 199-213); el Oshkosh, del otro
+    // lado, 136-145 km/h con gas 0 (grabado 92-97). Un choque de paso dura 0,5-0,7 s. La firma: contacto SOSTENIDO con el mismo vehiculo
+    // (ARR_S) y la velocidad separada de lo grabado. El que EMPUJA cede el paso (IniciarCeder); el EMPUJADO solo lo dice.
+    private const float ARR_GAP_S = 1.0;         // el motor vuelve a reportar el contacto antes de esto (la ventana del casco es 0,5 s)
+    private const float ARR_S = 2.0;             // sostenido por mas de esto no es un choque de paso
+    private const float ARR_EMPUJA_THR = 0.8;    // el que empuja: gas pedido por encima de esto...
+    private const float ARR_EMPUJA_V = 0.8;      // ...y mas lento que esta fraccion de lo grabado
+    private const float ARR_EMPUJADO_V = 1.3;    // el empujado: mas rapido que esta fraccion de lo grabado, con gas suelto
+    private const float ARR_EMPUJADO_THR = 0.2;
+    private void DetectarArrastre(BZVehicleState st, float dt)
+    {
+        if (!BZEndpointSlam.s_CandF) return;
+        bool contV = (st.contactoHaceS >= 0 && st.contactoHaceS <= ARR_GAP_S && EsVehiculo(st.contactoClase));
+        if (contV && st.contactoClase == m_ArrClase)
+        {
+            m_ArrS = m_ArrS + dt;
+        }
+        else
+        {
+            m_ArrS = 0;
+            m_ArrClase = "";
+            m_ArrAvisado = false;
+            if (contV)
+            {
+                m_ArrS = dt;
+                m_ArrClase = st.contactoClase;
+            }
+        }
+        if (m_ArrS < ARR_S) return;
+        if (m_CederActivo || m_F1Activo || m_ReubPend || m_BogActivo || m_AR.FisicoEnCurso()) return;
+        float rec = -1;
+        if (m_CintaRodo && m_CintaM) rec = m_CintaM.kmhRec;
+        float v = Math.AbsFloat(st.chassisKmh);
+        string quien = m_ArrClase + " hace " + m_ArrS.ToString() + " s · " + v.ToString() + " km/h con gas pedido " + m_ThrottlePedido.ToString() + " (grabado " + rec.ToString() + ")";
+        bool empuja = (m_ThrottlePedido >= ARR_EMPUJA_THR && rec > 5.0 && v < rec * ARR_EMPUJA_V);
+        bool empujado = (m_ThrottlePedido <= ARR_EMPUJADO_THR && rec >= 0 && v > rec * ARR_EMPUJADO_V + 5.0);
+        if (empuja)
+        {
+            IniciarCeder(st, "EMPUJA a " + quien);
+            return;
+        }
+        if (empujado && !m_ArrAvisado)
+        {
+            m_ArrAvisado = true;
+            if (!s_Quiet) Print("[C12] ARRASTRE: EMPUJADO por " + quien + " · sin accion propia (el que empuja cede)" + SufijoRunner());
+        }
+    }
+
+    // la cesion: freno a fondo (ultima palabra en Plan, sostenido por cuadro en Sample) hasta quedar quieto CEDER_MIN_S y sin contacto
+    // CEDER_SIN_CONTACTO_S, con tope CEDER_MAX_S; la cinta se suelta como en una F1 y re-arma al rodar; el arranque, por la rampa
+    private const float CEDER_MIN_S = 3.0;
+    private const float CEDER_SIN_CONTACTO_S = 1.5;
+    private const float CEDER_MAX_S = 10.0;
+    private void IniciarCeder(BZVehicleState st, string porQue)
+    {
+        CancelarParadaPedida("cesion de paso (arrastre)");
+        m_CederActivo = true;
+        m_CederT = 0;
+        m_CederQuietoT = 0;
+        m_CederSinContT = 0;
+        m_Cesiones = m_Cesiones + 1;
+        m_StallTicks = 0;
+        m_SinProgresoT = 0;
+        if (m_CintaRodo)
+        {
+            m_CintaRodo = false;
+            m_CintaQuieto = true;
+            m_CintaRearmaDist = -1;
+        }
+        if (!s_Quiet) Print("[C12] ARRASTRE: " + porQue + " · CEDE EL PASO #" + m_Cesiones.ToString() + ": freno a fondo hasta quedar quieto y sin contacto" + SufijoRunner());
+    }
+
+    private void AplicarCeder(BZVehicleState st, float dt)
+    {
+        if (!m_CederActivo) return;
+        m_CederT = m_CederT + dt;
+        if (Math.AbsFloat(st.chassisKmh) < LOG_COLA_QUIETO_KMH) m_CederQuietoT = m_CederQuietoT + dt;
+        else m_CederQuietoT = 0;
+        if (st.contactoHaceS < 0 || st.contactoHaceS > ARR_GAP_S) m_CederSinContT = m_CederSinContT + dt;
+        else m_CederSinContT = 0;
+        m_Out.throttle = 0;
+        m_Out.brake = 1.0;
+        bool listo = (m_CederQuietoT >= CEDER_MIN_S && m_CederSinContT >= CEDER_SIN_CONTACTO_S);
+        if (!listo && m_CederT < CEDER_MAX_S) return;
+        TerminarCeder(st, listo);
+    }
+
+    private void TerminarCeder(BZVehicleState st, bool listo)
+    {
+        m_CederActivo = false;
+        m_ArrS = 0;
+        m_ArrClase = "";
+        m_StallTicks = 0;
+        m_StallReported = 0;
+        m_SinProgresoT = 0;
+        m_ArranqueTicks = 0;
+        m_ArranqueFase = ARR_RAMPA;
+        m_CintaRodo = false;
+        m_CintaQuieto = true;
+        m_CintaRearmaDist = -1;
+        m_Derivation.Reset();
+        string porQueT = "quieto y sin contacto";
+        if (!listo) porQueT = "tope de " + CEDER_MAX_S.ToString() + " s (todavia en contacto o rodando)";
+        if (!s_Quiet) Print("[C12] ARRASTRE: cesion #" + m_Cesiones.ToString() + " terminada a los " + m_CederT.ToString() + " s (" + porQueT + "): arranca de nuevo, la cinta re-arma al rodar" + SufijoRunner());
+    }
+
+    // ★ G: EL TOPE DEL AR. Una escalera que se cierra por progreso y se vuelve a abrir no agota nunca: medido, el APC detras del UAZ del
+    // Trader estacionado en su camino, 54 intentos, 20 wps en 3 minutos, el banco lo corta sin FIN. Tantas escaleras (o tanto tiempo con
+    // varias) sin avanzar AR_TOPE_AVANCE_M desde la primera es STUCK: la escalera se agota, el arbitro se detiene y el runner concluye con
+    // FIN, que decide su dueno como cualquier fin. Si avanza, el presupuesto se reinicia: una ruta con varios obstaculos sueltos no se corta.
+    private const int   AR_TOPE_ESCALERAS = 12;
+    private const float AR_TOPE_S = 300.0;
+    private const int   AR_TOPE_ESCALERAS_T = 3;
+    private const float AR_TOPE_AVANCE_M = 50.0;
+    private void VigilarTopeDelAR(BZVehicleState st)
+    {
+        if (!BZEndpointSlam.s_CandG || m_ArTopeDicho || m_EscT0 < 0) return;
+        float avance = CursorS() - m_EscS0;
+        if (avance >= AR_TOPE_AVANCE_M)
+        {
+            m_EscAbiertas = 0;
+            m_EscT0 = -1;
+            return;
+        }
+        float tiempo = GetGame().GetTickTime() - m_EscT0;
+        bool porN = (m_EscAbiertas >= AR_TOPE_ESCALERAS);
+        bool porT = (tiempo >= AR_TOPE_S && m_EscAbiertas >= AR_TOPE_ESCALERAS_T);
+        if (!porN && !porT) return;
+        m_ArTopeDicho = true;
+        m_MotivoStuck = "tope del AR: " + m_EscAbiertas.ToString() + " escaleras en " + tiempo.ToString() + " s sin avanzar " + AR_TOPE_AVANCE_M.ToString() + " m (avanzo " + avance.ToString() + " m)";
+        m_AR.AgotarPorTope(m_MotivoStuck);
+        m_Arbiter.ForceHalt();
+        m_Mode = BZDriveMode.BZDM_HALTED;
+        int wpT = -1;
+        if (m_Leg && m_Leg.valid) wpT = m_Leg.nearWp;
+        if (!s_Quiet) Print("[C12] STUCK por " + m_MotivoStuck + " · wp " + wpT.ToString() + SufijoRunner());
+        Emit(BZDriveEv.STUCK, wpT);
+    }
+
+    // E: hace cuanto fue el contacto que cuenta en el cierre (el mas reciente entre la entidad del motor y la linea *** CHOQUE ***), -1 sin ninguno
+    private float ContactoEnElCierreHace(BZVehicleState st)
+    {
+        float h = -1;
+        // un contacto cuenta si trae impacto (E_IMP_MIN) o es con un VEHICULO; un roce sin impulso contra un objeto (el bus del Trader
+        // atracando: imp 0 contra el modelo de la terminal, seis veces) no es un choque. Medido: roces 0-180, golpes 200-20.000
+        bool fuerteE = (st.contactoImp >= E_IMP_MIN || EsVehiculo(st.contactoClase));
+        if (st.contactoHaceS >= 0 && st.contactoHaceS <= E_CONTACTO_S && st.contactoClase != "" && fuerteE) h = st.contactoHaceS;
+        if (m_ChoqueHaceS >= 0 && m_ChoqueHaceS <= E_CONTACTO_S && (h < 0 || m_ChoqueHaceS < h)) h = m_ChoqueHaceS;
+        return h;
+    }
+
+    // E, ANTES DEL SLAM: en ENDPOINT, un contacto reciente que todavia no disparo abre la escalera (por ClasificarFisico -> ArCierreDeja:
+    // maniobra y segunda aproximacion) sin esperar al CLAVADO o al TRABADO, que tardan segundos; el slam, que juzga un tick despues del
+    // choque, clavaba al empujado antes (V140 empujado 20 m por el RX8: regla 2 al tick siguiente, E sin linea). Con la escalera ya en curso
+    // no se vuelve a abrir, y el mismo contacto no dispara dos veces.
+    private void EnElCierreAntesDelSlam(BZVehicleState st)
+    {
+        if (!BZEndpointSlam.s_CandE) return;
+        if (m_AR.FisicoEnCurso() || m_F1Activo || m_ReubPend) return;
+        float haceE = ContactoEnElCierreHace(st);
+        if (haceE < 0) return;
+        if (m_EHaceUsado >= 0 && haceE >= m_EHaceUsado) return;
+        ClasificarFisico(st, "CONTACTO EN EL CIERRE");
+    }
+
+    private bool ArCierreDeja(BZVehicleState st, string origen)
+    {
+        if (m_Mode != BZDriveMode.BZDM_ENDPOINT) return true;
+        if (!BZEndpointSlam.s_CandE) return true;
+        bool contacto = (st.contactoHaceS >= 0 && st.contactoHaceS <= E_CONTACTO_S && st.contactoClase != "");
+        bool choque = (m_ChoqueHaceS >= 0 && m_ChoqueHaceS <= E_CONTACTO_S);
+        string lE = "[C12] AR EN EL CIERRE: ";
+        if (!contacto && !choque)
+        {
+            lE = lE + "sin maniobra (" + origen + "): sin contacto ni choque en los ultimos " + E_CONTACTO_S.ToString() + " s; el cierre lo decide el slam";
+            if (!s_Quiet) Print(lE + SufijoRunner());
+            return false;
+        }
+        lE = lE + "maniobra (" + origen + ")";
+        if (contacto) lE = lE + " · contacto hace " + st.contactoHaceS.ToString() + " s con " + st.contactoClase + " (imp " + st.contactoImp.ToString() + ")";
+        if (choque) lE = lE + " · *** CHOQUE *** hace " + m_ChoqueHaceS.ToString() + " s";
+        m_EHaceUsado = ContactoEnElCierreHace(st);
+        m_Slam.Reset();
+        m_Arbiter.NotifyResume(m_Leg);
+        m_Mode = m_Arbiter.Decide(st, m_Leg, m_Manual, m_SurfKind);
+        lE = lE + " · segunda aproximacion: el slam se reinicia y el arbitro pasa al modo " + m_Mode.ToString() + " (CRUISE es " + BZDriveMode.BZDM_CRUISE.ToString() + ")";
+        if (!s_Quiet) Print(lE + SufijoRunner());
+        return true;
+    }
+
     private void ClasificarFisico(BZVehicleState st, string origen)
     {
+        if (!ArCierreDeja(st, origen)) return;
         string evF = origen + " · gas pedido " + m_ThrottlePedido.ToString() + " · marcha " + m_Out.gear.ToString();
         evF = evF + " · kmh " + st.chassisKmh.ToString() + " · rpm " + st.rpm.ToString();
         evF = evF + " · ruedas " + st.wheelsOnGround.ToString() + "/" + st.wheelCount.ToString();
@@ -2997,7 +3238,17 @@ class BZDriveController
     private void DetectarAperturaDeEscalera(BZVehicleState st)
     {
         bool ahora = m_AR.FisicoEnCurso();
-        if (ahora && !m_EscaleraPrev) AvisarBloqueo(st, m_AR.FisicoEvidencia());
+        if (ahora && !m_EscaleraPrev)
+        {
+            AvisarBloqueo(st, m_AR.FisicoEvidencia());
+            // G: el presupuesto cuenta aperturas desde la primera, con el arco de entonces
+            m_EscAbiertas = m_EscAbiertas + 1;
+            if (m_EscT0 < 0)
+            {
+                m_EscT0 = GetGame().GetTickTime();
+                m_EscS0 = CursorS();
+            }
+        }
         m_EscaleraPrev = ahora;
     }
 
@@ -4030,6 +4281,7 @@ class BZDriveController
         else ft = ft + "sin medicion (la toma no termina con el pedal a fondo desde 8 km/h o mas)";
         ft = ft + " · el endpoint planea y dosifica con " + m_Manual.MaxBrakeDecelEndpoint(m_SurfKind).ToString() + " m/s2";
         ft = ft + " (fisico del manual " + m_Manual.MaxBrakeDecel(m_SurfKind).ToString() + ")";
+        ft = ft + " · el pedal se dosifica con " + m_Manual.GananciaPedal(m_SurfKind).ToString() + " m/s2 por unidad (" + m_Manual.GananciaPedalFuente(m_SurfKind) + ")";
         Print(ft + SufijoRunner());
     }
 
@@ -4254,19 +4506,8 @@ class BZDriveController
         if (m_SegMuestras && m_SegMuestras.Count() > 4)
         {
             int n = m_SegMuestras.Count();
-            int i;
-            int j;
-            for (i = 1; i < n; i++)
-            {
-                float v = m_SegMuestras.Get(i);
-                j = i - 1;
-                while (j >= 0 && m_SegMuestras.Get(j) > v)
-                {
-                    m_SegMuestras.Set(j + 1, m_SegMuestras.Get(j));
-                    j--;
-                }
-                m_SegMuestras.Set(j + 1, v);
-            }
+            // nativo y de una: 4.000 muestras por insercion eran 566 ms de server congelado, solo para esta linea del log
+            m_SegMuestras.Sort();
             int idx = (int)(n * 0.90);
             if (idx > n - 1) idx = n - 1;
             p90 = m_SegMuestras.Get(idx);
@@ -4333,6 +4574,10 @@ class BZDriveController
     {
         float kmhPrev = m_ChoqueKmhPrev;
         m_ChoqueKmhPrev = st.chassisKmh;
+        float ahoraCh = GetGame().GetTickTime();
+        float huecoCh = ahoraCh - m_ChoqueMuestraT;
+        m_ChoqueMuestraT = ahoraCh;
+        bool trasHueco = (huecoCh > CHOQUE_HUECO_S);
         // las ruedas en el suelo de cada cuadro: la linea dice si venia en el aire (un salto) o apoyado. Solo instrumento
         if (!m_HistRuedas) m_HistRuedas = new BZHistRuedas();
         m_HistRuedas.Anotar(st.wheelsOnGround, dt);
@@ -4343,6 +4588,11 @@ class BZDriveController
             m_ChoqueEpHaceS = m_ChoqueEpHaceS + dt;
             m_ChoqueEpDurS = m_ChoqueEpDurS + dt;
             if (m_ChoqueEpHaceS > CHOQUE_EPISODIO_S) CerrarEpisodioDeChoque();
+        }
+        if (trasHueco)
+        {
+            if (!s_Quiet && kmhPrev >= 1.0) Print("[BZDrive] detector de choque: " + huecoCh.ToString() + " s sin muestras (congelado, retenido o pausado): la velocidad previa de " + kmhPrev.ToString() + " km/h se descarta, retomar no es un choque" + SufijoRunner());
+            return;
         }
         if (dt < 0.005) return;
         if (dt > 0.2) return;
@@ -4570,6 +4820,18 @@ class BZDriveController
         m_RemGate = remAhora;   // se loguea: verificar la IMPLEMENTACION, no mi modelo de ella
         if (m_Arbiter.PromoverEndpoint(st, m_Leg, m_Manual, remAhora, m_SurfKind)) m_Mode = BZDriveMode.BZDM_ENDPOINT;
         if (m_Mode == BZDriveMode.BZDM_ENDPOINT) EndpointFrameBrake(st);
+        if (m_Mode == BZDriveMode.BZDM_ENDPOINT) EndpointFrameCuesta(st);
+        else m_CuestaRemOk = false;
+        if (m_CederActivo)   // F: cediendo el paso, freno a fondo en cada cuadro (el Plan ya lo puso; esto lo sostiene entre ticks)
+        {
+            m_Out.throttle = 0;
+            m_Out.brake = 1.0;
+        }
+        // D: el volante del slam con la pose de ESTE cuadro (el de 2 Hz queda como objetivo hasta que esto lo refresca)
+        if (m_Mode == BZDriveMode.BZDM_ENDPOINT && BZEndpointSlam.s_CandD && m_Manual && m_Leg && m_Leg.valid && !m_Slam.IsLatched())
+        {
+            m_TargetSteer = m_Slam.AlignSteerCon(st, m_Leg, m_Manual, RemanenteFrameM(st), LateralFrameM(st));
+        }
         ActualizarVentanaDeCambio(st, dt);
         ActualizarDeslizamiento(st, dt);
         RefrescarVolante(st, dt);
@@ -5418,6 +5680,31 @@ class BZDriveController
         return (m_EndPos[0] - st.pos[0]) * m_EndTanZ - (m_EndPos[2] - st.pos[2]) * m_EndTanX;
     }
 
+    // B: arrancando en cuesta, el casco no rueda hacia atras: si el remanente crece de un cuadro al otro, freno a fondo hasta el proximo
+    // tick del slam (que sube el gas y vuelve a soltar). El gas queda puesto. Milimetros por intento, nunca metros.
+    private void EndpointFrameCuesta(BZVehicleState st)
+    {
+        if (!m_Slam.ArranqueEnCuesta() && !m_Slam.CuestaParado(st, m_Manual))
+        {
+            m_CuestaRemOk = false;
+            return;
+        }
+        // la referencia es la posicion MAS ADELANTADA desde que arranca (no el cuadro anterior: un retroceso lento, de menos de 5 mm por
+        // cuadro, no se veria nunca); al frenar, la referencia pasa a donde freno, asi cada intento cuesta 5 mm y no se cuenta dos veces
+        float remC = RemanenteFrameM(st);
+        if (!m_CuestaRemOk || remC < m_CuestaRemPrev)
+        {
+            m_CuestaRemPrev = remC;
+        }
+        else if (remC > m_CuestaRemPrev + BZEndpointSlam.CUESTA_RETRO_M)
+        {
+            m_Out.brake = 1.0;
+            m_Slam.NotarRetroceso(remC - m_CuestaRemPrev);
+            m_CuestaRemPrev = remC;
+        }
+        m_CuestaRemOk = true;
+    }
+
     private void EndpointFrameBrake(BZVehicleState st)
     {
         if (!m_Manual) return;
@@ -5430,10 +5717,9 @@ class BZDriveController
             return;
         }
         float v = st.chassisKmh / 3.6;
-        float aMax = m_Manual.MaxBrakeDecelEndpoint(m_SurfKind);   // techado por la frenada medida en la toma
-        if (aMax < 0.5) aMax = 0.5;
+        float gan = m_Manual.GananciaPedal(m_SurfKind);   // A: la ganancia del pedal (con A apagado, el tope de siempre)
         float aReq = (v * v) / (2.0 * d);
-        float b = Math.Clamp(aReq / aMax, 0.0, 1.0);
+        float b = Math.Clamp(aReq / gan, 0.0, 1.0);
         if (b > m_Out.brake) m_Out.brake = b;
     }
 

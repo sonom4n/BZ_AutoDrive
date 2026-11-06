@@ -1673,5 +1673,8 @@ class BZAutoDriveSettings {
     // ~0,5 MB por corrida). Default false. Encendidas se guardan las ultimas BlackBoxKeepPerRoute de cada ruta y se
     // borran las mas viejas (0 o negativo = 10).
     bool BlackBox = false;
+    // true = los jugadores ven los vehiculos del framework sin el suavizado de orientacion del cliente. Default false: suavizado
+    // encendido. Va en negativo a proposito: un settings viejo sin este campo queda encendido.
+    bool DisableClientVehicleSmoothing = false;
     int  BlackBoxKeepPerRoute = 10;
 }

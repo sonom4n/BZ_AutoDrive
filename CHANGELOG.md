@@ -6,6 +6,22 @@ Lo más nuevo arriba. Hasta la 1.1 la **conducción** (modelo *config-como-manua
 
 ---
 
+## v1.3
+
+**Más vehículos a la vez con menos carga en los relanzamientos; el server no borra nunca un vehículo con un jugador sentado; y una corrida que falla ya no queda congelada.** Probada en un server con DayZ **1.30.164** y Expansion.
+
+- **Mejorado: el vehículo para en el punto final.** Antes frenaba de más, paraba a mitad de los últimos metros y terminaba de arrimarse reptando; en subida o con vehículos pesados podía quedar a más de un metro. Ahora dosifica el freno con lo que el vehículo frena de verdad y para en el punto, a unos 10 cm. En subida arranca sin rodar hacia atrás, y llega derecho.
+- **Mejorado: al terminar la cinta, el jugador sentado baja solo y el vehículo queda cerrado.** Cuando una corrida termina, el jugador que viajaba sentado baja del vehículo (con la animación de siempre, sin aviso: si querés avisarle, ponés un evento), y el vehículo queda cerrado a jugadores hasta que el framework lo retira; lo mismo al pararlo desde el panel. Así el retiro no encuentra a nadie a bordo. Vale también para las motos.
+- **Nuevo: los vehículos se ven suaves desde cualquier cliente (filtro de cliente).** Lo que el jugador ve de un vehículo manejado por el framework llegaba por red en escalones y se veía temblar, sobre todo arriba o cerca. Un filtro en el cliente suaviza sólo lo que se dibuja: ni la posición, ni la física, ni el manejo. Viene **encendido**; se apaga para todos con `"DisableClientVehicleSmoothing": true` en `BZAutoDrive_settings.json` (§13.4).
+- **Mejorado: rendimiento con muchos vehículos.** Todo lo pesado del framework —leer una ruta, crear el vehículo, el chofer y la tripulación, el embarque, el retiro— pasa por **una sola puerta, una operación por cuadro**, y ya no cae junto en el mismo cuadro. Una toma ya leída **no se vuelve a leer** al relanzarla (queda en memoria, con una copia por vehículo, hasta que el archivo cambie), y la primera lectura va **en tajadas de pocos milisegundos**. El rescate del AutoRecovery (la búsqueda sobre la cinta) y el cálculo del límite lateral de la toma son **mucho más rápidos, con la misma respuesta**.
+- **Nuevo: la cinta binaria (`_cinta.bin`).** Una copia de `_cinta.csv` que el server carga mucho más rápido. La crea el wizard al convertir (**«Convertir y binarizar»**) y la opción **`[B]`** la genera para las rutas que ya tenías (`[T]`: todas las que faltan). Se copia al server espejo junto con la ruta. Sin binario, o con uno viejo, el server carga el CSV y lo dice en el RPT (§6B).
+- **Nuevo: registro de tomas.** Varios vehículos sobre la misma toma la cargan **una sola vez** y la comparten. Cada toma queda cargada **hasta reiniciar el server**; sólo la versión vieja de una toma que reconvertiste se libera cuando se retira su último vehículo.
+- **Mejorado: una corrida que falla concluye sola.** Lanzada desde el panel o como ruta por defecto, una ruta que termina mal (`ROUTE_INCOMPLETE`, `STUCK`) se retira o respawnea como una completa. Lanzada por un mod, el mod recibe el fin y decide; **si nadie lo reclama en 60 s, el framework retira el vehículo** (nunca con alguien a bordo); si un mod lo leyó y no hace nada, un aviso cada 5 minutos en el RPT (§B.7).
+- **Mejorado: el retiro cuenta a los jugadores sentados por dos caminos.** El dato que en la 1.30 puede fallar (la lista de la tripulación) ya no es el único: también se mira a cada jugador conectado. Un vehículo con un jugador sentado **no se borra nunca**; se espera a que baje.
+- **Compatibilidad: DayZ 1.30.164.289.** El compilador de esa versión es más estricto que el anterior; el paquete compila y corre con él.
+
+---
+
 ## v1.2.5
 
 **Una parada suave en cualquier punto de la ruta, para los mods que usan el framework**, y el panel con la versión exacta. Probada sobre DayZ 1.30 y su Update 2.
